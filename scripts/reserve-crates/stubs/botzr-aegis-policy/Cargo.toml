@@ -1,0 +1,13 @@
+[package]
+name = "botzr-aegis-policy"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Reserved: YAML policy engine for Aegis — secure execution runtime for AI agent tool calls."
+repository = "https://github.com/botzrDev/aegis"
+readme = "README.md"
+keywords = ["aegis", "agent", "policy", "security"]
+categories = ["development-tools"]
+
+[lib]
+path = "src/lib.rs"

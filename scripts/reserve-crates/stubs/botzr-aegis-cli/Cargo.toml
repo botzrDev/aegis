@@ -1,0 +1,14 @@
+[package]
+name = "botzr-aegis-cli"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Reserved: CLI for Aegis — secure execution runtime for AI agent tool calls. Binary name: aegis."
+repository = "https://github.com/botzrDev/aegis"
+readme = "README.md"
+keywords = ["aegis", "agent", "cli", "security"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "aegis"
+path = "src/main.rs"

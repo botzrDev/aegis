@@ -1,0 +1,13 @@
+[package]
+name = "botzr-aegis-core"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Reserved: core types and traits for Aegis — secure execution runtime for AI agent tool calls."
+repository = "https://github.com/botzrDev/aegis"
+readme = "README.md"
+keywords = ["aegis", "agent", "security", "wasm"]
+categories = ["development-tools"]
+
+[lib]
+path = "src/lib.rs"

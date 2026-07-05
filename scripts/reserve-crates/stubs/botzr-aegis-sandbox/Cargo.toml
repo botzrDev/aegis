@@ -1,0 +1,13 @@
+[package]
+name = "botzr-aegis-sandbox"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Reserved: wasmtime sandbox for Aegis — secure execution runtime for AI agent tool calls."
+repository = "https://github.com/botzrDev/aegis"
+readme = "README.md"
+keywords = ["aegis", "agent", "wasm", "wasmtime", "sandbox"]
+categories = ["development-tools"]
+
+[lib]
+path = "src/lib.rs"
