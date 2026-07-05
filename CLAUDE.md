@@ -16,6 +16,8 @@ POLICY → CAPABILITY → SANDBOX → AUDIT (wraps all three)
 
 **Status:** pre-build. Scope is locked in local planning docs; no Rust workspace in the repo yet.
 
+**License:** MIT (confirmed 2026-07-05, OQ-1 closed). See `LICENSE`.
+
 ## Private planning context (local only)
 
 Strategic docs live in **`aegis-context/`** — gitignored, never commit this folder.
@@ -37,10 +39,10 @@ For sprint planning / Linear backlog work, invoke the **`aegis-scrum`** skill (`
 
 Build exactly five runtime components:
 
-1. **`aegis-sandbox`** — wasmtime 36.x, component-model-native (`wasip2`), cap-std preopens
-2. **`aegis-capability`** — default-deny resolver, grant minting (core IP)
-3. **`aegis-policy`** — YAML, parsed once → `Arc<PolicySet>`, sync eval (<100 µs target)
-4. **`aegis-audit`** — schema-versioned records, always emitted (including deny/trap/panic)
+1. **`botzr-aegis-sandbox`** — wasmtime 36.x, component-model-native (`wasip2`), cap-std preopens
+2. **`botzr-aegis-capability`** — default-deny resolver, grant minting (core IP)
+3. **`botzr-aegis-policy`** — YAML, parsed once → `Arc<PolicySet>`, sync eval (<100 µs target)
+4. **`botzr-aegis-audit`** — schema-versioned records, always emitted (including deny/trap/panic)
 5. **Resource accounting** — epoch + memory limiter per call
 
 **Out of v1:** multi-agent orchestration, dashboards, crypto audit proofs, Layer 2 governance, SaaS hosting, support for every tool/LLM.
@@ -48,20 +50,22 @@ Build exactly five runtime components:
 ## Planned crate layout
 
 ```
-aegis/
+aegis/                          # GitHub repo: botzrDev/aegis; product name: Aegis
 ├── Cargo.toml                  # workspace; unsafe_code = forbid
 ├── crates/
-│   ├── aegis-core/             # pure types/traits, zero I/O
-│   ├── aegis-policy/
-│   ├── aegis-capability/
-│   ├── aegis-sandbox/
-│   ├── aegis-audit/
-│   ├── aegis-runtime/          # orchestrator (library mode entry)
-│   ├── aegis-sidecar/          # Phase 2 — UDS gRPC/HTTP
-│   └── aegis-cli/
+│   ├── botzr-aegis-core/       # pure types/traits, zero I/O
+│   ├── botzr-aegis-policy/
+│   ├── botzr-aegis-capability/
+│   ├── botzr-aegis-sandbox/
+│   ├── botzr-aegis-audit/
+│   ├── botzr-aegis-runtime/    # orchestrator (library mode entry)
+│   ├── botzr-aegis-sidecar/    # Phase 2 — UDS gRPC/HTTP
+│   └── botzr-aegis-cli/        # binary name: aegis (crates.io prefix avoids aegis-cli conflict)
 ├── wit/tool-world.wit
 └── tests/                      # deny-suite + integration
 ```
+
+**Crates.io namespace:** `botzr-aegis-*` (OQ-14 closed 2026-07-05). Do not publish unprefixed `aegis-*` crates.
 
 Pin wasmtime in `[workspace.dependencies]` — whole workspace moves as one.
 
