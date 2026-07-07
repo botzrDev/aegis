@@ -13,3 +13,10 @@ workspace = true
 
 [dependencies]
 botzr-aegis-core = { workspace = true }
+arc-swap = { workspace = true }
+serde = { workspace = true }
+serde_norway = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

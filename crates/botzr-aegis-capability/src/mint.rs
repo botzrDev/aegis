@@ -15,6 +15,17 @@ pub struct PolicyCeiling {
 }
 
 impl PolicyCeiling {
+    /// Combine two ceilings by taking the *tighter* bound on each axis (a
+    /// present cap always beats absent; two caps take the min). Used to fold a
+    /// per-call policy ceiling into the resolver's standing ceiling — the result
+    /// can only lower limits, never raise them.
+    pub fn combine(self, other: PolicyCeiling) -> PolicyCeiling {
+        PolicyCeiling {
+            max_memory_bytes: tighter(self.max_memory_bytes, other.max_memory_bytes),
+            max_wall_ms: tighter(self.max_wall_ms, other.max_wall_ms),
+        }
+    }
+
     pub fn apply(self, manifest: ToolLimits) -> ToolLimits {
         ToolLimits {
             max_memory_bytes: self
@@ -26,6 +37,16 @@ impl PolicyCeiling {
                 .map(|cap| cap.min(manifest.max_wall_ms))
                 .unwrap_or(manifest.max_wall_ms),
         }
+    }
+}
+
+/// Take the tighter (smaller) of two optional caps; a present cap always wins
+/// over an absent one.
+fn tighter(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
     }
 }
 

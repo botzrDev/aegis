@@ -37,10 +37,24 @@ impl CapabilityResolver {
         self.tools.insert(manifest.tool.id.clone(), manifest);
     }
 
-    /// Resolve declared needs for a registered tool into a host-minted grant.
+    /// Resolve declared needs for a registered tool into a host-minted grant,
+    /// applying only the resolver's standing ceiling.
     #[must_use = "capability resolution must be handled — denial never reaches sandbox"]
     pub fn resolve(&self, tool_id: &ToolId) -> CapabilityOutcome {
-        match self.resolve_inner(tool_id) {
+        self.resolve_with_ceiling(tool_id, PolicyCeiling::default())
+    }
+
+    /// Resolve with an additional per-call ceiling (e.g. one the policy engine
+    /// derived for this call). The call ceiling is folded into the resolver's
+    /// standing ceiling by [`PolicyCeiling::combine`], so it can only *lower*
+    /// limits — policy never raises what a tool declared.
+    #[must_use = "capability resolution must be handled — denial never reaches sandbox"]
+    pub fn resolve_with_ceiling(
+        &self,
+        tool_id: &ToolId,
+        call_ceiling: PolicyCeiling,
+    ) -> CapabilityOutcome {
+        match self.resolve_inner(tool_id, self.ceiling.combine(call_ceiling)) {
             Ok(grant) => CapabilityOutcome::Granted { grant },
             Err(err) => CapabilityOutcome::Denied {
                 reason: err.to_string(),
@@ -49,14 +63,18 @@ impl CapabilityResolver {
         }
     }
 
-    fn resolve_inner(&self, tool_id: &ToolId) -> Result<CapabilityGrant, CapabilityError> {
+    fn resolve_inner(
+        &self,
+        tool_id: &ToolId,
+        ceiling: PolicyCeiling,
+    ) -> Result<CapabilityGrant, CapabilityError> {
         let manifest =
             self.tools
                 .get(tool_id)
                 .ok_or_else(|| CapabilityError::ToolNotRegistered {
                     tool_id: tool_id.to_string(),
                 })?;
-        mint_grant(manifest, next_grant_id(tool_id), self.ceiling)
+        mint_grant(manifest, next_grant_id(tool_id), ceiling)
     }
 
     /// Resolve a manifest directly (used for tests and one-off minting).
