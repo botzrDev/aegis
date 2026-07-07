@@ -13,6 +13,11 @@ workspace = true
 
 [dependencies]
 botzr-aegis-core = { workspace = true }
-cap-std = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

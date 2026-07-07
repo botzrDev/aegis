@@ -1,21 +1,26 @@
-//! WASM execution sandbox — wasmtime 36.x, per-call Store, cap-std preopens.
+//! WASM execution sandbox — wasmtime 36.x, component-model-native (`wasip2`).
+//!
+//! Station 3 of the enforcement pipeline (POLICY → CAPABILITY → **SANDBOX** →
+//! AUDIT). The [`SandboxEngine`] is built once and reused; each call gets a
+//! fresh [`Store`](wasmtime::Store) configured *from the resolved grant*:
+//!
+//! - filesystem scoping via cap-std preopens (never hand-rolled path checks),
+//! - network default-deny (no socket factory registered),
+//! - a per-call memory cap ([`MemoryLimiter`]), and
+//! - a wall-clock cap via epoch interruption.
+//!
+//! Failing exit paths classify into [`SandboxError`], which bridges to the
+//! schema-versioned audit `ExecutionOutcome`.
 
-use botzr_aegis_core::CapabilityGrant;
+mod engine;
+mod error;
+mod limits;
+mod state;
 
-/// Pin used in workspace `[workspace.dependencies]` — whole workspace moves as one.
+pub use engine::{PreparedTool, SandboxEngine};
+pub use error::SandboxError;
+pub use limits::MemoryLimiter;
+pub use state::ToolState;
+
+/// Major version of wasmtime this crate is pinned to (LTS through 2027-08-20).
 pub const WASMTIME_PIN_MAJOR: u32 = 36;
-
-/// Sandbox engine handle (placeholder until AEG-6).
-#[derive(Debug, Default)]
-pub struct SandboxEngine;
-
-impl SandboxEngine {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Configure a per-call store from the grant, then execute. Stub until AEG-6.
-    pub fn execute(&self, _grant: &CapabilityGrant, _input: &[u8]) -> Result<Vec<u8>, String> {
-        Err("sandbox not implemented".into())
-    }
-}
