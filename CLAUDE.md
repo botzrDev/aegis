@@ -4,9 +4,9 @@ Guidance for Claude Code when working in the **Aegis** repository.
 
 ## What this project is
 
-**Aegis** is a secure execution runtime for AI agent tool calls (Rust, wasmtime). It sits *underneath* agent frameworks — not an orchestrator, not a dashboard, not an LLM layer.
+**Aegis** is a research instrument for testing and publishing novel discoveries in secure agent tool execution (Rust, wasmtime). It sits *underneath* agent frameworks — not an orchestrator, not a dashboard, not an LLM layer.
 
-One-liner: *"The secure execution layer your agents are missing."*
+One-liner: *"A reproducible runtime for testing what agent tool isolation actually guarantees."*
 
 Every tool call walks the same pipeline, in this order (load-bearing — do not reorder):
 
@@ -104,6 +104,4 @@ Commit signing uses SSH (`id_ed25519`). If commit fails on signing, unlock with 
 
 ## North star for planning
 
-**Path to Credible v1:** S0 validation → enforcement pipeline wired → one real tool E2E → demo + benchmarks + written threat model.
-
-Defer Layer 2, GTM polish, and integration stages unless they unblock the runtime critical path.
+**Path to credible v1:** enforcement pipeline wired → one real tool E2E → published findings (reproducible demo + benchmarks + threat model). Research instrument — not a commercial product; no marketing/sales gates in the engineering track.
