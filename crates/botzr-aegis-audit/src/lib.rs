@@ -1,14 +1,12 @@
-//! Audit trail — schema-versioned records, JSONL + OTel export (AEG-10).
+//! Audit trail — schema-versioned records, JSONL persistence (AEG-10).
+//!
+//! G3 durability default: synchronous append + fsync, fail-closed on write
+//! failure. Two-phase lines (`intent` then `outcome`) share a `call_id`.
 
-use botzr_aegis_core::{AuditRecord, AUDIT_SCHEMA_VERSION};
+mod error;
+mod session;
+mod writer;
 
-/// Emit an audit record. Stub: validates schema version until AEG-10 persistence lands.
-pub fn emit(record: &AuditRecord) -> Result<(), String> {
-    if record.schema_version != AUDIT_SCHEMA_VERSION {
-        return Err(format!(
-            "unsupported audit schema version {}",
-            record.schema_version
-        ));
-    }
-    Ok(())
-}
+pub use error::AuditError;
+pub use session::CallSession;
+pub use writer::{to_json_line, AuditWriter};

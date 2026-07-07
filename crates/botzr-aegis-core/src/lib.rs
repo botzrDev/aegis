@@ -9,8 +9,8 @@ mod policy;
 mod tool;
 
 pub use audit::{
-    AuditRecord, AuditSchemaVersion, CapabilityOutcome, ExecutionOutcome, PolicyOutcome,
-    AUDIT_SCHEMA_VERSION,
+    AuditIntent, AuditPhase, AuditRecord, AuditSchemaVersion, CapabilityOutcome, ExecutionOutcome,
+    PolicyOutcome, AUDIT_SCHEMA_VERSION,
 };
 pub use error::AegisError;
 pub use grant::{CapabilityGrant, FsGrant, HttpGrant, NetGrant};

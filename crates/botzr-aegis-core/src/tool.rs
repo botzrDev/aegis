@@ -3,7 +3,8 @@
 use std::fmt;
 
 /// Newtype for tool identifiers (`[a-z0-9-]+` per manifest G1).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ToolId(pub String);
 
 impl ToolId {

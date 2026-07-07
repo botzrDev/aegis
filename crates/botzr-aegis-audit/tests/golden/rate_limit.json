@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-2","tool_id":"chatty","input_digest":"cafebabe","policy":{"status":"rate_limited","reason":"rate limit exceeded: 2 per 60s"},"capability":{"status":"denied","reason":"policy blocked before capability","denied_capability":null},"execution":{"status":"host_denied","reason":"not executed"}}

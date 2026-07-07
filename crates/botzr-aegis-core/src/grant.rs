@@ -3,7 +3,7 @@
 use crate::tool::ToolId;
 
 /// Resolved grant passed to sandbox configuration and host-function enforcement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CapabilityGrant {
     pub grant_id: String,
     pub tool_id: ToolId,
@@ -13,18 +13,18 @@ pub struct CapabilityGrant {
     pub max_wall_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FsGrant {
     pub read_paths: Vec<String>,
     pub write_paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NetGrant {
     pub http: Vec<HttpGrant>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HttpGrant {
     pub host: String,
     pub ports: Vec<u16>,

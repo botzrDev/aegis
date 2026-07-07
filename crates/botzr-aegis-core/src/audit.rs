@@ -8,9 +8,46 @@ pub type AuditSchemaVersion = u32;
 
 pub const AUDIT_SCHEMA_VERSION: AuditSchemaVersion = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Phase marker for two-phase JSONL durability (G3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditPhase {
+    Intent,
+    Outcome,
+}
+
+/// Pre-execution intent line — appended before sandbox work begins.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AuditIntent {
+    pub schema_version: AuditSchemaVersion,
+    pub phase: AuditPhase,
+    pub call_id: String,
+    pub tool_id: ToolId,
+    pub input_digest: String,
+}
+
+impl AuditIntent {
+    pub fn new(
+        call_id: impl Into<String>,
+        tool_id: ToolId,
+        input_digest: impl Into<String>,
+    ) -> Self {
+        Self {
+            schema_version: AUDIT_SCHEMA_VERSION,
+            phase: AuditPhase::Intent,
+            call_id: call_id.into(),
+            tool_id,
+            input_digest: input_digest.into(),
+        }
+    }
+}
+
+/// Post-execution outcome line — one per call, every exit path.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuditRecord {
     pub schema_version: AuditSchemaVersion,
+    pub phase: AuditPhase,
+    pub call_id: String,
     pub tool_id: ToolId,
     pub input_digest: String,
     pub policy: PolicyOutcome,
@@ -18,7 +55,30 @@ pub struct AuditRecord {
     pub execution: ExecutionOutcome,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl AuditRecord {
+    pub fn new(
+        call_id: impl Into<String>,
+        tool_id: ToolId,
+        input_digest: impl Into<String>,
+        policy: PolicyOutcome,
+        capability: CapabilityOutcome,
+        execution: ExecutionOutcome,
+    ) -> Self {
+        Self {
+            schema_version: AUDIT_SCHEMA_VERSION,
+            phase: AuditPhase::Outcome,
+            call_id: call_id.into(),
+            tool_id,
+            input_digest: input_digest.into(),
+            policy,
+            capability,
+            execution,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum PolicyOutcome {
     Allowed,
     Denied { reason: String },
@@ -26,7 +86,8 @@ pub enum PolicyOutcome {
     PendingApproval { approval_id: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum CapabilityOutcome {
     Granted {
         grant: CapabilityGrant,
@@ -38,7 +99,8 @@ pub enum CapabilityOutcome {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum ExecutionOutcome {
     Success,
     Trap { message: String },

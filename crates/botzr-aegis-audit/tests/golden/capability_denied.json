@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-4","tool_id":"missing","input_digest":"baadf00d","policy":{"status":"allowed"},"capability":{"status":"denied","reason":"tool not registered: missing","denied_capability":"tool.registry"},"execution":{"status":"host_denied","reason":"capability denied"}}
