@@ -14,7 +14,7 @@ Every tool call walks the same pipeline, in this order (load-bearing — do not 
 POLICY → CAPABILITY → SANDBOX → AUDIT (wraps all three)
 ```
 
-**Status:** pre-build. Scope is locked in local planning docs; no Rust workspace in the repo yet.
+**Status:** M1 scaffold landed (AEG-4). Runtime components are stubs; pipeline wiring is minimal.
 
 **License:** MIT (confirmed 2026-07-05, OQ-1 closed). See `LICENSE`.
 

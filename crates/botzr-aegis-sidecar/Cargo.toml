@@ -1,0 +1,19 @@
+[package]
+name = "botzr-aegis-sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Phase 2 sidecar gateway for Aegis (UDS gRPC/HTTP)."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-runtime = { workspace = true }
+
+[[bin]]
+name = "botzr-aegis-sidecar"
+path = "src/main.rs"

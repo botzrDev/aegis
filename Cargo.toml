@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/botzr-aegis-core",
+    "crates/botzr-aegis-policy",
+    "crates/botzr-aegis-capability",
+    "crates/botzr-aegis-sandbox",
+    "crates/botzr-aegis-audit",
+    "crates/botzr-aegis-runtime",
+    "crates/botzr-aegis-sidecar",
+    "crates/botzr-aegis-cli",
+    "tests/integration",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/botzrDev/aegis"
+rust-version = "1.80"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+botzr-aegis-audit = { path = "crates/botzr-aegis-audit" }
+botzr-aegis-capability = { path = "crates/botzr-aegis-capability" }
+botzr-aegis-cli = { path = "crates/botzr-aegis-cli" }
+botzr-aegis-core = { path = "crates/botzr-aegis-core" }
+botzr-aegis-policy = { path = "crates/botzr-aegis-policy" }
+botzr-aegis-runtime = { path = "crates/botzr-aegis-runtime" }
+botzr-aegis-sandbox = { path = "crates/botzr-aegis-sandbox" }
+botzr-aegis-sidecar = { path = "crates/botzr-aegis-sidecar" }
+cap-std = "3"
+wasmtime = { version = "36", features = ["component-model", "async"] }
+wasmtime-wasi = "36"
+wit-bindgen = "0.44"

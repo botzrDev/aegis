@@ -1,1 +1,4 @@
 /aegis-context/
+/target/
+**/target/
+*.crate

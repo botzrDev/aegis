@@ -1,0 +1,18 @@
+[package]
+name = "botzr-aegis-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "wasmtime sandbox for Aegis — component-model-native (wasip2)."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-core = { workspace = true }
+cap-std = { workspace = true }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }

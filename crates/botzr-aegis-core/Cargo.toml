@@ -1,0 +1,18 @@
+[package]
+name = "botzr-aegis-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core types and traits for Aegis — secure agent tool execution runtime."
+readme = "README.md"
+keywords = ["aegis", "agent", "security", "wasm"]
+categories = ["development-tools"]
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]

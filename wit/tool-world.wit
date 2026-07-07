@@ -1,0 +1,29 @@
+/// Canonical Component Model world for Aegis WASM tools (Model A + Model B host imports).
+/// Authority: Gap Resolutions G1 — adopt/amend at OQ-9.
+package aegis:tool@0.1.0;
+
+/// Guest-facing tool surface: describe + run with opaque byte payloads (JSON convention).
+world tool {
+    export describe: func() -> tool-info;
+    export run: func(input: list<u8>) -> result<list<u8>, tool-error>;
+
+    /// Model B host imports — each enforces CapabilityGrant host-side before the effect.
+    import aegis:host/http@0.1.0;
+    import aegis:host/log@0.1.0;
+}
+
+record tool-info {
+    id: string,
+    version: string,
+    kind: tool-kind,
+}
+
+enum tool-kind {
+    wasm,
+    host,
+}
+
+record tool-error {
+    code: string,
+    message: string,
+}

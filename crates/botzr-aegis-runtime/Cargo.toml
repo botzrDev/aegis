@@ -1,0 +1,21 @@
+[package]
+name = "botzr-aegis-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Aegis runtime orchestrator — POLICY → CAPABILITY → SANDBOX → AUDIT."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-audit = { workspace = true }
+botzr-aegis-capability = { workspace = true }
+botzr-aegis-core = { workspace = true }
+botzr-aegis-policy = { workspace = true }
+botzr-aegis-sandbox = { workspace = true }
+
+[dev-dependencies]

@@ -1,0 +1,15 @@
+[package]
+name = "botzr-aegis-capability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Default-deny capability resolver and grant minting for Aegis."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-core = { workspace = true }
