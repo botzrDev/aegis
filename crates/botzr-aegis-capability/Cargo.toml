@@ -13,3 +13,8 @@ workspace = true
 
 [dependencies]
 botzr-aegis-core = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = { workspace = true }

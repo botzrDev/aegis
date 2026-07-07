@@ -28,8 +28,14 @@ pub enum PolicyOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityOutcome {
-    Granted { grant: CapabilityGrant },
-    Denied { reason: String },
+    Granted {
+        grant: CapabilityGrant,
+    },
+    Denied {
+        reason: String,
+        /// Machine-readable capability axis (e.g. `fs`, `net.http`) for audit consumers.
+        denied_capability: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

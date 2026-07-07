@@ -1,5 +1,6 @@
 //! Library-mode entry point — wires the enforcement pipeline in load-bearing order.
 
+use botzr_aegis_capability::CapabilityResolver;
 use botzr_aegis_core::{
     AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId, AUDIT_SCHEMA_VERSION,
     PIPELINE_STAGES,
@@ -7,16 +8,32 @@ use botzr_aegis_core::{
 use botzr_aegis_policy::{self, PolicySet};
 use botzr_aegis_sandbox::SandboxEngine;
 
-/// Runtime configuration (placeholder).
-#[derive(Debug, Default)]
+/// Runtime configuration.
+#[derive(Debug)]
 pub struct Runtime {
     policy: PolicySet,
+    capabilities: CapabilityResolver,
     sandbox: SandboxEngine,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self {
+            policy: PolicySet,
+            capabilities: CapabilityResolver::new(),
+            sandbox: SandboxEngine::default(),
+        }
+    }
 }
 
 impl Runtime {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Access the capability resolver for tool registration (AEG-23 expands this).
+    pub fn capabilities(&mut self) -> &mut CapabilityResolver {
+        &mut self.capabilities
     }
 
     /// Execute a tool call through POLICY → CAPABILITY → SANDBOX → AUDIT.
@@ -37,6 +54,7 @@ impl Runtime {
                 policy: policy_outcome,
                 capability: CapabilityOutcome::Denied {
                     reason: "policy blocked before capability".into(),
+                    denied_capability: None,
                 },
                 execution: ExecutionOutcome::HostDenied {
                     reason: "not executed".into(),
@@ -46,7 +64,7 @@ impl Runtime {
             return Err("policy denied".into());
         }
 
-        let capability_outcome = botzr_aegis_capability::resolve(tool_id.clone());
+        let capability_outcome = self.capabilities.resolve(&tool_id);
         let (execution, output) = match &capability_outcome {
             CapabilityOutcome::Granted { grant } => match self.sandbox.execute(grant, input) {
                 Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),

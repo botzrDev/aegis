@@ -1,15 +1,21 @@
 //! Capability resolver — default-deny grant minting (core IP).
+//!
+//! Station 2 of the enforcement pipeline (POLICY → **CAPABILITY** → SANDBOX →
+//! AUDIT). Tools declare *needs* via [`ToolManifest`]; the runtime mints
+//! unforgeable [`CapabilityGrant`]s. Denials are audit-ready and never reach
+//! the sandbox.
 
-use botzr_aegis_core::{CapabilityGrant, CapabilityOutcome, ToolId};
+mod error;
+mod manifest;
+mod mint;
+mod narrow;
+mod resolver;
 
-/// Resolve declared tool needs into a host-minted grant. Stub: deny-all until AEG-5.
-pub fn resolve(tool_id: ToolId) -> CapabilityOutcome {
-    CapabilityOutcome::Denied {
-        reason: format!("capability resolver not implemented for {}", tool_id),
-    }
-}
-
-/// Mint helper for tests and future manifest parsing.
-pub fn mint_deny_all(tool_id: ToolId, grant_id: impl Into<String>) -> CapabilityGrant {
-    CapabilityGrant::deny_all(tool_id, grant_id)
-}
+pub use error::CapabilityError;
+pub use manifest::{
+    FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest,
+    DEFAULT_MAX_MEMORY_BYTES, DEFAULT_MAX_WALL_MS,
+};
+pub use mint::{mint_grant, PolicyCeiling};
+pub use narrow::{grant_is_subset, narrow_grant};
+pub use resolver::{mint_deny_all, resolve, CapabilityResolver};
