@@ -12,12 +12,14 @@
 //! Failing exit paths classify into [`SandboxError`], which bridges to the
 //! schema-versioned audit `ExecutionOutcome`.
 
+mod bindings;
 mod engine;
 mod error;
+mod host;
 mod limits;
 mod state;
 
-pub use engine::{PreparedTool, SandboxEngine};
+pub use engine::{PreparedFixture, PreparedTool, SandboxEngine};
 pub use error::SandboxError;
 pub use limits::MemoryLimiter;
 pub use state::ToolState;

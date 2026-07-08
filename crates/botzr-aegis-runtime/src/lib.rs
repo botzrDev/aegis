@@ -1,20 +1,28 @@
 //! Library-mode entry point — wires the enforcement pipeline in load-bearing order.
 
+mod digest;
+mod error;
+
+use std::collections::HashMap;
+
 use botzr_aegis_audit::{AuditError, AuditWriter, CallSession};
-use botzr_aegis_capability::{CapabilityResolver, PolicyCeiling};
+use botzr_aegis_capability::{CapabilityResolver, PolicyCeiling, ToolManifest};
 use botzr_aegis_core::{
     CapabilityOutcome, ExecutionOutcome, PolicyAction, PolicyOutcome, ToolId, PIPELINE_STAGES,
 };
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
-use botzr_aegis_sandbox::SandboxEngine;
+use botzr_aegis_sandbox::{PreparedTool, SandboxEngine};
+
+pub use digest::sha256_hex;
+pub use error::RegisterError;
 
 /// Runtime configuration.
-#[derive(Debug)]
 pub struct Runtime {
     policy: PolicyEngine,
     capabilities: CapabilityResolver,
     sandbox: SandboxEngine,
     audit: AuditWriter,
+    prepared: HashMap<ToolId, PreparedTool>,
 }
 
 impl Runtime {
@@ -44,9 +52,51 @@ impl Runtime {
         &self.audit
     }
 
-    /// Access the capability resolver for tool registration (AEG-23 expands this).
+    /// Access the capability resolver for tool registration.
     pub fn capabilities(&mut self) -> &mut CapabilityResolver {
         &mut self.capabilities
+    }
+
+    /// Register a tool manifest and its WASM component bytes.
+    ///
+    /// When `manifest.sha256` is set, the digest must match `component_bytes`
+    /// (G10). The component is prepared once and cached for repeat calls.
+    pub fn register(
+        &mut self,
+        manifest: ToolManifest,
+        component_bytes: Vec<u8>,
+    ) -> Result<(), RegisterError> {
+        if let Some(expected) = &manifest.sha256 {
+            let actual = sha256_hex(&component_bytes);
+            if &actual != expected {
+                return Err(RegisterError::Sha256Mismatch {
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+        }
+
+        let prepared = self
+            .sandbox
+            .prepare(&component_bytes)
+            .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
+        self.capabilities.register(manifest.clone());
+        self.prepared.insert(manifest.tool.id.clone(), prepared);
+        Ok(())
+    }
+
+    /// Register using bytes loaded from `manifest.component_path` relative to
+    /// `manifest.base_dir`. Fails when the path is unset or unreadable.
+    pub fn register_from_manifest(&mut self, manifest: ToolManifest) -> Result<(), RegisterError> {
+        let rel = manifest
+            .component_path
+            .as_ref()
+            .ok_or(RegisterError::MissingComponent)?;
+        let path = manifest.base_dir.join(rel);
+        let bytes = std::fs::read(&path).map_err(|e| {
+            RegisterError::SandboxPrepare(format!("read component {}: {e}", path.display()))
+        })?;
+        self.register(manifest, bytes)
     }
 
     /// Execute a tool call through POLICY → CAPABILITY → SANDBOX → AUDIT.
@@ -89,11 +139,14 @@ impl Runtime {
         session.set_capability(capability_outcome.clone());
 
         let (execution, output) = match &capability_outcome {
-            CapabilityOutcome::Granted { grant } => match self.sandbox.execute(grant, input) {
-                Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
-                Err(message) => (
-                    ExecutionOutcome::Trap {
-                        message: message.clone(),
+            CapabilityOutcome::Granted { grant } => match self.prepared.get(&tool_id) {
+                Some(prepared) => match self.sandbox.execute(prepared, grant, input) {
+                    Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                    Err(err) => (err.to_execution_outcome(), None),
+                },
+                None => (
+                    ExecutionOutcome::HostDenied {
+                        reason: "tool not registered in runtime".into(),
                     },
                     None,
                 ),
@@ -120,6 +173,7 @@ impl Default for Runtime {
             capabilities: CapabilityResolver::new(),
             sandbox: SandboxEngine::default(),
             audit: AuditWriter::open_temp().expect("temp audit sink must open"),
+            prepared: HashMap::new(),
         }
     }
 }
@@ -150,6 +204,9 @@ fn policy_rejection_message(action: &PolicyAction) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
     use botzr_aegis_policy::PolicyEngine;
 
     #[test]
@@ -206,5 +263,58 @@ rules:
             err.starts_with("policy pending approval: apr-gate-smoke-smoke-"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn echo_tool_runs_end_to_end() {
+        let wasm = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
+        let digest = sha256_hex(wasm);
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool");
+        let manifest = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("echo"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            &base,
+        )
+        .with_sha256(digest);
+
+        let mut rt = Runtime::new();
+        rt.register(manifest, wasm.to_vec()).expect("register echo");
+
+        let input = b"hello-aegis";
+        let out = rt
+            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .expect("echo run succeeds");
+        assert_eq!(out, input);
+
+        let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"phase\":\"intent\""));
+        assert!(lines[1].contains("\"status\":\"success\""));
+    }
+
+    #[test]
+    fn sha256_mismatch_rejects_registration() {
+        let wasm = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool");
+        let manifest = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("echo"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            &base,
+        )
+        .with_sha256("deadbeef");
+
+        let mut rt = Runtime::new();
+        let err = rt.register(manifest, wasm.to_vec()).unwrap_err();
+        assert!(matches!(err, RegisterError::Sha256Mismatch { .. }));
     }
 }

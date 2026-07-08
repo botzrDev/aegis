@@ -36,6 +36,11 @@ pub struct ToolManifest {
     pub net: Option<NetNeeds>,
     pub limits: ToolLimits,
     pub base_dir: PathBuf,
+    /// Optional relative path to the WASM component (from `base_dir`).
+    pub component_path: Option<PathBuf>,
+    /// Optional SHA-256 pin (hex, lowercase). When set, registration refuses a
+    /// digest mismatch (G10).
+    pub sha256: Option<String>,
 }
 
 /// Filesystem needs — absence of `write` means write is denied.
@@ -91,6 +96,8 @@ impl ToolManifest {
             net: None,
             limits: ToolLimits::default(),
             base_dir: base_dir.as_ref().to_path_buf(),
+            component_path: None,
+            sha256: None,
         }
     }
 
@@ -106,6 +113,16 @@ impl ToolManifest {
 
     pub fn with_limits(mut self, limits: ToolLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    pub fn with_component_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.component_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn with_sha256(mut self, sha256: impl Into<String>) -> Self {
+        self.sha256 = Some(sha256.into());
         self
     }
 }

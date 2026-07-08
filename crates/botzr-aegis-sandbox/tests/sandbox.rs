@@ -48,7 +48,7 @@ const GROW: &str = r#"
 fn engine_builds_and_prepares_component() {
     let engine = SandboxEngine::new().expect("engine builds");
     engine
-        .prepare(NOOP)
+        .prepare_fixture(NOOP)
         .expect("empty-import component prepares");
 }
 
@@ -88,7 +88,7 @@ fn build_store_rejects_missing_preopen_dir() {
 #[tokio::test]
 async fn noop_component_runs_to_completion() {
     let engine = SandboxEngine::new().unwrap();
-    let tool = engine.prepare(NOOP).unwrap();
+    let tool = engine.prepare_fixture(NOOP).unwrap();
     let g = grant(None, 1 << 20, 1000);
     tool.call_unit(&engine, &g, "go")
         .await
@@ -98,7 +98,7 @@ async fn noop_component_runs_to_completion() {
 #[tokio::test]
 async fn epoch_deadline_traps_spinning_guest() {
     let engine = SandboxEngine::new().unwrap();
-    let tool = engine.prepare(SPIN).unwrap();
+    let tool = engine.prepare_fixture(SPIN).unwrap();
     // 50 ms budget; the 1 ms ticker trips the deadline on the loop back-edge.
     let g = grant(None, 1 << 20, 50);
     let err = tool
@@ -114,7 +114,7 @@ async fn epoch_deadline_traps_spinning_guest() {
 #[tokio::test]
 async fn memory_limiter_denies_growth_past_cap() {
     let engine = SandboxEngine::new().unwrap();
-    let tool = engine.prepare(GROW).unwrap();
+    let tool = engine.prepare_fixture(GROW).unwrap();
     // 128 KiB cap: the initial 64 KiB page fits, growing by 100 pages does not.
     let g = grant(None, 128 * 1024, 1000);
     let result = tool
@@ -127,7 +127,7 @@ async fn memory_limiter_denies_growth_past_cap() {
 #[tokio::test]
 async fn instantiation_fails_when_initial_memory_exceeds_cap() {
     let engine = SandboxEngine::new().unwrap();
-    let tool = engine.prepare(GROW).unwrap();
+    let tool = engine.prepare_fixture(GROW).unwrap();
     // 0-byte cap: even the initial linear memory page cannot be allocated.
     let g = grant(None, 0, 1000);
     let err = tool

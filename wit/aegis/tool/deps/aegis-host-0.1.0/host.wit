@@ -1,4 +1,16 @@
-package aegis:host/http@0.1.0;
+package aegis:host@0.1.0;
+
+interface log {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    /// Host enforces rate + size caps; no secrets in message.
+    emit: func(level: level, message: string);
+}
 
 interface http {
     record response {

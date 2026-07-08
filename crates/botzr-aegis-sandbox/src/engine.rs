@@ -11,10 +11,11 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use botzr_aegis_core::CapabilityGrant;
-use wasmtime::component::{Component, InstancePre, Linker};
+use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder};
 
+use crate::bindings::{Tool, ToolPre};
 use crate::error::SandboxError;
 use crate::state::ToolState;
 
@@ -44,6 +45,8 @@ impl SandboxEngine {
 
         let mut linker = Linker::<ToolState>::new(&engine);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(SandboxError::EngineInit)?;
+        Tool::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)
+            .map_err(SandboxError::EngineInit)?;
 
         let epoch = EpochTicker::spawn(engine.clone());
         Ok(Self {
@@ -57,9 +60,11 @@ impl SandboxEngine {
         &self.engine
     }
 
-    /// Compile a component and cache its `InstancePre`, so repeat calls skip
-    /// recompilation. The returned tool is instantiated into a fresh store per
-    /// call.
+    pub fn linker(&self) -> &Linker<ToolState> {
+        &self.linker
+    }
+
+    /// Compile a WIT `tool` world component and cache its `ToolPre`.
     pub fn prepare(&self, component_bytes: impl AsRef<[u8]>) -> Result<PreparedTool, SandboxError> {
         let component =
             Component::new(&self.engine, component_bytes).map_err(SandboxError::ComponentLoad)?;
@@ -67,7 +72,23 @@ impl SandboxEngine {
             .linker
             .instantiate_pre(&component)
             .map_err(SandboxError::ComponentLoad)?;
-        Ok(PreparedTool { pre })
+        let tool_pre = ToolPre::new(pre).map_err(SandboxError::ComponentLoad)?;
+        Ok(PreparedTool { tool_pre })
+    }
+
+    /// Compile a raw component fixture (no WIT exports required). Used by the
+    /// deny-suite and resource-metering tests.
+    pub fn prepare_fixture(
+        &self,
+        component_bytes: impl AsRef<[u8]>,
+    ) -> Result<PreparedFixture, SandboxError> {
+        let component =
+            Component::new(&self.engine, component_bytes).map_err(SandboxError::ComponentLoad)?;
+        let pre = self
+            .linker
+            .instantiate_pre(&component)
+            .map_err(SandboxError::ComponentLoad)?;
+        Ok(PreparedFixture { pre })
     }
 
     /// Build a per-call `Store` **from the grant**. This is the load-bearing
@@ -88,16 +109,14 @@ impl SandboxEngine {
         Ok(store)
     }
 
-    /// Compatibility entry for the current runtime stub. R1 configures the
-    /// store from the grant (the load-bearing step) and proves it builds; full
-    /// component invocation is wired by the runtime orchestrator (AEG-23) once
-    /// tools are registered and the WIT world bindings + host imports land.
-    pub fn execute(&self, grant: &CapabilityGrant, _input: &[u8]) -> Result<Vec<u8>, String> {
-        let _store = self.build_store(grant).map_err(|e| e.to_string())?;
-        Err(
-            "sandbox R1: no tool prepared — use prepare() + run; invocation wired in AEG-23"
-                .to_string(),
-        )
+    /// Invoke a prepared tool's WIT `run` export with the grant-scoped store.
+    pub fn execute(
+        &self,
+        tool: &PreparedTool,
+        grant: &CapabilityGrant,
+        input: &[u8],
+    ) -> Result<Vec<u8>, SandboxError> {
+        block_on_async(tool.run(self, grant, input))
     }
 }
 
@@ -115,18 +134,19 @@ impl Default for SandboxEngine {
     }
 }
 
-/// A compiled, link-resolved tool ready to instantiate into per-call stores.
+/// A compiled, link-resolved WIT tool ready to instantiate into per-call stores.
 pub struct PreparedTool {
-    pre: InstancePre<ToolState>,
+    tool_pre: ToolPre<ToolState>,
 }
 
-impl PreparedTool {
+/// A raw component fixture for deny-suite / resource tests (no WIT exports).
+pub struct PreparedFixture {
+    pre: wasmtime::component::InstancePre<ToolState>,
+}
+
+impl PreparedFixture {
     /// Instantiate into a fresh per-call store and invoke a `func() -> ()`
     /// export.
-    ///
-    /// This is the minimal typed entry used by the deny-suite and the
-    /// forthcoming orchestrator; the full `run(list<u8>) -> result<...>` world
-    /// binding lands with the Stage-2 tool and its Model B host imports.
     pub async fn call_unit(
         &self,
         engine: &SandboxEngine,
@@ -152,8 +172,6 @@ impl PreparedTool {
     }
 
     /// Instantiate and invoke a `func() -> s32` export, returning the value.
-    /// Used to exercise the memory limiter (a guest that grows memory past its
-    /// cap sees `memory.grow` return `-1`).
     pub async fn call_i32(
         &self,
         engine: &SandboxEngine,
@@ -177,6 +195,33 @@ impl PreparedTool {
             .await
             .map_err(SandboxError::from_wasmtime)?;
         Ok(value)
+    }
+}
+
+impl PreparedTool {
+    /// Instantiate into a fresh per-call store and invoke WIT `run`.
+    pub async fn run(
+        &self,
+        engine: &SandboxEngine,
+        grant: &CapabilityGrant,
+        input: &[u8],
+    ) -> Result<Vec<u8>, SandboxError> {
+        let mut store = engine.build_store(grant)?;
+        let tool = self
+            .tool_pre
+            .instantiate_async(&mut store)
+            .await
+            .map_err(SandboxError::from_wasmtime)?;
+        match tool
+            .call_run(&mut store, input)
+            .await
+            .map_err(SandboxError::from_wasmtime)?
+        {
+            Ok(bytes) => Ok(bytes),
+            Err(err) => Err(SandboxError::Trap {
+                message: format!("{}: {}", err.code, err.message),
+            }),
+        }
     }
 }
 
@@ -205,6 +250,14 @@ fn build_wasi_ctx(grant: &CapabilityGrant) -> anyhow::Result<WasiCtx> {
     // `grant.net` lands with the net capability work; absence is a full deny.
 
     Ok(b.build())
+}
+
+fn block_on_async<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio current-thread runtime must build")
+        .block_on(future)
 }
 
 /// Background thread that increments the engine epoch on a fixed tick so

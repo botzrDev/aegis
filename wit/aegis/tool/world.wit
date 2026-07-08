@@ -1,8 +1,5 @@
 /// Canonical Component Model world for Aegis WASM tools (Model A + Model B host imports).
 /// Authority: Gap Resolutions G1 — adopt/amend at OQ-9.
-///
-/// Package layout: `wit/aegis/tool/world.wit` (this tree). Host imports live in
-/// `deps/aegis-host-0.1.0/`.
 package aegis:tool@0.1.0;
 
 interface tool-types {
