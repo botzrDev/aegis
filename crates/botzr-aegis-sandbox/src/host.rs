@@ -71,6 +71,32 @@ fn parse_http_host(url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    use botzr_aegis_core::{CapabilityGrant, HttpGrant, NetGrant, ToolId};
+    use http::Host as _;
+    use wasmtime_wasi::WasiCtxBuilder;
+
+    fn state_with_net(net: Option<NetGrant>) -> ToolState {
+        let grant = CapabilityGrant {
+            grant_id: "g1".into(),
+            tool_id: ToolId::new("net-tool"),
+            fs: None,
+            net,
+            max_memory_bytes: 1 << 20,
+            max_wall_ms: 1_000,
+        };
+        ToolState::new(WasiCtxBuilder::new().build(), grant)
+    }
+
+    fn allow_get(host: &str) -> NetGrant {
+        NetGrant {
+            http: vec![HttpGrant {
+                host: host.into(),
+                ports: vec![443],
+                methods: vec!["GET".into()],
+            }],
+        }
+    }
+
     #[test]
     fn parse_http_host_extracts_authority() {
         assert_eq!(
@@ -78,5 +104,52 @@ mod tests {
             Some("example.com".into())
         );
         assert_eq!(parse_http_host("not-a-url"), None);
+    }
+
+    #[tokio::test]
+    async fn http_get_denies_without_net_grant() {
+        let mut state = state_with_net(None);
+        let deny = state
+            .get("https://api.example.com/data".into())
+            .await
+            .expect_err("no net grant must deny");
+        assert!(deny.reason.contains("no net grant"), "{}", deny.reason);
+    }
+
+    #[tokio::test]
+    async fn http_get_denies_host_outside_allowlist() {
+        let mut state = state_with_net(Some(allow_get("api.example.com")));
+        let deny = state
+            .get("https://evil.example.com/exfil".into())
+            .await
+            .expect_err("host outside the allow-list must deny");
+        assert!(deny.reason.contains("not in grant"), "{}", deny.reason);
+    }
+
+    #[tokio::test]
+    async fn http_get_denies_malformed_url() {
+        let mut state = state_with_net(Some(allow_get("api.example.com")));
+        let deny = state
+            .get("ftp://api.example.com/x".into())
+            .await
+            .expect_err("non-http scheme must deny");
+        assert!(deny.reason.contains("malformed url"), "{}", deny.reason);
+    }
+
+    #[tokio::test]
+    async fn http_get_passes_grant_check_then_stubs_effect() {
+        // An allow-listed host clears the grant check; the effect is still a
+        // no-network stub in the v1 slice. This proves the grant gate is what
+        // denies unlisted hosts, not a blanket "http is off".
+        let mut state = state_with_net(Some(allow_get("api.example.com")));
+        let deny = state
+            .get("https://api.example.com/data".into())
+            .await
+            .expect_err("v1 slice performs no real network I/O");
+        assert!(
+            deny.reason.contains("no network in v1 slice"),
+            "{}",
+            deny.reason
+        );
     }
 }

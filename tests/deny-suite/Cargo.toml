@@ -1,0 +1,20 @@
+[package]
+name = "aegis-deny-suite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+botzr-aegis-audit = { workspace = true }
+botzr-aegis-capability = { workspace = true }
+botzr-aegis-core = { workspace = true }
+botzr-aegis-policy = { workspace = true }
+botzr-aegis-runtime = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

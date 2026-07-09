@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use botzr_aegis_core::CapabilityGrant;
 use botzr_aegis_core::CallMetrics;
+use botzr_aegis_core::CapabilityGrant;
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder};
@@ -201,7 +201,7 @@ impl PreparedFixture {
                 .map_err(SandboxError::from_wasmtime)?;
             Ok(Vec::new())
         };
-        let output = run.await;
+        let output = reclassify_memory_trap(run.await, &store);
         SandboxRun {
             output,
             metrics: metrics_from_store(&store, started),
@@ -246,7 +246,7 @@ impl PreparedFixture {
                 .map_err(SandboxError::from_wasmtime)?;
             Ok(value.to_le_bytes().to_vec())
         };
-        let output = run.await;
+        let output = reclassify_memory_trap(run.await, &store);
         SandboxRun {
             output,
             metrics: metrics_from_store(&store, started),
@@ -292,7 +292,7 @@ impl PreparedTool {
                 }),
             }
         };
-        let output = run.await;
+        let output = reclassify_memory_trap(run.await, &store);
         SandboxRun {
             output,
             metrics: metrics_from_store(&store, started),
@@ -304,6 +304,29 @@ fn metrics_from_store(store: &Store<ToolState>, started: Instant) -> CallMetrics
     CallMetrics {
         wall_ms: started.elapsed().as_millis() as u64,
         peak_memory_bytes: store.data().limiter().peak_bytes(),
+    }
+}
+
+/// Reclassify a post-cap trap as a memory resource exhaustion.
+///
+/// When the memory limiter refused a `memory.grow` (or the initial allocation)
+/// at the grant's cap and the guest then trapped — typically an out-of-bounds
+/// access on the memory it assumed it received — the proximate cause is the
+/// memory limit, not arbitrary guest logic. The audit then records
+/// `resource_exceeded{memory}` rather than an opaque trap, matching how the
+/// wall-clock cap surfaces. A clean run, an in-band `-1` the guest handled, or a
+/// trap with no cap-denied grow is left untouched.
+fn reclassify_memory_trap(
+    output: Result<Vec<u8>, SandboxError>,
+    store: &Store<ToolState>,
+) -> Result<Vec<u8>, SandboxError> {
+    match output {
+        Err(SandboxError::Trap { .. }) if store.data().limiter().denied_growth() => {
+            Err(SandboxError::ResourceExceeded {
+                kind: "memory".to_string(),
+            })
+        }
+        other => other,
     }
 }
 

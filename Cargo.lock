@@ -12,6 +12,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegis-deny-suite"
+version = "0.1.0"
+dependencies = [
+ "botzr-aegis-audit",
+ "botzr-aegis-capability",
+ "botzr-aegis-core",
+ "botzr-aegis-policy",
+ "botzr-aegis-runtime",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "aegis-integration-tests"
 version = "0.1.0"
 dependencies = [
