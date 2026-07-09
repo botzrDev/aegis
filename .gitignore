@@ -2,3 +2,9 @@
 /target/
 **/target/
 *.crate
+
+# cargo-component / wit-bindgen generated guest bindings
+tests/fixtures/**/src/bindings.rs
+
+# duplicate WIT deps copy; canonical tree is wit/aegis/tool/deps/
+/wit/deps/
