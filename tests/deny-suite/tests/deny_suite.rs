@@ -12,10 +12,10 @@
 //!   * resource caps                   — wall-clock (SPIN) and memory (GROW_TOUCH)
 //!   * delegation                      — `narrow_grant` refuses limit escalation
 //!
-//! Two adversarial paths live at the layer that owns them, because no WIT tool
-//! that imports them exists yet:
-//!   * host-http deny (Model B)        — `botzr-aegis-sandbox` `host.rs` unit tests
-//!   * guest `..` fs-escape containment — deferred to the real-tool E2E (AEG-22)
+//! Two adversarial paths that required a compiled WIT guest are now covered by
+//! `tests/adversarial-demo/` (AEG-22 / damage-bot):
+//!   * guest fs write + path containment (`..`, symlink)
+//!   * guest http import through `Runtime::execute_tool_call` (Model B)
 
 use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{

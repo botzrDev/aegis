@@ -1,0 +1,23 @@
+[package]
+name = "damage-bot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[package.metadata.component]
+package = "aegis:tool"
+
+[package.metadata.component.target]
+world = "tool"
+path = "../../../wit/aegis/tool"
+
+[package.metadata.component.target.dependencies]
+"aegis:host" = { path = "../../../wit/aegis/tool/deps/aegis-host-0.1.0" }
