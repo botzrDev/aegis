@@ -12,6 +12,8 @@ members = [
     "tests/integration",
     "tests/deny-suite",
     "tests/fixtures/echo-tool",
+    "tests/fixtures/damage-bot",
+    "tests/adversarial-demo",
 ]
 
 [workspace.package]

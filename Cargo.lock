@@ -12,6 +12,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegis-adversarial-demo"
+version = "0.1.0"
+dependencies = [
+ "botzr-aegis-audit",
+ "botzr-aegis-capability",
+ "botzr-aegis-core",
+ "botzr-aegis-runtime",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "aegis-deny-suite"
 version = "0.1.0"
 dependencies = [
@@ -539,6 +551,15 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "damage-bot"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.44.0",
 ]
 
 [[package]]
