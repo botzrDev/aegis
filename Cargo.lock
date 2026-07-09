@@ -171,6 +171,7 @@ dependencies = [
  "botzr-aegis-core",
  "botzr-aegis-policy",
  "botzr-aegis-sandbox",
+ "serde_json",
  "sha2",
  "thiserror 2.0.18",
 ]
