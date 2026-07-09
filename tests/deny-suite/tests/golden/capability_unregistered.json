@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-cap-unregistered","tool_id":"ghost","input_digest":"22222222","policy":{"status":"allowed"},"capability":{"status":"denied","reason":"tool not registered: ghost","denied_capability":"tool.registry"},"execution":{"status":"host_denied","reason":"capability denied"}}

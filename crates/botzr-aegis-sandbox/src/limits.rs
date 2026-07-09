@@ -13,12 +13,16 @@ const MAX_TABLE_ELEMENTS: usize = 10_000;
 /// Caps guest linear-memory growth at the grant's `max_memory_bytes`.
 ///
 /// `memory_growing` returning `Ok(false)` makes the guest `memory.grow` return
-/// `-1`; a guest that then touches the memory it assumed it got traps as an
-/// out-of-bounds access, which surfaces as `ExecutionOutcome::ResourceExceeded`.
+/// `-1` and sets [`denied_growth`](Self::denied_growth). A guest that then
+/// touches the memory it assumed it got traps out-of-bounds; the engine reads
+/// `denied_growth` to reclassify that trap as
+/// `ExecutionOutcome::ResourceExceeded { kind: "memory" }` (see
+/// `engine::reclassify_memory_trap`).
 #[derive(Debug, Clone)]
 pub struct MemoryLimiter {
     max_bytes: usize,
     peak_bytes: usize,
+    denied_growth: bool,
 }
 
 impl MemoryLimiter {
@@ -29,6 +33,7 @@ impl MemoryLimiter {
         Self {
             max_bytes,
             peak_bytes: 0,
+            denied_growth: false,
         }
     }
 
@@ -38,6 +43,13 @@ impl MemoryLimiter {
 
     pub fn peak_bytes(&self) -> u64 {
         u64::try_from(self.peak_bytes).unwrap_or(u64::MAX)
+    }
+
+    /// True once a `memory.grow` (or the initial allocation) was refused because
+    /// it would exceed the cap. The engine uses this to reclassify a subsequent
+    /// trap as a memory resource exhaustion rather than an opaque trap.
+    pub fn denied_growth(&self) -> bool {
+        self.denied_growth
     }
 
     fn record_size(&mut self, size: usize) {
@@ -54,7 +66,11 @@ impl ResourceLimiter for MemoryLimiter {
     ) -> anyhow::Result<bool> {
         self.record_size(current);
         self.record_size(desired);
-        Ok(desired <= self.max_bytes)
+        let allowed = desired <= self.max_bytes;
+        if !allowed {
+            self.denied_growth = true;
+        }
+        Ok(allowed)
     }
 
     fn table_growing(
@@ -97,10 +113,21 @@ mod tests {
         let mut limiter = MemoryLimiter::new(128 * 1024);
         assert!(limiter.memory_growing(0, 64 * 1024, None).unwrap());
         assert_eq!(limiter.peak_bytes(), 64 * 1024);
-        assert!(!limiter
-            .memory_growing(64 * 1024, 256 * 1024, None)
-            .unwrap());
+        assert!(!limiter.memory_growing(64 * 1024, 256 * 1024, None).unwrap());
         assert_eq!(limiter.peak_bytes(), 256 * 1024);
+    }
+
+    #[test]
+    fn records_denied_growth_flag() {
+        let mut limiter = MemoryLimiter::new(128 * 1024);
+        assert!(!limiter.denied_growth(), "clean before any grow");
+        assert!(limiter.memory_growing(0, 64 * 1024, None).unwrap());
+        assert!(
+            !limiter.denied_growth(),
+            "in-cap grow does not flip the flag"
+        );
+        assert!(!limiter.memory_growing(64 * 1024, 256 * 1024, None).unwrap());
+        assert!(limiter.denied_growth(), "over-cap grow flips the flag");
     }
 
     #[test]

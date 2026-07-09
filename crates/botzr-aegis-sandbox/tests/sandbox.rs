@@ -44,6 +44,19 @@ const GROW: &str = r#"
   (func (export "grow") (result s32) (canon lift (core func $i "grow"))))
 "#;
 
+// Grows past the cap (denied → -1), then stores to an address beyond its actual
+// linear memory, which traps out-of-bounds.
+const GROW_TOUCH: &str = r#"
+(component
+  (core module $m
+    (memory 1)
+    (func (export "grow_touch")
+      (drop (memory.grow (i32.const 1000)))
+      (i32.store (i32.const 5000000) (i32.const 1))))
+  (core instance $i (instantiate $m))
+  (func (export "grow-touch") (canon lift (core func $i "grow_touch"))))
+"#;
+
 #[test]
 fn engine_builds_and_prepares_component() {
     let engine = SandboxEngine::new().expect("engine builds");
@@ -126,15 +139,30 @@ async fn memory_limiter_denies_growth_past_cap() {
 }
 
 #[tokio::test]
+async fn memory_cap_trip_classifies_as_resource_exceeded() {
+    let engine = SandboxEngine::new().unwrap();
+    let tool = engine.prepare_fixture(GROW_TOUCH).unwrap();
+    // 128 KiB cap: the initial page fits, the 1000-page grow is denied, and the
+    // guest's follow-up store past its actual memory traps. Because the trap was
+    // preceded by a cap-denied grow, it is classified as a memory resource
+    // exhaustion (kind = "memory") rather than an opaque trap.
+    let g = grant(None, 128 * 1024, 1000);
+    let run = tool.call_unit(&engine, &g, "grow-touch").await;
+    let err = run.output.expect_err("grow-and-touch guest must fail");
+    match err {
+        SandboxError::ResourceExceeded { kind } => assert_eq!(kind, "memory"),
+        other => panic!("expected memory ResourceExceeded, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn instantiation_fails_when_initial_memory_exceeds_cap() {
     let engine = SandboxEngine::new().unwrap();
     let tool = engine.prepare_fixture(GROW).unwrap();
     // 0-byte cap: even the initial linear memory page cannot be allocated.
     let g = grant(None, 0, 1000);
     let run = tool.call_i32(&engine, &g, "grow").await;
-    let err = run
-        .output
-        .expect_err("initial memory over cap must fail");
+    let err = run.output.expect_err("initial memory over cap must fail");
     // Classified as a trap/resource failure, never a silent success.
     assert!(matches!(
         err,

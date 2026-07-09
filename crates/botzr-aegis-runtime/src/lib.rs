@@ -177,9 +177,9 @@ impl Runtime {
                         Err(err) => (err.to_execution_outcome(), None),
                     }
                 } else if let Some(fixture) = self.fixtures.get(&tool_id) {
-                    let run = self
-                        .sandbox
-                        .execute_fixture(&fixture.prepared, grant, &fixture.export);
+                    let run =
+                        self.sandbox
+                            .execute_fixture(&fixture.prepared, grant, &fixture.export);
                     session.set_metrics(run.metrics);
                     match run.output {
                         Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),

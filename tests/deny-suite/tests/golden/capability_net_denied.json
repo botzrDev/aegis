@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-cap-net","tool_id":"net-wildcard","input_digest":"33333333","policy":{"status":"allowed"},"capability":{"status":"denied","reason":"net denied for host `*.evil.example.com`: wildcard hosts are not supported in v1","denied_capability":"net.http"},"execution":{"status":"host_denied","reason":"capability denied"}}
