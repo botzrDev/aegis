@@ -30,6 +30,10 @@ impl ToolState {
         }
     }
 
+    pub(crate) fn limiter(&self) -> &MemoryLimiter {
+        &self.limiter
+    }
+
     pub(crate) fn limiter_mut(&mut self) -> &mut MemoryLimiter {
         &mut self.limiter
     }

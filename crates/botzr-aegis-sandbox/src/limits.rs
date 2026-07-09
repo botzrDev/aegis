@@ -18,6 +18,7 @@ const MAX_TABLE_ELEMENTS: usize = 10_000;
 #[derive(Debug, Clone)]
 pub struct MemoryLimiter {
     max_bytes: usize,
+    peak_bytes: usize,
 }
 
 impl MemoryLimiter {
@@ -25,21 +26,34 @@ impl MemoryLimiter {
         // Saturate rather than wrap on 32-bit hosts: a grant asking for more
         // than the host address space is capped at the host maximum.
         let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
-        Self { max_bytes }
+        Self {
+            max_bytes,
+            peak_bytes: 0,
+        }
     }
 
     pub fn max_bytes(&self) -> usize {
         self.max_bytes
+    }
+
+    pub fn peak_bytes(&self) -> u64 {
+        u64::try_from(self.peak_bytes).unwrap_or(u64::MAX)
+    }
+
+    fn record_size(&mut self, size: usize) {
+        self.peak_bytes = self.peak_bytes.max(size);
     }
 }
 
 impl ResourceLimiter for MemoryLimiter {
     fn memory_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> anyhow::Result<bool> {
+        self.record_size(current);
+        self.record_size(desired);
         Ok(desired <= self.max_bytes)
     }
 
@@ -76,6 +90,17 @@ mod tests {
     fn deny_all_grant_blocks_any_memory() {
         let mut limiter = MemoryLimiter::new(0);
         assert!(!limiter.memory_growing(0, 1, None).unwrap());
+    }
+
+    #[test]
+    fn tracks_peak_memory() {
+        let mut limiter = MemoryLimiter::new(128 * 1024);
+        assert!(limiter.memory_growing(0, 64 * 1024, None).unwrap());
+        assert_eq!(limiter.peak_bytes(), 64 * 1024);
+        assert!(!limiter
+            .memory_growing(64 * 1024, 256 * 1024, None)
+            .unwrap());
+        assert_eq!(limiter.peak_bytes(), 256 * 1024);
     }
 
     #[test]

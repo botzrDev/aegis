@@ -8,9 +8,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use botzr_aegis_core::CapabilityGrant;
+use botzr_aegis_core::CallMetrics;
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder};
@@ -22,6 +23,13 @@ use crate::state::ToolState;
 /// Epoch tick period. One tick ≈ one millisecond, so a grant's `max_wall_ms`
 /// maps directly onto an epoch deadline in ticks.
 const EPOCH_TICK: Duration = Duration::from_millis(1);
+
+/// Result of a sandbox invocation, including observed resource usage (R5).
+#[derive(Debug)]
+pub struct SandboxRun {
+    pub output: Result<Vec<u8>, SandboxError>,
+    pub metrics: CallMetrics,
+}
 
 /// Process-wide sandbox engine: one wasmtime `Engine`, a WASI-populated
 /// component `Linker`, and a background epoch ticker for CPU/wall metering.
@@ -115,8 +123,18 @@ impl SandboxEngine {
         tool: &PreparedTool,
         grant: &CapabilityGrant,
         input: &[u8],
-    ) -> Result<Vec<u8>, SandboxError> {
+    ) -> SandboxRun {
         block_on_async(tool.run(self, grant, input))
+    }
+
+    /// Invoke a raw fixture export (deny-suite / resource-cap tests).
+    pub fn execute_fixture(
+        &self,
+        fixture: &PreparedFixture,
+        grant: &CapabilityGrant,
+        export: &str,
+    ) -> SandboxRun {
+        block_on_async(fixture.call_unit(self, grant, export))
     }
 }
 
@@ -152,23 +170,42 @@ impl PreparedFixture {
         engine: &SandboxEngine,
         grant: &CapabilityGrant,
         export: &str,
-    ) -> Result<(), SandboxError> {
-        let mut store = engine.build_store(grant)?;
-        let instance = self
-            .pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        let func = instance
-            .get_typed_func::<(), ()>(&mut store, export)
-            .map_err(|_| SandboxError::MissingExport(export.to_string()))?;
-        func.call_async(&mut store, ())
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        func.post_return_async(&mut store)
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        Ok(())
+    ) -> SandboxRun {
+        let started = Instant::now();
+        let mut store = match engine.build_store(grant) {
+            Ok(store) => store,
+            Err(err) => {
+                return SandboxRun {
+                    output: Err(err),
+                    metrics: CallMetrics {
+                        wall_ms: started.elapsed().as_millis() as u64,
+                        peak_memory_bytes: 0,
+                    },
+                };
+            }
+        };
+        let run = async {
+            let instance = self
+                .pre
+                .instantiate_async(&mut store)
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            let func = instance
+                .get_typed_func::<(), ()>(&mut store, export)
+                .map_err(|_| SandboxError::MissingExport(export.to_string()))?;
+            func.call_async(&mut store, ())
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            func.post_return_async(&mut store)
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            Ok(Vec::new())
+        };
+        let output = run.await;
+        SandboxRun {
+            output,
+            metrics: metrics_from_store(&store, started),
+        }
     }
 
     /// Instantiate and invoke a `func() -> s32` export, returning the value.
@@ -177,24 +214,43 @@ impl PreparedFixture {
         engine: &SandboxEngine,
         grant: &CapabilityGrant,
         export: &str,
-    ) -> Result<i32, SandboxError> {
-        let mut store = engine.build_store(grant)?;
-        let instance = self
-            .pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        let func = instance
-            .get_typed_func::<(), (i32,)>(&mut store, export)
-            .map_err(|_| SandboxError::MissingExport(export.to_string()))?;
-        let (value,) = func
-            .call_async(&mut store, ())
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        func.post_return_async(&mut store)
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        Ok(value)
+    ) -> SandboxRun {
+        let started = Instant::now();
+        let mut store = match engine.build_store(grant) {
+            Ok(store) => store,
+            Err(err) => {
+                return SandboxRun {
+                    output: Err(err),
+                    metrics: CallMetrics {
+                        wall_ms: started.elapsed().as_millis() as u64,
+                        peak_memory_bytes: 0,
+                    },
+                };
+            }
+        };
+        let run = async {
+            let instance = self
+                .pre
+                .instantiate_async(&mut store)
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            let func = instance
+                .get_typed_func::<(), (i32,)>(&mut store, export)
+                .map_err(|_| SandboxError::MissingExport(export.to_string()))?;
+            let (value,) = func
+                .call_async(&mut store, ())
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            func.post_return_async(&mut store)
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            Ok(value.to_le_bytes().to_vec())
+        };
+        let output = run.await;
+        SandboxRun {
+            output,
+            metrics: metrics_from_store(&store, started),
+        }
     }
 }
 
@@ -205,23 +261,49 @@ impl PreparedTool {
         engine: &SandboxEngine,
         grant: &CapabilityGrant,
         input: &[u8],
-    ) -> Result<Vec<u8>, SandboxError> {
-        let mut store = engine.build_store(grant)?;
-        let tool = self
-            .tool_pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(SandboxError::from_wasmtime)?;
-        match tool
-            .call_run(&mut store, input)
-            .await
-            .map_err(SandboxError::from_wasmtime)?
-        {
-            Ok(bytes) => Ok(bytes),
-            Err(err) => Err(SandboxError::Trap {
-                message: format!("{}: {}", err.code, err.message),
-            }),
+    ) -> SandboxRun {
+        let started = Instant::now();
+        let mut store = match engine.build_store(grant) {
+            Ok(store) => store,
+            Err(err) => {
+                return SandboxRun {
+                    output: Err(err),
+                    metrics: CallMetrics {
+                        wall_ms: started.elapsed().as_millis() as u64,
+                        peak_memory_bytes: 0,
+                    },
+                };
+            }
+        };
+        let run = async {
+            let tool = self
+                .tool_pre
+                .instantiate_async(&mut store)
+                .await
+                .map_err(SandboxError::from_wasmtime)?;
+            match tool
+                .call_run(&mut store, input)
+                .await
+                .map_err(SandboxError::from_wasmtime)?
+            {
+                Ok(bytes) => Ok(bytes),
+                Err(err) => Err(SandboxError::Trap {
+                    message: format!("{}: {}", err.code, err.message),
+                }),
+            }
+        };
+        let output = run.await;
+        SandboxRun {
+            output,
+            metrics: metrics_from_store(&store, started),
         }
+    }
+}
+
+fn metrics_from_store(store: &Store<ToolState>, started: Instant) -> CallMetrics {
+    CallMetrics {
+        wall_ms: started.elapsed().as_millis() as u64,
+        peak_memory_bytes: store.data().limiter().peak_bytes(),
     }
 }
 

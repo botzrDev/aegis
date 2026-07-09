@@ -42,6 +42,13 @@ impl AuditIntent {
     }
 }
 
+/// Observed resource usage for a sandboxed call (R5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct CallMetrics {
+    pub wall_ms: u64,
+    pub peak_memory_bytes: u64,
+}
+
 /// Post-execution outcome line — one per call, every exit path.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuditRecord {
@@ -53,6 +60,12 @@ pub struct AuditRecord {
     pub policy: PolicyOutcome,
     pub capability: CapabilityOutcome,
     pub execution: ExecutionOutcome,
+    /// Wall-clock time for sandbox execution. Omitted when the sandbox never ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_ms: Option<u64>,
+    /// Peak guest linear memory during sandbox execution. Omitted when the sandbox never ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory_bytes: Option<u64>,
 }
 
 impl AuditRecord {
@@ -73,7 +86,15 @@ impl AuditRecord {
             policy,
             capability,
             execution,
+            wall_ms: None,
+            peak_memory_bytes: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: CallMetrics) -> Self {
+        self.wall_ms = Some(metrics.wall_ms);
+        self.peak_memory_bytes = Some(metrics.peak_memory_bytes);
+        self
     }
 }
 

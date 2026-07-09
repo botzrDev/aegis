@@ -11,7 +11,7 @@ use botzr_aegis_core::{
     CapabilityOutcome, ExecutionOutcome, PolicyAction, PolicyOutcome, ToolId, PIPELINE_STAGES,
 };
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
-use botzr_aegis_sandbox::{PreparedTool, SandboxEngine};
+use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine};
 
 pub use digest::sha256_hex;
 pub use error::RegisterError;
@@ -23,6 +23,12 @@ pub struct Runtime {
     sandbox: SandboxEngine,
     audit: AuditWriter,
     prepared: HashMap<ToolId, PreparedTool>,
+    fixtures: HashMap<ToolId, FixtureRegistration>,
+}
+
+struct FixtureRegistration {
+    prepared: PreparedFixture,
+    export: String,
 }
 
 impl Runtime {
@@ -85,6 +91,29 @@ impl Runtime {
         Ok(())
     }
 
+    /// Register a raw WASM fixture (no WIT `run` export) for deny-suite and
+    /// resource-cap tests. `entry_export` is the component export to invoke.
+    pub fn register_fixture(
+        &mut self,
+        manifest: ToolManifest,
+        component_bytes: Vec<u8>,
+        entry_export: impl Into<String>,
+    ) -> Result<(), RegisterError> {
+        let prepared = self
+            .sandbox
+            .prepare_fixture(&component_bytes)
+            .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
+        self.capabilities.register(manifest.clone());
+        self.fixtures.insert(
+            manifest.tool.id.clone(),
+            FixtureRegistration {
+                prepared,
+                export: entry_export.into(),
+            },
+        );
+        Ok(())
+    }
+
     /// Register using bytes loaded from `manifest.component_path` relative to
     /// `manifest.base_dir`. Fails when the path is unset or unreadable.
     pub fn register_from_manifest(&mut self, manifest: ToolManifest) -> Result<(), RegisterError> {
@@ -139,18 +168,32 @@ impl Runtime {
         session.set_capability(capability_outcome.clone());
 
         let (execution, output) = match &capability_outcome {
-            CapabilityOutcome::Granted { grant } => match self.prepared.get(&tool_id) {
-                Some(prepared) => match self.sandbox.execute(prepared, grant, input) {
-                    Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
-                    Err(err) => (err.to_execution_outcome(), None),
-                },
-                None => (
-                    ExecutionOutcome::HostDenied {
-                        reason: "tool not registered in runtime".into(),
-                    },
-                    None,
-                ),
-            },
+            CapabilityOutcome::Granted { grant } => {
+                if let Some(prepared) = self.prepared.get(&tool_id) {
+                    let run = self.sandbox.execute(prepared, grant, input);
+                    session.set_metrics(run.metrics);
+                    match run.output {
+                        Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                        Err(err) => (err.to_execution_outcome(), None),
+                    }
+                } else if let Some(fixture) = self.fixtures.get(&tool_id) {
+                    let run = self
+                        .sandbox
+                        .execute_fixture(&fixture.prepared, grant, &fixture.export);
+                    session.set_metrics(run.metrics);
+                    match run.output {
+                        Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                        Err(err) => (err.to_execution_outcome(), None),
+                    }
+                } else {
+                    (
+                        ExecutionOutcome::HostDenied {
+                            reason: "tool not registered in runtime".into(),
+                        },
+                        None,
+                    )
+                }
+            }
             CapabilityOutcome::Denied { .. } => (
                 ExecutionOutcome::HostDenied {
                     reason: "capability denied".into(),
@@ -174,6 +217,7 @@ impl Default for Runtime {
             sandbox: SandboxEngine::default(),
             audit: AuditWriter::open_temp().expect("temp audit sink must open"),
             prepared: HashMap::new(),
+            fixtures: HashMap::new(),
         }
     }
 }

@@ -90,9 +90,9 @@ async fn noop_component_runs_to_completion() {
     let engine = SandboxEngine::new().unwrap();
     let tool = engine.prepare_fixture(NOOP).unwrap();
     let g = grant(None, 1 << 20, 1000);
-    tool.call_unit(&engine, &g, "go")
-        .await
-        .expect("noop returns cleanly");
+    let run = tool.call_unit(&engine, &g, "go").await;
+    run.output.expect("noop returns cleanly");
+    assert!(run.metrics.wall_ms < 1_000);
 }
 
 #[tokio::test]
@@ -101,10 +101,9 @@ async fn epoch_deadline_traps_spinning_guest() {
     let tool = engine.prepare_fixture(SPIN).unwrap();
     // 50 ms budget; the 1 ms ticker trips the deadline on the loop back-edge.
     let g = grant(None, 1 << 20, 50);
-    let err = tool
-        .call_unit(&engine, &g, "spin")
-        .await
-        .expect_err("spinning guest must trap");
+    let run = tool.call_unit(&engine, &g, "spin").await;
+    let err = run.output.expect_err("spinning guest must trap");
+    assert!(run.metrics.wall_ms >= 40, "wall_ms={}", run.metrics.wall_ms);
     match err {
         SandboxError::ResourceExceeded { kind } => assert_eq!(kind, "wall_clock"),
         other => panic!("expected wall_clock ResourceExceeded, got {other:?}"),
@@ -117,11 +116,13 @@ async fn memory_limiter_denies_growth_past_cap() {
     let tool = engine.prepare_fixture(GROW).unwrap();
     // 128 KiB cap: the initial 64 KiB page fits, growing by 100 pages does not.
     let g = grant(None, 128 * 1024, 1000);
-    let result = tool
-        .call_i32(&engine, &g, "grow")
-        .await
+    let run = tool.call_i32(&engine, &g, "grow").await;
+    let bytes = run
+        .output
         .expect("call itself completes; growth is denied in-band");
+    let result = i32::from_le_bytes(bytes.as_slice().try_into().unwrap());
     assert_eq!(result, -1, "memory.grow past the cap returns -1");
+    assert!(run.metrics.peak_memory_bytes > 0);
 }
 
 #[tokio::test]
@@ -130,9 +131,9 @@ async fn instantiation_fails_when_initial_memory_exceeds_cap() {
     let tool = engine.prepare_fixture(GROW).unwrap();
     // 0-byte cap: even the initial linear memory page cannot be allocated.
     let g = grant(None, 0, 1000);
-    let err = tool
-        .call_i32(&engine, &g, "grow")
-        .await
+    let run = tool.call_i32(&engine, &g, "grow").await;
+    let err = run
+        .output
         .expect_err("initial memory over cap must fail");
     // Classified as a trap/resource failure, never a silent success.
     assert!(matches!(

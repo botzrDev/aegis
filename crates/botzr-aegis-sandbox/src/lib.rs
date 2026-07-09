@@ -19,7 +19,7 @@ mod host;
 mod limits;
 mod state;
 
-pub use engine::{PreparedFixture, PreparedTool, SandboxEngine};
+pub use engine::{PreparedFixture, PreparedTool, SandboxEngine, SandboxRun};
 pub use error::SandboxError;
 pub use limits::MemoryLimiter;
 pub use state::ToolState;

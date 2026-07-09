@@ -6,7 +6,8 @@
 use std::cell::Cell;
 
 use botzr_aegis_core::{
-    AuditIntent, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId,
+    AuditIntent, AuditRecord, CallMetrics, CapabilityOutcome, ExecutionOutcome, PolicyOutcome,
+    ToolId,
 };
 
 use crate::error::AuditError;
@@ -21,6 +22,7 @@ pub struct CallSession<'a> {
     policy: PolicyOutcome,
     capability: CapabilityOutcome,
     execution: ExecutionOutcome,
+    metrics: Option<CallMetrics>,
     completed: Cell<bool>,
 }
 
@@ -50,6 +52,7 @@ impl<'a> CallSession<'a> {
             execution: ExecutionOutcome::HostDenied {
                 reason: "not executed".into(),
             },
+            metrics: None,
             completed: Cell::new(false),
         })
     }
@@ -70,20 +73,29 @@ impl<'a> CallSession<'a> {
         self.execution = execution;
     }
 
+    pub fn set_metrics(&mut self, metrics: CallMetrics) {
+        self.metrics = Some(metrics);
+    }
+
     pub fn complete(self) -> Result<(), AuditError> {
         self.completed.set(true);
         self.writer.emit_outcome(&self.to_record())
     }
 
     fn to_record(&self) -> AuditRecord {
-        AuditRecord::new(
+        let record = AuditRecord::new(
             self.call_id.clone(),
             self.tool_id.clone(),
             self.input_digest.clone(),
             self.policy.clone(),
             self.capability.clone(),
             self.execution.clone(),
-        )
+        );
+        if let Some(metrics) = self.metrics {
+            record.with_metrics(metrics)
+        } else {
+            record
+        }
     }
 }
 
