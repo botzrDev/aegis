@@ -1,0 +1,25 @@
+[package]
+name = "dreamd-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "AEG-20 Stage 1 — dreamd MCP tools through Aegis Model B host pipeline"
+
+[dependencies]
+botzr-aegis-capability = { path = "../../crates/botzr-aegis-capability" }
+botzr-aegis-core = { path = "../../crates/botzr-aegis-core" }
+botzr-aegis-policy = { path = "../../crates/botzr-aegis-policy" }
+botzr-aegis-runtime = { path = "../../crates/botzr-aegis-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "search_overhead"
+harness = false

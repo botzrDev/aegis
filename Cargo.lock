@@ -750,6 +750,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreamd-poc"
+version = "0.1.0"
+dependencies = [
+ "botzr-aegis-capability",
+ "botzr-aegis-core",
+ "botzr-aegis-policy",
+ "botzr-aegis-runtime",
+ "criterion",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "echo-tool"
 version = "0.1.0"
 dependencies = [
