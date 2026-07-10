@@ -50,4 +50,5 @@ cargo test --workspace
 
 DamageBot is a **deliberately malicious** guest used only to prove containment.
 Do not point it at production data or live networks. Payloads are in-repo and
-documented; findings belong in the threat model (AEG-17).
+documented; findings are tracked in the [threat model](../../docs/threat-model.md)
+(AEG-17).

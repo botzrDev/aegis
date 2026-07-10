@@ -12,7 +12,8 @@ deadline all derive from `CapabilityGrant`.
 > **Model B caveat.** Host functions (`aegis:host/*`) run their effect in host
 > Rust. The sandbox gives them **zero** isolation — each host function must
 > enforce the grant *before* the effect (see `host.rs`). Only Model A (WASM guest
-> logic) gets true wasmtime isolation.
+> logic) gets true wasmtime isolation. See the [threat model](../../docs/threat-model.md)
+> for the full Model A vs Model B trust boundary.
 
 ## Resource accounting: epoch vs. fuel (R5)
 
