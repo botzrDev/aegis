@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
 rust-version.workspace = true
 description = "Aegis runtime orchestrator — POLICY → CAPABILITY → SANDBOX → AUDIT."
 readme = "README.md"
+keywords = ["aegis", "agent", "security", "runtime"]
+categories = ["development-tools"]
 
 [lints]
 workspace = true

@@ -14,7 +14,7 @@ Every tool call walks the same pipeline, in this order (load-bearing — do not 
 POLICY → CAPABILITY → SANDBOX → AUDIT (wraps all three)
 ```
 
-**Status:** M1 scaffold landed (AEG-4). Runtime components are stubs; pipeline wiring is minimal.
+**Status:** M1 scaffold landed (AEG-4). Pipeline is wired and tested end-to-end. CLI and sidecar are stubs.
 
 **License:** MIT (confirmed 2026-07-05, OQ-1 closed). See `LICENSE`.
 

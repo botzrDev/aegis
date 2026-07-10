@@ -187,6 +187,8 @@ dependencies = [
 name = "botzr-aegis-cli"
 version = "0.1.0"
 dependencies = [
+ "botzr-aegis-audit",
+ "botzr-aegis-policy",
  "botzr-aegis-runtime",
 ]
 
@@ -685,6 +687,15 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "damage-bot-demo"
+version = "0.1.0"
+dependencies = [
+ "botzr-aegis-capability",
+ "botzr-aegis-core",
+ "botzr-aegis-runtime",
 ]
 
 [[package]]

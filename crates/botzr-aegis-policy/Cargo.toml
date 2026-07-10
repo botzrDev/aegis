@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
 rust-version.workspace = true
 description = "YAML policy engine for Aegis — parsed once, synchronous evaluation."
 readme = "README.md"
+keywords = ["aegis", "agent", "security", "policy"]
+categories = ["development-tools"]
 
 [lints]
 workspace = true

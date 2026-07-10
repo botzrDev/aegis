@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
 rust-version.workspace = true
 description = "Structured audit records for Aegis — always emitted on every exit path."
 readme = "README.md"
+keywords = ["aegis", "agent", "security", "audit"]
+categories = ["development-tools"]
 
 [lints]
 workspace = true

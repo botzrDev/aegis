@@ -88,10 +88,7 @@ fn attack_symlink_escape() -> Result<Vec<u8>, ToolError> {
 /// Call the Model B `http.get` host import (grant gate enforced host-side).
 fn attack_http(url: &str) -> Result<Vec<u8>, ToolError> {
     match aegis::host::http::get(url) {
-        Ok(_) => Err(err(
-            "http_succeeded",
-            "http must deny in adversarial demo",
-        )),
+        Ok(_) => Err(err("http_succeeded", "http must deny in adversarial demo")),
         Err(deny) => Err(err("http_denied", deny.reason)),
     }
 }

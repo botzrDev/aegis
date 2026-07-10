@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
 rust-version.workspace = true
 description = "Phase 2 sidecar gateway for Aegis (UDS gRPC/HTTP)."
 readme = "README.md"
+keywords = ["aegis", "agent", "security", "sidecar"]
+categories = ["development-tools"]
 
 [lints]
 workspace = true
