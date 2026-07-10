@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
 rust-version.workspace = true
 description = "wasmtime sandbox for Aegis — component-model-native (wasip2)."
 readme = "README.md"
+keywords = ["aegis", "agent", "security", "wasm", "sandbox"]
+categories = ["development-tools", "wasm"]
 
 [lints]
 workspace = true

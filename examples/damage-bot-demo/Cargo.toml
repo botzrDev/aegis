@@ -1,0 +1,9 @@
+[package]
+name = "damage-bot-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+botzr-aegis-capability = { path = "../../crates/botzr-aegis-capability" }
+botzr-aegis-core = { path = "../../crates/botzr-aegis-core" }
+botzr-aegis-runtime = { path = "../../crates/botzr-aegis-runtime" }

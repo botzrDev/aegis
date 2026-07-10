@@ -56,9 +56,7 @@ fn policy_eval(c: &mut Criterion) {
         let tool = ToolId::new("writer");
         group.bench_function("multi_rule", |b| {
             b.iter(|| {
-                black_box(
-                    engine.evaluate(&PolicyRequest::for_tool(&tool).with_role("owner")),
-                );
+                black_box(engine.evaluate(&PolicyRequest::for_tool(&tool).with_role("owner")));
             });
         });
     }

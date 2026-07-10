@@ -4,14 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
 rust-version.workspace = true
 description = "CLI for Aegis. Installed binary name: aegis."
 readme = "README.md"
+keywords = ["aegis", "agent", "security", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [lints]
 workspace = true
 
 [dependencies]
+botzr-aegis-audit = { workspace = true }
+botzr-aegis-policy = { workspace = true }
 botzr-aegis-runtime = { workspace = true }
 
 [[bin]]

@@ -11,9 +11,7 @@ use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{
     FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolManifest,
 };
-use botzr_aegis_core::{
-    AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId,
-};
+use botzr_aegis_core::{AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId};
 use botzr_aegis_runtime::{sha256_hex, Runtime};
 
 const DAMAGE_BOT_WASM: &[u8] = include_bytes!("../../fixtures/damage-bot/damage-bot.wasm");
@@ -81,17 +79,15 @@ fn guest_write_under_readonly_grant_is_refused() {
 
     let input = attack_input("write_readonly");
     let err = rt
-        .execute_tool_call(
-            ToolId::new("damage-bot"),
-            sha256_hex(&input),
-            &input,
-        )
+        .execute_tool_call(ToolId::new("damage-bot"), sha256_hex(&input), &input)
         .expect_err("write to ro preopen must fail");
     assert_eq!(err, "execution failed");
 
     let record = outcome(&rt);
     assert_refused_with_trap(&record, "fs_write_denied");
-    assert!(to_json_line(&record).unwrap().contains("\"status\":\"trap\""));
+    assert!(to_json_line(&record)
+        .unwrap()
+        .contains("\"status\":\"trap\""));
 }
 
 #[test]
@@ -109,11 +105,7 @@ fn guest_dotdot_escape_is_refused() {
 
     let input = attack_input("dotdot_escape");
     let err = rt
-        .execute_tool_call(
-            ToolId::new("damage-bot"),
-            sha256_hex(&input),
-            &input,
-        )
+        .execute_tool_call(ToolId::new("damage-bot"), sha256_hex(&input), &input)
         .expect_err("dotdot escape must fail");
     assert_eq!(err, "execution failed");
 
@@ -143,11 +135,7 @@ fn guest_symlink_escape_is_refused() {
 
     let input = attack_input("symlink_escape");
     let err = rt
-        .execute_tool_call(
-            ToolId::new("damage-bot"),
-            sha256_hex(&input),
-            &input,
-        )
+        .execute_tool_call(ToolId::new("damage-bot"), sha256_hex(&input), &input)
         .expect_err("symlink escape must fail");
     assert_eq!(err, "execution failed");
 
@@ -167,11 +155,7 @@ fn guest_http_without_net_grant_is_refused() {
 
     let input = attack_input("http_exfil");
     let err = rt
-        .execute_tool_call(
-            ToolId::new("damage-bot"),
-            sha256_hex(&input),
-            &input,
-        )
+        .execute_tool_call(ToolId::new("damage-bot"), sha256_hex(&input), &input)
         .expect_err("http without net grant must fail");
     assert_eq!(err, "execution failed");
 
@@ -191,11 +175,7 @@ fn guest_http_to_disallowed_host_is_refused() {
 
     let input = attack_input("http_exfil");
     let err = rt
-        .execute_tool_call(
-            ToolId::new("damage-bot"),
-            sha256_hex(&input),
-            &input,
-        )
+        .execute_tool_call(ToolId::new("damage-bot"), sha256_hex(&input), &input)
         .expect_err("http to evil host must fail");
     assert_eq!(err, "execution failed");
 
@@ -215,11 +195,7 @@ fn guest_http_to_allowed_host_passes_grant_then_stubs() {
 
     let input = attack_input("http_allowed");
     let err = rt
-        .execute_tool_call(
-            ToolId::new("damage-bot"),
-            sha256_hex(&input),
-            &input,
-        )
+        .execute_tool_call(ToolId::new("damage-bot"), sha256_hex(&input), &input)
         .expect_err("v1 http stub still denies the effect");
     assert_eq!(err, "execution failed");
 
