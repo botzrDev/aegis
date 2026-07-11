@@ -18,7 +18,9 @@ build_fixture() {
 
 build_fixture echo-tool echo.wasm
 build_fixture damage-bot damage-bot.wasm
+build_fixture path-detector path-detector.wasm
 
 echo "Fixtures built:"
 ls -la "${ROOT}/tests/fixtures/echo-tool/echo.wasm" \
-       "${ROOT}/tests/fixtures/damage-bot/damage-bot.wasm"
+       "${ROOT}/tests/fixtures/damage-bot/damage-bot.wasm" \
+       "${ROOT}/tests/fixtures/path-detector/path-detector.wasm"

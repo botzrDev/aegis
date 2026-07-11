@@ -127,9 +127,7 @@ impl Runtime {
         session.set_execution(execution);
         session.complete().map_err(audit_err_to_string)?;
 
-        output.ok_or_else(|| {
-            host_error.unwrap_or_else(|| "host execution failed".into())
-        })
+        output.ok_or_else(|| host_error.unwrap_or_else(|| "host execution failed".into()))
     }
 }
 
@@ -146,10 +144,7 @@ mod tests {
 
     #[test]
     fn host_pipeline_omits_sandbox() {
-        assert_eq!(
-            host_pipeline_stages(),
-            &["policy", "capability", "audit"]
-        );
+        assert_eq!(host_pipeline_stages(), &["policy", "capability", "audit"]);
     }
 
     #[test]
@@ -163,9 +158,8 @@ rules:
     tool: append_node
     reason: "blocked in test"
 "#;
-        let rt = Runtime::new().with_policy(
-            botzr_aegis_policy::PolicyEngine::from_yaml(yaml).unwrap(),
-        );
+        let rt =
+            Runtime::new().with_policy(botzr_aegis_policy::PolicyEngine::from_yaml(yaml).unwrap());
         let tool = ToolId::new("append_node");
         let err = rt
             .execute_host_call(
@@ -235,12 +229,7 @@ rules:
         let tool = ToolId::new("gated");
         let err = rt
             .execute_host_call(
-                HostCallRequest::new(
-                    tool.clone(),
-                    "abc",
-                    b"{}",
-                    PolicyRequest::for_tool(&tool),
-                ),
+                HostCallRequest::new(tool.clone(), "abc", b"{}", PolicyRequest::for_tool(&tool)),
                 |_grant: &CapabilityGrant, _| {
                     Err(HostEffectError::GrantDenied {
                         reason: "path outside grant".into(),

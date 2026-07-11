@@ -2,11 +2,11 @@
 
 use botzr_aegis_core::ToolId;
 use botzr_aegis_policy::PolicyRequest;
-use botzr_aegis_runtime::{HostCallRequest, Runtime, sha256_hex};
+use botzr_aegis_runtime::{sha256_hex, HostCallRequest, Runtime};
 use dreamd_poc::{
-    append_node_effect, init_agent_store, policy_engine, register_dreamd_tools, search_nodes_effect,
-    AppendInput, AppendZone, CAP_FS_EPISODIC, CAP_FS_PERSONAL, TOOL_APPEND, TOOL_DREAM,
-    TOOL_SEARCH,
+    append_node_effect, init_agent_store, policy_engine, register_dreamd_tools,
+    search_nodes_effect, AppendInput, AppendZone, CAP_FS_EPISODIC, CAP_FS_PERSONAL, TOOL_APPEND,
+    TOOL_DREAM, TOOL_SEARCH,
 };
 use serde_json::json;
 use tempfile::TempDir;

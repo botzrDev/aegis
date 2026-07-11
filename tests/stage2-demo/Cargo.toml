@@ -1,0 +1,23 @@
+[package]
+name = "aegis-stage2-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# `serde_json` is a normal dependency (not dev-only) because the native
+# reference in `src/native.rs` is part of the library, shared with the tests.
+[dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+botzr-aegis-audit = { workspace = true }
+botzr-aegis-capability = { workspace = true }
+botzr-aegis-core = { workspace = true }
+botzr-aegis-runtime = { workspace = true }
+tempfile = { workspace = true }

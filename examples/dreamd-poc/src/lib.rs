@@ -6,11 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use botzr_aegis_capability::{
-    FsNeeds, PathNeed, ToolInfo, ToolKind, ToolManifest, ToolLimits,
-};
+use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{CapabilityGrant, ToolId};
-use botzr_aegis_runtime::{HostEffectError, sha256_hex};
+use botzr_aegis_runtime::{sha256_hex, HostEffectError};
 use serde::{Deserialize, Serialize};
 
 pub const TOOL_APPEND: &str = "append_node";
@@ -148,10 +146,9 @@ pub fn append_node_effect(
     project_root: &Path,
     input: &[u8],
 ) -> Result<Vec<u8>, HostEffectError> {
-    let req: AppendInput = serde_json::from_slice(input)
-        .map_err(|e| HostEffectError::Failed {
-            reason: format!("invalid append_node JSON: {e}"),
-        })?;
+    let req: AppendInput = serde_json::from_slice(input).map_err(|e| HostEffectError::Failed {
+        reason: format!("invalid append_node JSON: {e}"),
+    })?;
 
     let rel = match req.zone {
         AppendZone::Episodic => PathBuf::from(".agent/episodic/AGENT_LEARNINGS.jsonl"),
@@ -171,7 +168,7 @@ pub fn append_node_effect(
         })?;
     }
 
-    let id = format!("evt_{}", &sha256_hex(input.as_ref())[..26]);
+    let id = format!("evt_{}", &sha256_hex(input)[..26]);
     let timestamp = "2026-07-10T00:00:00Z".to_string();
     let line = serde_json::json!({
         "schema_version": "1.0.0",
@@ -209,10 +206,9 @@ pub fn search_nodes_effect(
     project_root: &Path,
     input: &[u8],
 ) -> Result<Vec<u8>, HostEffectError> {
-    let req: SearchInput = serde_json::from_slice(input)
-        .map_err(|e| HostEffectError::Failed {
-            reason: format!("invalid search_nodes JSON: {e}"),
-        })?;
+    let req: SearchInput = serde_json::from_slice(input).map_err(|e| HostEffectError::Failed {
+        reason: format!("invalid search_nodes JSON: {e}"),
+    })?;
 
     let jsonl = project_root.join(".agent/episodic/AGENT_LEARNINGS.jsonl");
     if !grant_allows_read(grant, &jsonl)? {
