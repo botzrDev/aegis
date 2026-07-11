@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 use botzr_aegis_core::ToolId;
 use botzr_aegis_policy::PolicyRequest;
-use botzr_aegis_runtime::{HostCallRequest, Runtime, sha256_hex};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use botzr_aegis_runtime::{sha256_hex, HostCallRequest, Runtime};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dreamd_poc::{
     init_agent_store, policy_engine, register_dreamd_tools, search_nodes_bare, search_nodes_effect,
     AppendInput, AppendZone, CAP_FS_EPISODIC, TOOL_APPEND, TOOL_SEARCH,

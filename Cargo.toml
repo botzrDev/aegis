@@ -13,7 +13,9 @@ members = [
     "tests/deny-suite",
     "tests/fixtures/echo-tool",
     "tests/fixtures/damage-bot",
+    "tests/fixtures/path-detector",
     "tests/adversarial-demo",
+    "tests/stage2-demo",
     "examples/damage-bot-demo",
     "examples/dreamd-poc",
 ]
