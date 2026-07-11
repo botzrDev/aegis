@@ -19,4 +19,9 @@ serde_norway = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "policy_eval"
+harness = false

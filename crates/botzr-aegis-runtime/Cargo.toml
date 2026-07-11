@@ -22,4 +22,10 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 botzr-aegis-audit = { workspace = true }
+criterion = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "hot_path"
+harness = false
