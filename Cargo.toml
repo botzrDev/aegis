@@ -15,6 +15,7 @@ members = [
     "tests/fixtures/damage-bot",
     "tests/adversarial-demo",
     "examples/damage-bot-demo",
+    "examples/dreamd-poc",
 ]
 
 [workspace.package]

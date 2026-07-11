@@ -2,6 +2,7 @@
 
 mod digest;
 mod error;
+pub mod host;
 
 use std::collections::HashMap;
 
@@ -15,6 +16,7 @@ use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine};
 
 pub use digest::sha256_hex;
 pub use error::RegisterError;
+pub use host::{HostCallRequest, HostEffectError};
 
 /// Runtime configuration.
 pub struct Runtime {
