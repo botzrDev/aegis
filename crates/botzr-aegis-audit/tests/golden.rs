@@ -23,6 +23,7 @@ fn fixture_grant() -> CapabilityGrant {
         }),
         max_memory_bytes: 1_048_576,
         max_wall_ms: 5_000,
+        max_output_bytes: 1_048_576,
     }
 }
 

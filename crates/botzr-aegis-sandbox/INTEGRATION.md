@@ -45,7 +45,7 @@ botzr-aegis-core = { path = "…/aegis/crates/botzr-aegis-core" }
 ## 2. Minimal call sequence
 
 ```rust
-use botzr_aegis_core::{CapabilityGrant, FsGrant, ToolId};
+use botzr_aegis_core::{CapabilityGrant, FsGrant, ToolId, DEFAULT_MAX_OUTPUT_BYTES};
 use botzr_aegis_sandbox::SandboxEngine;
 
 // 1. Build the engine once (it compiles components; reuse it across calls).
@@ -67,6 +67,7 @@ let grant = CapabilityGrant {
     net: None,                          // None ⇒ no network
     max_memory_bytes: 16 * 1024 * 1024,
     max_wall_ms: 1_000,
+    max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES, // per-call return cap; default 1 MiB
 };
 
 // 4. Execute in a fresh, grant-scoped Store. Never share a Store across calls.
@@ -77,6 +78,13 @@ match run.output {
 }
 // run.metrics carries observed wall_ms + peak_memory_bytes.
 ```
+
+> **`max_output_bytes` is host-side.** A hand-building consumer **must** set it
+> (default 1 MiB). Unlike memory + wall, the sandbox does **not** enforce this
+> cap — guest output is host-side bytes, so `engine.execute` returns them
+> unchecked. The Aegis runtime enforces it after a successful run
+> (`ResourceExceeded { kind: "output" }`); a standalone consumer that bypasses
+> the runtime must apply the same ceiling to `run.output` itself.
 
 - `SandboxEngine::new` / `prepare` / `execute` — the WIT `tool` world path
   (Model A guests that export `run`).

@@ -83,6 +83,7 @@ mod tests {
             net,
             max_memory_bytes: 1 << 20,
             max_wall_ms: 1_000,
+            max_output_bytes: 1 << 20,
         };
         ToolState::new(WasiCtxBuilder::new().build(), grant)
     }

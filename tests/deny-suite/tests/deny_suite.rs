@@ -280,6 +280,7 @@ fn wall_clock_cap_trips_through_pipeline() {
     let manifest = ToolManifest::new(info("spin"), base.path()).with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 50,
+        ..ToolLimits::default()
     });
 
     let mut rt = Runtime::new();
@@ -310,6 +311,7 @@ fn memory_cap_trips_through_pipeline() {
     let manifest = ToolManifest::new(info("grow-touch"), base.path()).with_limits(ToolLimits {
         max_memory_bytes: 128 * 1024,
         max_wall_ms: 1_000,
+        ..ToolLimits::default()
     });
 
     let mut rt = Runtime::new();
@@ -350,6 +352,7 @@ fn narrowing_refuses_limit_escalation() {
     let parent_manifest = ToolManifest::new(info("parent"), base.path()).with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 1_000,
+        ..ToolLimits::default()
     });
     let parent_grant =
         mint_grant(&parent_manifest, "parent-1", PolicyCeiling::default()).expect("parent mints");
@@ -357,6 +360,7 @@ fn narrowing_refuses_limit_escalation() {
     let sub_manifest = ToolManifest::new(info("child"), base.path()).with_limits(ToolLimits {
         max_memory_bytes: 1 << 21, // 2 MiB — above the parent's 1 MiB
         max_wall_ms: 1_000,
+        ..ToolLimits::default()
     });
 
     let err = narrow_grant(

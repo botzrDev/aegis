@@ -104,6 +104,8 @@ struct RawLimits {
     max_memory_bytes: Option<u64>,
     #[serde(default)]
     max_wall_ms: Option<u64>,
+    #[serde(default)]
+    max_output_bytes: Option<u64>,
 }
 
 /// Parse and validate a policy document into an immutable [`PolicySet`].
@@ -177,6 +179,7 @@ fn compile_rule(raw: RawRule) -> Result<Rule, PolicyError> {
         .map(|l| PolicyLimits {
             max_memory_bytes: l.max_memory_bytes,
             max_wall_ms: l.max_wall_ms,
+            max_output_bytes: l.max_output_bytes,
         })
         .unwrap_or_default();
 

@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use botzr_aegis_audit::{AuditError, AuditWriter, CallSession};
 use botzr_aegis_capability::{CapabilityResolver, PolicyCeiling, ToolManifest};
 use botzr_aegis_core::{
-    CapabilityOutcome, ExecutionOutcome, PolicyAction, PolicyOutcome, ToolId, PIPELINE_STAGES,
+    CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyAction, PolicyOutcome, ToolId,
+    PIPELINE_STAGES,
 };
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
 use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine};
@@ -165,6 +166,7 @@ impl Runtime {
         let ceiling = PolicyCeiling {
             max_memory_bytes: decision.limits.max_memory_bytes,
             max_wall_ms: decision.limits.max_wall_ms,
+            max_output_bytes: decision.limits.max_output_bytes,
         };
         let capability_outcome = self.capabilities.resolve_with_ceiling(&tool_id, ceiling);
         session.set_capability(capability_outcome.clone());
@@ -175,7 +177,10 @@ impl Runtime {
                     let run = self.sandbox.execute(prepared, grant, input);
                     session.set_metrics(run.metrics);
                     match run.output {
-                        Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                        Ok(bytes) => match enforce_output_cap(grant, bytes) {
+                            Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                            Err(outcome) => (outcome, None),
+                        },
                         Err(err) => (err.to_execution_outcome(), None),
                     }
                 } else if let Some(fixture) = self.fixtures.get(&tool_id) {
@@ -184,7 +189,10 @@ impl Runtime {
                             .execute_fixture(&fixture.prepared, grant, &fixture.export);
                     session.set_metrics(run.metrics);
                     match run.output {
-                        Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                        Ok(bytes) => match enforce_output_cap(grant, bytes) {
+                            Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                            Err(outcome) => (outcome, None),
+                        },
                         Err(err) => (err.to_execution_outcome(), None),
                     }
                 } else {
@@ -233,6 +241,26 @@ fn audit_err_to_string(err: AuditError) -> String {
     format!("audit failure (fail-closed): {err}")
 }
 
+/// Enforce the grant's per-call output ceiling on returned bytes (G8).
+///
+/// This is an **orchestrator-side** cap on the bytes a call returns — not a
+/// wasmtime store limit — applied identically after a Model A sandbox output
+/// and a Model B host effect. Oversize output fails closed to
+/// `ResourceExceeded { kind: "output" }`; the bytes are never truncated and
+/// returned as success.
+fn enforce_output_cap(
+    grant: &CapabilityGrant,
+    bytes: Vec<u8>,
+) -> Result<Vec<u8>, ExecutionOutcome> {
+    if bytes.len() as u64 > grant.max_output_bytes {
+        Err(ExecutionOutcome::ResourceExceeded {
+            kind: "output".into(),
+        })
+    } else {
+        Ok(bytes)
+    }
+}
+
 /// Caller-facing message for a policy rejection at station 1. Denials are
 /// actionable by design (G4) — the reason travels back to the caller.
 fn policy_rejection_message(action: &PolicyAction) -> String {
@@ -252,8 +280,29 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
+    use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
     use botzr_aegis_policy::PolicyEngine;
+
+    /// Build an echo manifest with an explicit `max_output_bytes` ceiling.
+    fn echo_manifest_with_output_cap(
+        base: &Path,
+        digest: String,
+        max_output_bytes: u64,
+    ) -> ToolManifest {
+        ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("echo"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            base,
+        )
+        .with_sha256(digest)
+        .with_limits(ToolLimits {
+            max_output_bytes,
+            ..ToolLimits::default()
+        })
+    }
 
     #[test]
     fn pipeline_order_is_load_bearing() {
@@ -343,6 +392,88 @@ rules:
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"phase\":\"intent\""));
         assert!(lines[1].contains("\"status\":\"success\""));
+    }
+
+    #[test]
+    fn output_over_cap_trips_resource_exceeded() {
+        // Model A: a successful sandbox run whose output exceeds the grant's
+        // `max_output_bytes` fails closed to ResourceExceeded { kind: "output" }.
+        let wasm = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
+        let digest = sha256_hex(wasm);
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool");
+        let manifest = echo_manifest_with_output_cap(&base, digest, 8);
+
+        let mut rt = Runtime::new();
+        rt.register(manifest, wasm.to_vec()).expect("register echo");
+
+        // 11-byte input echoes back 11 bytes > the 8-byte cap.
+        let input = b"hello-aegis";
+        assert!(input.len() > 8);
+        let err = rt
+            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .unwrap_err();
+        assert_eq!(err, "execution failed");
+
+        let outcome = std::fs::read_to_string(rt.audit().path())
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .to_owned();
+        assert!(
+            outcome.contains("\"status\":\"resource_exceeded\""),
+            "expected resource_exceeded, got: {outcome}"
+        );
+        assert!(
+            outcome.contains("\"kind\":\"output\""),
+            "expected kind=output, got: {outcome}"
+        );
+    }
+
+    #[test]
+    fn output_exactly_at_cap_succeeds() {
+        // Boundary: len == cap is allowed (the check is strictly greater-than),
+        // proving the cap does not reject payloads at the limit.
+        let wasm = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
+        let digest = sha256_hex(wasm);
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool");
+        let input = b"12345678"; // exactly 8 bytes
+        let manifest = echo_manifest_with_output_cap(&base, digest, input.len() as u64);
+
+        let mut rt = Runtime::new();
+        rt.register(manifest, wasm.to_vec()).expect("register echo");
+
+        let out = rt
+            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .expect("payload at the cap succeeds");
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn default_output_cap_allows_normal_payload() {
+        // Regression guard: the default 1 MiB cap must not reject ordinary small
+        // payloads (registration without explicit limits).
+        let wasm = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
+        let digest = sha256_hex(wasm);
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool");
+        let manifest = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("echo"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            &base,
+        )
+        .with_sha256(digest);
+
+        let mut rt = Runtime::new();
+        rt.register(manifest, wasm.to_vec()).expect("register echo");
+
+        let input = b"a normal, well-under-1-MiB tool payload";
+        let out = rt
+            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .expect("normal payload under default cap succeeds");
+        assert_eq!(out, input);
     }
 
     #[test]

@@ -29,6 +29,7 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
     .with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 50,
+        ..ToolLimits::default()
     });
 
     let mut rt = Runtime::new();
@@ -71,6 +72,7 @@ fn golden_resource_exceeded_orchestrator_shape() {
     .with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 50,
+        ..ToolLimits::default()
     });
 
     let mut rt = Runtime::new();

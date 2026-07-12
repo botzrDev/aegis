@@ -39,11 +39,14 @@ pub struct RateSpec {
 pub struct PolicyLimits {
     pub max_memory_bytes: Option<u64>,
     pub max_wall_ms: Option<u64>,
+    pub max_output_bytes: Option<u64>,
 }
 
 impl PolicyLimits {
     pub fn is_unconstrained(&self) -> bool {
-        self.max_memory_bytes.is_none() && self.max_wall_ms.is_none()
+        self.max_memory_bytes.is_none()
+            && self.max_wall_ms.is_none()
+            && self.max_output_bytes.is_none()
     }
 }
 

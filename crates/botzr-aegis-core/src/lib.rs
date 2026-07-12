@@ -13,7 +13,7 @@ pub use audit::{
     ExecutionOutcome, PolicyOutcome, AUDIT_SCHEMA_VERSION,
 };
 pub use error::AegisError;
-pub use grant::{CapabilityGrant, FsGrant, HttpGrant, NetGrant};
+pub use grant::{CapabilityGrant, FsGrant, HttpGrant, NetGrant, DEFAULT_MAX_OUTPUT_BYTES};
 pub use policy::PolicyAction;
 pub use tool::{ToolId, ToolKind};
 

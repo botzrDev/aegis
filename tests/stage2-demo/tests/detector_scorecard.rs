@@ -210,6 +210,7 @@ fn wall_clock_cap_trips() {
     .with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 50,
+        ..ToolLimits::default()
     });
 
     let mut rt = Runtime::new();
