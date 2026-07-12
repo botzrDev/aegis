@@ -1863,6 +1863,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sandbox-consumer"
+version = "0.1.0"
+dependencies = [
+ "botzr-aegis-core",
+ "botzr-aegis-sandbox",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"

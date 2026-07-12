@@ -37,6 +37,15 @@ question — "how much deterministic work did it do?" — which is the right too
 **reproducible** measurement (M2 benchmarks, AEG-16) and cross-machine findings.
 Fuel is therefore a candidate to run *alongside* epoch, not to replace it.
 
+## External consumers
+
+This crate is consumable **standalone** — take `botzr-aegis-sandbox` +
+`botzr-aegis-core` for sandboxed WASM execution without the Aegis orchestrator
+(no runtime/policy/capability/audit). See **[INTEGRATION.md](INTEGRATION.md)**
+for the wiring guide (dependency snippet, `new → grant → prepare → execute`, and
+the Model A vs Model B caveat), and the runnable proof in
+[`examples/sandbox-consumer/`](../../examples/sandbox-consumer).
+
 ## Memory cap
 
 The per-call `MemoryLimiter` caps guest linear-memory growth at

@@ -18,6 +18,7 @@ members = [
     "tests/stage2-demo",
     "examples/damage-bot-demo",
     "examples/dreamd-poc",
+    "examples/sandbox-consumer",
 ]
 
 [workspace.package]
@@ -34,7 +35,7 @@ unsafe_code = "forbid"
 botzr-aegis-audit = { path = "crates/botzr-aegis-audit" }
 botzr-aegis-capability = { path = "crates/botzr-aegis-capability" }
 botzr-aegis-cli = { path = "crates/botzr-aegis-cli" }
-botzr-aegis-core = { path = "crates/botzr-aegis-core" }
+botzr-aegis-core = { path = "crates/botzr-aegis-core", version = "0.1.0" }
 botzr-aegis-policy = { path = "crates/botzr-aegis-policy" }
 botzr-aegis-runtime = { path = "crates/botzr-aegis-runtime" }
 botzr-aegis-sandbox = { path = "crates/botzr-aegis-sandbox" }
