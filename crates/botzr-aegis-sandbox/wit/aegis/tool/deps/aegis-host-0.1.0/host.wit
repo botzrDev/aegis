@@ -1,0 +1,28 @@
+package aegis:host@0.1.0;
+
+interface log {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    /// Host enforces rate + size caps; no secrets in message.
+    emit: func(level: level, message: string);
+}
+
+interface http {
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    record deny {
+        reason: string,
+    }
+
+    /// Host enforces net grant (exact host match) before performing the request.
+    get: func(url: string) -> result<response, deny>;
+}
