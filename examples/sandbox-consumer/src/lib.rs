@@ -68,9 +68,7 @@ pub fn read_only_grant(read_root: &Path) -> CapabilityGrant {
 /// [`SandboxError`](botzr_aegis_sandbox::SandboxError) on trap/resource-exceeded,
 /// plus observed metrics). The outer `Result` covers engine build / component
 /// load failures; the inner `SandboxRun::output` covers the execution itself.
-pub fn scan_fixtures(
-    input: &[u8],
-) -> Result<SandboxRun, botzr_aegis_sandbox::SandboxError> {
+pub fn scan_fixtures(input: &[u8]) -> Result<SandboxRun, botzr_aegis_sandbox::SandboxError> {
     let engine = SandboxEngine::new()?;
     let prepared = engine.prepare(DETECTOR_WASM)?;
     let grant = read_only_grant(&fixtures_root());

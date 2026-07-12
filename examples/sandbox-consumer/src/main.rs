@@ -20,7 +20,10 @@ fn main() -> ExitCode {
 
     match run.output {
         Ok(bytes) if !bytes.is_empty() => {
-            println!("path-detector findings: {}", String::from_utf8_lossy(&bytes));
+            println!(
+                "path-detector findings: {}",
+                String::from_utf8_lossy(&bytes)
+            );
             println!(
                 "metrics: wall_ms={} peak_memory_bytes={}",
                 run.metrics.wall_ms, run.metrics.peak_memory_bytes

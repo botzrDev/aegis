@@ -11,7 +11,8 @@ use sandbox_consumer::scan_fixtures;
 /// checked-in fixture files.
 #[test]
 fn happy_path_scan_returns_findings() {
-    let run = scan_fixtures(br#"{"scan_root":"fixtures"}"#).expect("engine builds + guest prepares");
+    let run =
+        scan_fixtures(br#"{"scan_root":"fixtures"}"#).expect("engine builds + guest prepares");
     let bytes = run.output.expect("scan runs cleanly");
     let text = String::from_utf8(bytes).expect("findings are utf-8 json");
 
@@ -21,7 +22,11 @@ fn happy_path_scan_returns_findings() {
     assert!(text.contains("nested/gamma.txt"), "{text}");
 
     // The scan is trivial; it must finish well inside its 1 s wall budget.
-    assert!(run.metrics.wall_ms < 1_000, "wall_ms={}", run.metrics.wall_ms);
+    assert!(
+        run.metrics.wall_ms < 1_000,
+        "wall_ms={}",
+        run.metrics.wall_ms
+    );
 }
 
 /// Deny smoke: the read-only grant carries no write paths, so a guest write
@@ -30,7 +35,8 @@ fn happy_path_scan_returns_findings() {
 /// request.
 #[test]
 fn write_escape_denies_cleanly() {
-    let run = scan_fixtures(br#"{"attack":"write_escape"}"#).expect("engine builds + guest prepares");
+    let run =
+        scan_fixtures(br#"{"attack":"write_escape"}"#).expect("engine builds + guest prepares");
     match run.output {
         Err(SandboxError::Trap { message }) => {
             assert!(message.contains("fs_write_denied"), "{message}");
