@@ -10,6 +10,14 @@ description = "wasmtime sandbox for Aegis — component-model-native (wasip2)."
 readme = "README.md"
 keywords = ["aegis", "agent", "security", "wasm", "sandbox"]
 categories = ["development-tools", "wasm"]
+# Ship in-crate WIT so `cargo publish` verifies without the monorepo root tree.
+include = [
+    "src/**/*",
+    "wit/**/*",
+    "Cargo.toml",
+    "README.md",
+    "INTEGRATION.md",
+]
 
 [lints]
 workspace = true

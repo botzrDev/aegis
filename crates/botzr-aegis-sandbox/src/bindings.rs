@@ -2,7 +2,8 @@
 
 wasmtime::component::bindgen!({
     world: "tool",
-    path: "../../wit/aegis/tool",
+    // Packaged with the crate (crates.io cannot see repo-root ../../wit).
+    path: "wit/aegis/tool",
     imports: { default: async },
     exports: { default: async },
 });
