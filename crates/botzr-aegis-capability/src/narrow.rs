@@ -115,6 +115,14 @@ fn ensure_limits_narrowed(
             ),
         });
     }
+    if sub.max_output_bytes > parent.max_output_bytes {
+        return Err(CapabilityError::Escalation {
+            detail: format!(
+                "max_output_bytes escalation: sub={} parent={}",
+                sub.max_output_bytes, parent.max_output_bytes
+            ),
+        });
+    }
     Ok(())
 }
 
@@ -273,6 +281,7 @@ mod tests {
         .with_limits(ToolLimits {
             max_memory_bytes: 1 << 20,
             max_wall_ms: 5_000,
+            ..ToolLimits::default()
         });
 
         let parent_grant =
@@ -306,6 +315,7 @@ mod tests {
         .with_limits(ToolLimits {
             max_memory_bytes: 512 * 1024,
             max_wall_ms: 1_000,
+            ..ToolLimits::default()
         });
 
         let sub = narrow_grant(
@@ -343,6 +353,37 @@ mod tests {
             &parent_manifest,
             &sub_manifest,
             "bad-grant",
+            PolicyCeiling::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, CapabilityError::Escalation { .. }));
+    }
+
+    #[test]
+    fn rejects_output_cap_escalation() {
+        // R2 subset invariant on the output axis: a sub-tool may not declare a
+        // larger `max_output_bytes` than its parent.
+        let (dir, parent_manifest, parent_grant) = parent_fixture();
+
+        let sub_manifest = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("greedy-child"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            dir.path(),
+        )
+        .with_limits(ToolLimits {
+            max_memory_bytes: 512 * 1024, // within the parent's 1 MiB
+            max_wall_ms: 1_000,
+            max_output_bytes: parent_grant.max_output_bytes + 1, // one byte over
+        });
+
+        let err = narrow_grant(
+            &parent_grant,
+            &parent_manifest,
+            &sub_manifest,
+            "greedy-grant",
             PolicyCeiling::default(),
         )
         .unwrap_err();

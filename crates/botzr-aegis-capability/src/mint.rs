@@ -12,6 +12,7 @@ use crate::manifest::{HttpNeed, NetNeeds, PathNeed, ToolLimits, ToolManifest};
 pub struct PolicyCeiling {
     pub max_memory_bytes: Option<u64>,
     pub max_wall_ms: Option<u64>,
+    pub max_output_bytes: Option<u64>,
 }
 
 impl PolicyCeiling {
@@ -23,6 +24,7 @@ impl PolicyCeiling {
         PolicyCeiling {
             max_memory_bytes: tighter(self.max_memory_bytes, other.max_memory_bytes),
             max_wall_ms: tighter(self.max_wall_ms, other.max_wall_ms),
+            max_output_bytes: tighter(self.max_output_bytes, other.max_output_bytes),
         }
     }
 
@@ -36,6 +38,10 @@ impl PolicyCeiling {
                 .max_wall_ms
                 .map(|cap| cap.min(manifest.max_wall_ms))
                 .unwrap_or(manifest.max_wall_ms),
+            max_output_bytes: self
+                .max_output_bytes
+                .map(|cap| cap.min(manifest.max_output_bytes))
+                .unwrap_or(manifest.max_output_bytes),
         }
     }
 }
@@ -74,6 +80,7 @@ pub fn mint_grant(
         net,
         max_memory_bytes: limits.max_memory_bytes,
         max_wall_ms: limits.max_wall_ms,
+        max_output_bytes: limits.max_output_bytes,
     })
 }
 
@@ -213,7 +220,8 @@ pub(crate) fn http_need_allowed(parent: &HttpNeed, sub: &HttpNeed) -> bool {
 mod tests {
     use super::*;
     use crate::manifest::{
-        FsNeeds, ToolInfo, ToolKind, ToolManifest, DEFAULT_MAX_MEMORY_BYTES, DEFAULT_MAX_WALL_MS,
+        FsNeeds, ToolInfo, ToolKind, ToolManifest, DEFAULT_MAX_MEMORY_BYTES,
+        DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_WALL_MS,
     };
     use botzr_aegis_core::ToolId;
 
@@ -235,6 +243,7 @@ mod tests {
         assert!(grant.net.is_none());
         assert_eq!(grant.max_memory_bytes, DEFAULT_MAX_MEMORY_BYTES);
         assert_eq!(grant.max_wall_ms, DEFAULT_MAX_WALL_MS);
+        assert_eq!(grant.max_output_bytes, DEFAULT_MAX_OUTPUT_BYTES);
     }
 
     #[test]
@@ -251,6 +260,7 @@ mod tests {
         .with_limits(ToolLimits {
             max_memory_bytes: 1 << 20,
             max_wall_ms: 10_000,
+            max_output_bytes: 4096,
         });
 
         let grant = mint_grant(
@@ -259,11 +269,45 @@ mod tests {
             PolicyCeiling {
                 max_memory_bytes: Some(512 * 1024),
                 max_wall_ms: Some(1_000),
+                max_output_bytes: Some(1024),
             },
         )
         .unwrap();
         assert_eq!(grant.max_memory_bytes, 512 * 1024);
         assert_eq!(grant.max_wall_ms, 1_000);
+        // Policy lowers the output cap (min of 4096 tool vs 1024 policy).
+        assert_eq!(grant.max_output_bytes, 1024);
+    }
+
+    #[test]
+    fn policy_ceiling_never_raises_output_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("capped-out"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            dir.path(),
+        )
+        .with_limits(ToolLimits {
+            max_memory_bytes: 1 << 20,
+            max_wall_ms: 10_000,
+            max_output_bytes: 512,
+        });
+
+        // A looser policy cap must not widen the tool's declared 512-byte ceiling.
+        let grant = mint_grant(
+            &manifest,
+            "g1",
+            PolicyCeiling {
+                max_memory_bytes: None,
+                max_wall_ms: None,
+                max_output_bytes: Some(4096),
+            },
+        )
+        .unwrap();
+        assert_eq!(grant.max_output_bytes, 512);
     }
 
     #[test]

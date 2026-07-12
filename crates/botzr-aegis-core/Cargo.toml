@@ -1,6 +1,9 @@
 [package]
 name = "botzr-aegis-core"
-version.workspace = true
+# Independently versioned: AEG-24 added a public field to `CapabilityGrant`, a
+# breaking change on the published 0.1.0 (semver minor bump for 0.x). The rest of
+# the workspace stays on the shared `[workspace.package]` version.
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

@@ -36,6 +36,7 @@ fn fixture_manifest(id: &str, base: &Path) -> ToolManifest {
     .with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 5_000,
+        ..ToolLimits::default()
     })
 }
 

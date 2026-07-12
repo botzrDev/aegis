@@ -42,6 +42,7 @@ pub fn register_dreamd_tools(
     .with_limits(ToolLimits {
         max_memory_bytes: 32 * 1024 * 1024,
         max_wall_ms: 10_000,
+        ..ToolLimits::default()
     });
 
     let search = ToolManifest::new(
@@ -59,6 +60,7 @@ pub fn register_dreamd_tools(
     .with_limits(ToolLimits {
         max_memory_bytes: 16 * 1024 * 1024,
         max_wall_ms: 5_000,
+        ..ToolLimits::default()
     });
 
     let dream = ToolManifest::new(

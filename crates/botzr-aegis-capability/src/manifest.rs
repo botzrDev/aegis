@@ -12,6 +12,10 @@ pub const DEFAULT_MAX_WALL_MS: u64 = 30_000;
 /// Default memory ceiling when the manifest omits `[limits]`.
 pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Default per-call output ceiling when the manifest omits `[limits]`.
+/// Single source of truth lives in `botzr-aegis-core`.
+pub use botzr_aegis_core::DEFAULT_MAX_OUTPUT_BYTES;
+
 /// Declared tool identity and classification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolInfo {
@@ -77,6 +81,7 @@ pub struct HttpNeed {
 pub struct ToolLimits {
     pub max_memory_bytes: u64,
     pub max_wall_ms: u64,
+    pub max_output_bytes: u64,
 }
 
 impl Default for ToolLimits {
@@ -84,6 +89,7 @@ impl Default for ToolLimits {
         Self {
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
             max_wall_ms: DEFAULT_MAX_WALL_MS,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
         }
     }
 }

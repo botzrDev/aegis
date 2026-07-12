@@ -15,6 +15,8 @@ fn grant(fs: Option<FsGrant>, max_memory_bytes: u64, max_wall_ms: u64) -> Capabi
         net: None,
         max_memory_bytes,
         max_wall_ms,
+        // Sandbox does not enforce the output cap (orchestrator-side); generous.
+        max_output_bytes: 1 << 20,
     }
 }
 

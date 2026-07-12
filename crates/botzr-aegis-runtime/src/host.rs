@@ -11,7 +11,7 @@ use botzr_aegis_core::{
 use botzr_aegis_policy::PolicyRequest;
 
 use crate::Runtime;
-use crate::{audit_err_to_string, policy_rejection_message};
+use crate::{audit_err_to_string, enforce_output_cap, policy_rejection_message};
 
 /// Policy axes + payload for a Model B host tool call.
 #[derive(Debug, Clone)]
@@ -101,6 +101,7 @@ impl Runtime {
         let ceiling = PolicyCeiling {
             max_memory_bytes: decision.limits.max_memory_bytes,
             max_wall_ms: decision.limits.max_wall_ms,
+            max_output_bytes: decision.limits.max_output_bytes,
         };
         let capability_outcome = self
             .capabilities
@@ -109,7 +110,10 @@ impl Runtime {
 
         let (execution, output) = match &capability_outcome {
             CapabilityOutcome::Granted { grant } => match effect(grant, req.input) {
-                Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                Ok(bytes) => match enforce_output_cap(grant, bytes) {
+                    Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
+                    Err(outcome) => (outcome, None),
+                },
                 Err(err) => (err.to_execution_outcome(), None),
             },
             CapabilityOutcome::Denied { .. } => (
@@ -139,7 +143,7 @@ pub fn wasm_pipeline_stages() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
+    use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
     use botzr_aegis_core::CapabilityGrant;
 
     #[test]
@@ -211,6 +215,53 @@ rules:
             .collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[1].contains("\"status\":\"success\""));
+    }
+
+    #[test]
+    fn host_output_over_cap_trips_resource_exceeded() {
+        // Model B: an effect that returns more bytes than the grant's
+        // `max_output_bytes` fails closed to ResourceExceeded { kind: "output" }
+        // — the same cap the runtime applies to a Model A sandbox output.
+        let mut rt = Runtime::new();
+        let base = std::env::temp_dir();
+        let manifest = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("host-bulky"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Host,
+            },
+            &base,
+        )
+        .with_limits(ToolLimits {
+            max_output_bytes: 8,
+            ..ToolLimits::default()
+        });
+        rt.capabilities().register(manifest);
+
+        let tool = ToolId::new("host-bulky");
+        let err = rt
+            .execute_host_call(
+                HostCallRequest::new(tool.clone(), "abc", b"{}", PolicyRequest::for_tool(&tool)),
+                // Effect enforced the grant for its own I/O but returns 100 bytes.
+                |_grant: &CapabilityGrant, _input| Ok(vec![b'x'; 100]),
+            )
+            .unwrap_err();
+        assert_eq!(err, "host execution failed");
+
+        let outcome = std::fs::read_to_string(rt.audit().path())
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .to_owned();
+        assert!(
+            outcome.contains("\"status\":\"resource_exceeded\""),
+            "expected resource_exceeded, got: {outcome}"
+        );
+        assert!(
+            outcome.contains("\"kind\":\"output\""),
+            "expected kind=output, got: {outcome}"
+        );
     }
 
     #[test]

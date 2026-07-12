@@ -52,6 +52,7 @@ fn fixture_manifest(id: &str, base: &Path) -> ToolManifest {
     .with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 5_000,
+        ..ToolLimits::default()
     })
 }
 
@@ -76,6 +77,7 @@ fn hot_path_iter(
     let ceiling = PolicyCeiling {
         max_memory_bytes: decision.limits.max_memory_bytes,
         max_wall_ms: decision.limits.max_wall_ms,
+        max_output_bytes: decision.limits.max_output_bytes,
     };
     let _ = black_box(resolver.resolve_with_ceiling(tool_id, ceiling));
 }

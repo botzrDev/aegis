@@ -2,6 +2,11 @@
 
 use crate::tool::ToolId;
 
+/// Default per-call output ceiling when a manifest omits `max_output_bytes`
+/// (1 MiB). The runtime enforces this orchestrator-side on the bytes a call
+/// returns — it is not a wasmtime store limit (guest output is host-side).
+pub const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1 << 20;
+
 /// Resolved grant passed to sandbox configuration and host-function enforcement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CapabilityGrant {
@@ -11,6 +16,10 @@ pub struct CapabilityGrant {
     pub net: Option<NetGrant>,
     pub max_memory_bytes: u64,
     pub max_wall_ms: u64,
+    /// Max bytes a single call may return. Enforced by the runtime after a
+    /// successful Model A sandbox run or Model B host effect; oversize output
+    /// fails closed to `ResourceExceeded { kind: "output" }` (never truncated).
+    pub max_output_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -40,6 +49,7 @@ impl CapabilityGrant {
             net: None,
             max_memory_bytes: 0,
             max_wall_ms: 0,
+            max_output_bytes: 0,
         }
     }
 }

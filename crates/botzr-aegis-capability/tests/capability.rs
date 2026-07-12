@@ -30,6 +30,7 @@ fn fixture_manifest(id: &str, base: &std::path::Path) -> ToolManifest {
     .with_limits(ToolLimits {
         max_memory_bytes: 1 << 20,
         max_wall_ms: 5_000,
+        ..ToolLimits::default()
     })
 }
 
@@ -124,6 +125,7 @@ proptest! {
         .with_limits(ToolLimits {
             max_memory_bytes: sub_memory,
             max_wall_ms: sub_wall,
+            ..ToolLimits::default()
         });
 
         let sub = narrow_grant(
@@ -160,6 +162,7 @@ fn narrowing_rejects_limit_escalation() {
     .with_limits(ToolLimits {
         max_memory_bytes: parent_grant.max_memory_bytes + 1,
         max_wall_ms: parent_grant.max_wall_ms,
+        ..ToolLimits::default()
     });
 
     let err = narrow_grant(

@@ -22,7 +22,7 @@
 
 use std::path::{Path, PathBuf};
 
-use botzr_aegis_core::{CapabilityGrant, FsGrant, ToolId};
+use botzr_aegis_core::{CapabilityGrant, FsGrant, ToolId, DEFAULT_MAX_OUTPUT_BYTES};
 use botzr_aegis_sandbox::{SandboxEngine, SandboxRun};
 
 /// The wasip2 path-detector guest, embedded so the example is self-contained.
@@ -44,9 +44,11 @@ pub fn fixtures_root() -> PathBuf {
 ///
 /// An external consumer that already has a trust model constructs the grant
 /// straight from core types: a single read path (mounted at `/ro0`), no write
-/// paths, no net, and explicit memory + wall-clock ceilings. `write_paths` is
-/// deliberately empty — a guest write attempt must be denied, not silently
-/// succeed (exercised by the deny smoke test).
+/// paths, no net, and explicit memory + wall-clock + output ceilings.
+/// `write_paths` is deliberately empty — a guest write attempt must be denied,
+/// not silently succeed (exercised by the deny smoke test). `max_output_bytes`
+/// is the per-call return-size cap the *host* enforces after `execute`; a
+/// hand-building consumer must set it (default is 1 MiB).
 pub fn read_only_grant(read_root: &Path) -> CapabilityGrant {
     CapabilityGrant {
         grant_id: "sandbox-consumer-demo".to_string(),
@@ -58,6 +60,7 @@ pub fn read_only_grant(read_root: &Path) -> CapabilityGrant {
         net: None,
         max_memory_bytes: 16 * 1024 * 1024,
         max_wall_ms: 1_000,
+        max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
     }
 }
 

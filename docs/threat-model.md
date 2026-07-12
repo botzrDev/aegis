@@ -128,7 +128,11 @@ When correctly configured and integrated, Aegis v1 aims to ensure:
 4. **Network containment (Model B).** Host HTTP imports check `NetGrant.allowed_hosts`
    before any outbound request.
 5. **Resource bounds.** Per-call memory cap, epoch wall-clock budget, and
-   `max_output_bytes` limit unbounded guest output.
+   `max_output_bytes` limit unbounded guest output. The output cap is enforced
+   **orchestrator-side** on the bytes a call returns — not a wasmtime store
+   limit — and applies identically to Model A sandbox output and Model B host
+   effects; oversize output fails closed (`ResourceExceeded { kind: "output" }`),
+   never truncated-and-returned.
 6. **Audit on every exit.** Denials, traps, resource caps, and panics produce
    schema-versioned records without raw secret payloads.
 
@@ -173,7 +177,7 @@ Partial mitigations that exist today:
 
 | Mitigation | Effect |
 |---|---|
-| `max_output_bytes` | Caps single-call return size (default 1 MiB) |
+| `max_output_bytes` | Caps single-call return size, runtime-enforced on returned bytes (default 1 MiB) |
 | `output_digest` in audit | Forensic trail without storing raw output |
 | Policy rate limits | Friction on bulk read patterns |
 
