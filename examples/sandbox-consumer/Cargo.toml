@@ -1,0 +1,19 @@
+# AEG-18 Stage 3 — external-consumer proof.
+#
+# LOAD-BEARING CONSTRAINT: dependencies here are *exactly* the sandbox + core
+# pair an external consumer takes — nothing from the Aegis orchestrator
+# (runtime / policy / capability / audit). This crate exists to prove the
+# sandbox is consumable without the orchestrator, so keep this list at two.
+[package]
+name = "sandbox-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "AEG-18 Stage 3 — external consumer proof: botzr-aegis-sandbox + core, no orchestrator."
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-core = { workspace = true }
+botzr-aegis-sandbox = { workspace = true }
