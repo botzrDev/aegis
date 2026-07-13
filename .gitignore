@@ -8,3 +8,9 @@ tests/fixtures/**/src/bindings.rs
 
 # duplicate WIT deps copy; canonical tree is wit/aegis/tool/deps/
 /wit/deps/
+
+# Python governance service
+governance/.venv/
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
