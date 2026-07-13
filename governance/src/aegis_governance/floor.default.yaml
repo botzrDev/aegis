@@ -1,0 +1,14 @@
+# Policy floor — never relaxable by auto-apply.
+# High-risk capability axes listed here must never appear on action: allow
+# proposals that governance would auto-apply. Widen past this floor → reject.
+#
+# exec/shell are non-goals for v1 runtime but the floor still forbids proposing them.
+version: 1
+never_auto_grant:
+  - net
+  - net.http
+  - exec
+  - exec.command
+  - shell
+# Ambient default must not loosen from deny → allow under auto-apply.
+forbid_default_allow: true

@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-1","tool_id":"smoke","input_digest":"deadbeef","policy":{"status":"denied","reason":"blocked in test"},"capability":{"status":"denied","reason":"policy blocked before capability","denied_capability":null},"execution":{"status":"host_denied","reason":"not executed"}}
