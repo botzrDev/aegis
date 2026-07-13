@@ -33,7 +33,7 @@ MCP harness → dreamd MemoryMcpServer (optional)
 dreamd remains the memory store (D2). Aegis is not an audit store for dreamd —
 it emits its own JSONL per tool call.
 
-Sidecar (`botzr-aegis-sidecar`) is Phase 2; this PoC does not require it.
+Out-of-process MCP gateway (`botzr-aegis-mcp`) is Phase 2 for external hosts; this PoC stays in-process and does not require it.
 
 ## Model B caveat
 

@@ -1,0 +1,31 @@
+[package]
+name = "botzr-aegis-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
+rust-version.workspace = true
+description = "Phase 2 MCP stdio gateway for Aegis — tools/call → Runtime pipeline → audit JSONL."
+readme = "README.md"
+keywords = ["aegis", "agent", "security", "mcp"]
+categories = ["development-tools"]
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-audit = { workspace = true }
+botzr-aegis-capability = { workspace = true }
+botzr-aegis-core = { workspace = true }
+botzr-aegis-policy = { workspace = true }
+botzr-aegis-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[[bin]]
+name = "botzr-aegis-mcp"
+path = "src/main.rs"

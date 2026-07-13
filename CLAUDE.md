@@ -14,7 +14,7 @@ Every tool call walks the same pipeline, in this order (load-bearing — do not 
 POLICY → CAPABILITY → SANDBOX → AUDIT (wraps all three)
 ```
 
-**Status:** M1 scaffold landed (AEG-4). Pipeline is wired and tested end-to-end. CLI and sidecar are stubs.
+**Status:** M1 scaffold landed (AEG-4). Pipeline is wired and tested end-to-end. CLI is a stub; Phase 2 MCP gateway is `botzr-aegis-mcp` (stdio).
 
 **License:** MIT (confirmed 2026-07-05, OQ-1 closed). See `LICENSE`.
 
@@ -59,7 +59,7 @@ aegis/                          # GitHub repo: botzrDev/aegis; product name: Aeg
 │   ├── botzr-aegis-sandbox/
 │   ├── botzr-aegis-audit/
 │   ├── botzr-aegis-runtime/    # orchestrator (library mode entry)
-│   ├── botzr-aegis-sidecar/    # Phase 2 — UDS gRPC/HTTP
+│   ├── botzr-aegis-mcp/        # Phase 2 — MCP stdio gateway (ex-sidecar)
 │   └── botzr-aegis-cli/        # binary name: aegis (crates.io prefix avoids aegis-cli conflict)
 ├── wit/tool-world.wit
 └── tests/                      # deny-suite + integration

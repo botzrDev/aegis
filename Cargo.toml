@@ -7,7 +7,7 @@ members = [
     "crates/botzr-aegis-sandbox",
     "crates/botzr-aegis-audit",
     "crates/botzr-aegis-runtime",
-    "crates/botzr-aegis-sidecar",
+    "crates/botzr-aegis-mcp",
     "crates/botzr-aegis-cli",
     "tests/integration",
     "tests/deny-suite",
@@ -39,7 +39,7 @@ botzr-aegis-core = { path = "crates/botzr-aegis-core", version = "0.2.0" }
 botzr-aegis-policy = { path = "crates/botzr-aegis-policy" }
 botzr-aegis-runtime = { path = "crates/botzr-aegis-runtime" }
 botzr-aegis-sandbox = { path = "crates/botzr-aegis-sandbox" }
-botzr-aegis-sidecar = { path = "crates/botzr-aegis-sidecar" }
+botzr-aegis-mcp = { path = "crates/botzr-aegis-mcp" }
 anyhow = "1"
 arc-swap = "1"
 cap-std = "3"

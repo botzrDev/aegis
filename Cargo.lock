@@ -212,6 +212,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "botzr-aegis-mcp"
+version = "0.1.0"
+dependencies = [
+ "botzr-aegis-audit",
+ "botzr-aegis-capability",
+ "botzr-aegis-core",
+ "botzr-aegis-policy",
+ "botzr-aegis-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "botzr-aegis-policy"
 version = "0.1.0"
 dependencies = [
@@ -251,13 +265,6 @@ dependencies = [
  "tokio",
  "wasmtime",
  "wasmtime-wasi",
-]
-
-[[package]]
-name = "botzr-aegis-sidecar"
-version = "0.1.0"
-dependencies = [
- "botzr-aegis-runtime",
 ]
 
 [[package]]
