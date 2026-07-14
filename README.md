@@ -74,7 +74,7 @@ Runtime crates (Cargo workspace, `unsafe_code = forbid` workspace-wide):
 | `botzr-aegis-audit` | Schema-versioned audit records, always emitted |
 | `botzr-aegis-runtime` | Orchestrator — walks the pipeline (`Runtime::execute_tool_call`) |
 | `botzr-aegis-mcp` | Phase 2 [MCP stdio gateway](crates/botzr-aegis-mcp/README.md) |
-| `botzr-aegis-cli` | Binary `aegis` — currently a stub |
+| `botzr-aegis-cli` | Binary `aegis` — `aegis run` registers a WASM tool and executes through the pipeline |
 
 `governance/` is a **separate Python (Layer 2) service** — audit ingest, narrow-only
 policy proposals, drift findings, and versioned policy packs. It is not a workspace
@@ -96,6 +96,20 @@ Run the full workspace gate:
 
 ```bash
 cargo test --workspace
+```
+
+Execute one Model A tool call from the CLI (registers the echo fixture, walks the
+full pipeline, writes audit JSONL):
+
+```bash
+cargo run -p botzr-aegis-cli -- \
+  run \
+  --component tests/fixtures/echo-tool/echo.wasm \
+  --id echo \
+  --input 'hello' \
+  --audit /tmp/aegis-audit.jsonl
+# stdout: hello
+# inspect Intent + Outcome lines in /tmp/aegis-audit.jsonl
 ```
 
 Reproduce the adversarial containment demo (a deliberately malicious `wasip2` guest
@@ -135,7 +149,8 @@ containment cases and measured costs — they do not certify the instrument.
 
 The enforcement pipeline is wired and tested end-to-end; demos, benchmarks, and the
 threat model are published. Packaging toward `v0.1.0` is in progress — **there is no
-tagged release yet**, and the `aegis` CLI is still a stub. Track the current commit on
+tagged release yet**. The `aegis` CLI supports `aegis run` for one-shot WASM
+execution through the pipeline. Track the current commit on
 [`main`](https://github.com/botzrDev/aegis) and
 [releases](https://github.com/botzrDev/aegis/releases) for the first tag.
 

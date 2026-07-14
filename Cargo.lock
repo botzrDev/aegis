@@ -200,8 +200,11 @@ name = "botzr-aegis-cli"
 version = "0.1.0"
 dependencies = [
  "botzr-aegis-audit",
+ "botzr-aegis-capability",
+ "botzr-aegis-core",
  "botzr-aegis-policy",
  "botzr-aegis-runtime",
+ "tempfile",
 ]
 
 [[package]]
