@@ -112,8 +112,7 @@ The `status` field selects the variant; payload fields sit beside it.
 **Absent / deferred (not in schema v1 wire format)**
 
 - `output_digest` — **not a field** on `AuditIntent` or `AuditRecord`. Do not
-  expect or emit it. (Earlier drafts / threat-model wording that assume it are
-  ahead of the types; AEG-35 tracks doc alignment.)
+  expect or emit it. Threat-model wording matches this (AEG-35).
 
 ---
 

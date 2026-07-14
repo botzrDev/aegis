@@ -1,7 +1,7 @@
 # Aegis threat model
 
-> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-07-10  
-> **Related:** [SECURITY.md](../SECURITY.md) · [DamageBot demo](../examples/damage-bot-demo/README.md) · [Benchmarks](../benches/results/hot_path.md)
+> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-07-14 (AEG-35 honesty pass)  
+> **Related:** [SECURITY.md](../SECURITY.md) · [Audit schema freeze](audit-schema.md) · [DamageBot demo](../examples/damage-bot-demo/README.md) · [Benchmarks](../benches/results/hot_path.md)
 
 Aegis is a **research instrument** for testing what agent tool isolation actually
 guarantees. This document states what the runtime protects, what it does not, and
@@ -33,7 +33,7 @@ record on **every** exit path — allow, deny, trap, resource cap, or panic.
 | **Policy** | Role gate, approval gate, rate limits (sync; parsed-once `Arc<PolicySet>`) |
 | **Capability** | Default-deny manifest resolution → minted grant (denial never reaches sandbox) |
 | **Sandbox** | Configure wasmtime `Store` **from the grant**, then run (per-call store; epoch + memory limits) |
-| **Audit** | Schema-versioned record; no raw secrets (`input_digest` / `output_digest` only) |
+| **Audit** | Schema-versioned JSONL records (`schema_version: 1`); no raw secrets — shipped digest field is `input_digest` only ([audit schema](audit-schema.md)) |
 
 ### Out of scope (v1)
 
@@ -134,7 +134,9 @@ When correctly configured and integrated, Aegis v1 aims to ensure:
    effects; oversize output fails closed (`ResourceExceeded { kind: "output" }`),
    never truncated-and-returned.
 6. **Audit on every exit.** Denials, traps, resource caps, and panics produce
-   schema-versioned records without raw secret payloads.
+   schema-versioned JSONL records without raw secret payloads. v0.1 persists via
+   `AuditWriter` (per-line fsync) only — OpenTelemetry / OTLP export is
+   **deferred** (not shipped). Wire contract: [audit-schema.md](audit-schema.md).
 
 Operational meaning of "foolproof" in this project: **no single mistake — a forgotten
 host check, a malformed policy, a panicking host function — escalates into ambient
@@ -178,8 +180,12 @@ Partial mitigations that exist today:
 | Mitigation | Effect |
 |---|---|
 | `max_output_bytes` | Caps single-call return size, runtime-enforced on returned bytes (default 1 MiB) |
-| `output_digest` in audit | Forensic trail without storing raw output |
+| `input_digest` in audit | Forensic trail of call **input** without storing raw args (Intent + Outcome) |
 | Policy rate limits | Friction on bulk read patterns |
+
+**Not shipped (deferred):** `output_digest` is **absent** from `AuditIntent` /
+`AuditRecord` in schema v1 — do not treat it as a current mitigation. Adding it
+end-to-end (types + goldens + writer) is future work, not a v0.1 claim.
 
 Full output DLP / content filtering is a candidate for a future enterprise tier
 (Layer 2 guardian), not v1.
@@ -245,6 +251,7 @@ containment cases; they do not exhaust all attack classes.
 |---|---|
 | [DamageBot demo](../examples/damage-bot-demo/README.md) | Six adversarial cases through `Runtime::execute_tool_call` |
 | [Deny suite](../tests/deny-suite/) | Policy/capability/sandbox denial paths + audit emission |
+| [Audit schema freeze](audit-schema.md) | Field-level Intent/Outcome contract; digests + sinks honesty |
 | [Hot-path benchmarks](../benches/results/hot_path.md) | Policy ≪ 100 µs; combined pipeline ≪ 1 ms (cited hardware) |
 
 A passing demo is evidence, not certification. This threat model is the explicit
@@ -262,6 +269,7 @@ coordinated disclosure policy.
 ## Decision references
 
 Built against Gap Resolutions G9 (return-value exfil non-goal) and G15 (security
-response process), OQ-15 T6 (written threat model), and the Hardened Implementation
-Design trust-model sections. Amendments should be logged in project planning docs
-and reflected here.
+response process), OQ-15 T6 (written threat model), AEG-35 (audit-field honesty vs
+shipped `audit.rs` / schema freeze), and the Hardened Implementation Design
+trust-model sections. Amendments should be logged in project planning docs and
+reflected here.
