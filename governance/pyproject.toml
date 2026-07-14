@@ -1,7 +1,7 @@
 [project]
 name = "aegis-governance"
 version = "0.1.0"
-description = "Aegis Layer 2 governance slice 1 — audit ingest, policy floor, narrow-only proposals"
+description = "Aegis Layer 2 governance — audit ingest, policy floor, narrow-only proposals, drift detectors"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
