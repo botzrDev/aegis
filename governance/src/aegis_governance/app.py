@@ -1,6 +1,7 @@
-"""Minimal FastAPI surface for governance slice 1.
+"""Minimal FastAPI surface for governance slices 1–2.
 
-Proposals are never written into the Rust runtime. In-process state only (D21).
+Proposals and findings are never written into the Rust runtime.
+In-process state only (D21, D22).
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from aegis_governance.audit_ingest import IngestBatch, IngestError, ingest_jsonl
+from aegis_governance.detect import Finding, run_detectors
+from aegis_governance.guardian import Guardian, NullGuardian
 from aegis_governance.policy_floor import (
     FloorDecision,
     check_floor,
@@ -23,6 +26,7 @@ from aegis_governance.propose import propose_narrowing
 @dataclass
 class GovernanceState:
     buffer: IngestBatch = field(default_factory=IngestBatch)
+    findings: list[Finding] = field(default_factory=list)
 
 
 class ProposeRequest(BaseModel):
@@ -32,9 +36,13 @@ class ProposeRequest(BaseModel):
     )
 
 
-def create_app(state: Optional[GovernanceState] = None) -> FastAPI:
-    app = FastAPI(title="aegis-governance", version="0.1.0")
+def create_app(
+    state: Optional[GovernanceState] = None,
+    guardian: Optional[Guardian] = None,
+) -> FastAPI:
+    app = FastAPI(title="aegis-governance", version="0.2.0")
     app.state.governance = state or GovernanceState()
+    app.state.guardian = guardian or NullGuardian()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -88,6 +96,26 @@ def create_app(state: Optional[GovernanceState] = None) -> FastAPI:
             "rationale": proposal.rationale,
             "source_call_ids": proposal.source_call_ids,
             "policy_yaml": proposal.policy_yaml,
+        }
+
+    @app.post("/v1/detect")
+    def detect() -> dict[str, Any]:
+        gov: GovernanceState = app.state.governance
+        g: Guardian = app.state.guardian
+        emitted = g.review(run_detectors(gov.buffer), gov.buffer)
+        gov.findings.extend(emitted)
+        return {
+            "emitted": len(emitted),
+            "findings": [f.to_dict() for f in emitted],
+            "buffer_findings": len(gov.findings),
+        }
+
+    @app.get("/v1/findings")
+    def list_findings() -> dict[str, Any]:
+        gov: GovernanceState = app.state.governance
+        return {
+            "findings": [f.to_dict() for f in gov.findings],
+            "count": len(gov.findings),
         }
 
     return app

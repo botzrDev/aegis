@@ -86,3 +86,33 @@ def test_propose_floor_violation_returns_409(monkeypatch) -> None:
     assert r.status_code == 409
     assert r.json()["detail"]["error"] == "floor_violation"
     assert r.json()["detail"]["status"] == "pending_human"
+
+
+def test_detect_and_list_findings() -> None:
+    client = TestClient(create_app())
+    jsonl = (FIXTURES / "rate_spike.jsonl").read_text()
+    r = client.post("/v1/ingest", content=jsonl, headers={"content-type": "text/plain"})
+    assert r.status_code == 200
+
+    r = client.post("/v1/detect")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["emitted"] >= 1
+    assert all(f["status"] == "pending_human" for f in body["findings"])
+    kinds = {f["kind"] for f in body["findings"]}
+    assert "rate_spike" in kinds
+
+    r = client.get("/v1/findings")
+    assert r.status_code == 200
+    listed = r.json()
+    assert listed["count"] == body["buffer_findings"]
+    assert all(f["status"] == "pending_human" for f in listed["findings"])
+
+
+def test_detect_capability_creep_via_api() -> None:
+    client = TestClient(create_app())
+    jsonl = (FIXTURES / "capability_creep.jsonl").read_text()
+    assert client.post("/v1/ingest", content=jsonl).status_code == 200
+    body = client.post("/v1/detect").json()
+    kinds = {f["kind"] for f in body["findings"]}
+    assert "capability_creep" in kinds
