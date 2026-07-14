@@ -6,10 +6,12 @@ Always emitted on every exit path: success, policy deny, capability deny, resour
 
 ## Schema
 
+Wire format is frozen at `schema_version: 1` — see [`docs/audit-schema.md`](../../docs/audit-schema.md).
+
 Each tool call produces a two-phase audit trail:
 
 1. **Intent** — recorded before execution begins (`call_id`, `tool_id`, `input_digest`)
-2. **Outcome** — recorded when the call completes (`status`, `policy_outcome`, `capability_outcome`, `execution_outcome`, `metrics`)
+2. **Outcome** — recorded when the call completes (`policy`, `capability`, `execution`; optional `wall_ms` / `peak_memory_bytes`)
 
 If the runtime panics during execution, the `CallSession`'s `Drop` guard emits a trap record automatically (fail-closed: every call is accounted for).
 
