@@ -25,23 +25,25 @@ Do not re-wire dreamd through this binary.
 # From workspace root — write audit JSONL to a known path for inspection:
 cargo run -p botzr-aegis-mcp -- --audit /tmp/aegis-mcp-audit.jsonl
 
-# Optional policy YAML (default: allow-all):
+# Optional policy YAML (replaces the built-in default):
 cargo run -p botzr-aegis-mcp -- --policy path/to/policy.yaml --audit /tmp/aegis-mcp-audit.jsonl
 ```
 
+**Default policy** (when `--policy` is omitted): allow everything **except** `exfil`
+(station-1 deny-smoke for AEG-28).
+
 ### Host smoke (spawn → tools/call → audit)
 
-Reproducible end-to-end path without a full agent host (AEG-29):
+Reproducible end-to-end path without a full agent host (AEG-29 / AEG-28):
 
 ```bash
-./scripts/mcp-stdio-smoke.sh
-# keep the audit file after a green run:
-./scripts/mcp-stdio-smoke.sh --keep-audit
+./scripts/mcp-stdio-smoke.sh              # initialize + tools/list + echo allow
+./scripts/mcp-stdio-smoke.sh --deny       # also call exfil; require policy-deny audit
+./scripts/mcp-stdio-smoke.sh --keep-audit # leave the audit JSONL for inspection
 ```
 
-The script builds `botzr-aegis-mcp`, spawns it with `--audit`, sends `initialize` +
-`tools/call` (echo) over stdio, and exits non-zero unless the audit JSONL contains a
-`schema_version: 1` success outcome.
+The script builds `botzr-aegis-mcp`, spawns it with `--audit`, speaks MCP over stdio,
+and exits non-zero unless the expected audit outcome(s) land with `schema_version: 1`.
 
 ### Cursor / Claude MCP client config
 
@@ -63,9 +65,15 @@ Build first with `cargo build -p botzr-aegis-mcp`, then set `command` to that bi
 path (or wrap with `cargo run -p botzr-aegis-mcp --` if your host allows multi-arg
 commands). Optional: add `"--policy", "/path/to/policy.yaml"` to `args`.
 
-## Smoke tool
+## Tool catalog
 
-`echo` — Model A WASM fixture under `tests/fixtures/echo-tool/`. Arguments: `{ "text": "..." }`. No ambient `net` grants.
+Both tools use the same Model A WASM fixture (`tests/fixtures/echo-tool/`). Arguments:
+`{ "text": "..." }`. No ambient `net` grants.
+
+| Tool | Default policy | Purpose |
+|------|----------------|---------|
+| `echo` | **allow** | Happy-path `tools/call` through the full pipeline |
+| `exfil` | **deny** (station 1) | Deny-smoke: refused before capability/sandbox; still audited |
 
 ## Trust model
 

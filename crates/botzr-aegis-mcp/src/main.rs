@@ -16,7 +16,7 @@ fn print_help() {
     eprintln!("Usage: botzr-aegis-mcp [OPTIONS]");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --policy <PATH>  Path to policy YAML (default: allow-all)");
+    eprintln!("  --policy <PATH>  Path to policy YAML (default: allow-all except exfil)");
     eprintln!("  --audit  <PATH>  Path for audit JSONL output (default: temp file)");
     eprintln!("  --help, -h       Print this help");
     eprintln!();
@@ -83,7 +83,7 @@ fn main() -> ExitCode {
     );
     eprintln!("Pipeline: policy → capability → sandbox → audit");
     eprintln!("Audit: {}", runtime.audit().path().display());
-    eprintln!("Tools: echo (Model A WASM fixture)");
+    eprintln!("Tools: echo (allow) + exfil (policy-denied by default) — Model A WASM");
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();

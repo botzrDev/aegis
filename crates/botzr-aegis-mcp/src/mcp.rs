@@ -6,7 +6,7 @@
 
 use serde_json::{json, Value};
 
-use crate::bridge::{call_echo, ECHO_TOOL_ID};
+use crate::bridge::{call_tool, CATALOG_TOOL_IDS, ECHO_TOOL_ID, EXFIL_TOOL_ID};
 use botzr_aegis_runtime::Runtime;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -70,26 +70,42 @@ fn initialize_result() -> Value {
             "name": "botzr-aegis-mcp",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Research instrument. Every tools/call walks POLICY → CAPABILITY → SANDBOX → AUDIT. Dreamd stays in-process (examples/dreamd-poc); this binary is for external MCP hosts."
+        "instructions": "Research instrument. Every tools/call walks POLICY → CAPABILITY → SANDBOX → AUDIT. Catalog: echo (allow) + exfil (policy-denied by default). Dreamd stays in-process (examples/dreamd-poc); this binary is for external MCP hosts."
     })
 }
 
 fn tools_list_result() -> Value {
     json!({
-        "tools": [{
-            "name": ECHO_TOOL_ID,
-            "description": "Echo text through Aegis POLICY → CAPABILITY → SANDBOX → AUDIT (Model A WASM).",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "UTF-8 text echoed through the pipeline"
-                    }
-                },
-                "required": ["text"]
+        "tools": [
+            {
+                "name": ECHO_TOOL_ID,
+                "description": "Echo text through Aegis POLICY → CAPABILITY → SANDBOX → AUDIT (Model A WASM). Allowed by default policy.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "UTF-8 text echoed through the pipeline"
+                        }
+                    },
+                    "required": ["text"]
+                }
+            },
+            {
+                "name": EXFIL_TOOL_ID,
+                "description": "Deny-smoke tool: same Model A WASM as echo, but default policy denies it at station 1. Use to prove MCP → runtime → audit on refuse paths.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "Would-be payload (never executed under default policy)"
+                        }
+                    },
+                    "required": ["text"]
+                }
             }
-        }]
+        ]
     })
 }
 
@@ -99,7 +115,7 @@ fn tools_call(rt: &Runtime, params: &Value) -> Result<Value, (i32, String)> {
         .and_then(|n| n.as_str())
         .ok_or((-32602, "tools/call missing name".into()))?;
 
-    if name != ECHO_TOOL_ID {
+    if !CATALOG_TOOL_IDS.contains(&name) {
         return Ok(json!({
             "content": [{ "type": "text", "text": format!("unknown tool: {name}") }],
             "isError": true
@@ -109,9 +125,9 @@ fn tools_call(rt: &Runtime, params: &Value) -> Result<Value, (i32, String)> {
     let text = params
         .pointer("/arguments/text")
         .and_then(|t| t.as_str())
-        .ok_or((-32602, "echo requires arguments.text".into()))?;
+        .ok_or((-32602, format!("{name} requires arguments.text")))?;
 
-    match call_echo(rt, text) {
+    match call_tool(rt, name, text) {
         Ok(bytes) => {
             let out = String::from_utf8_lossy(&bytes).into_owned();
             Ok(json!({
@@ -134,6 +150,15 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    fn tools_list_exposes_multi_tool_catalog() {
+        let rt = build_runtime(None, None).expect("runtime");
+        let listed = handle_line(&rt, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+            .expect("tools/list");
+        assert!(listed.contains("\"echo\""));
+        assert!(listed.contains("\"exfil\""));
+    }
+
+    #[test]
     fn tools_call_via_jsonrpc_emits_audit_outcome() {
         let audit = NamedTempFile::new().expect("temp audit");
         let rt = build_runtime(None, Some(audit.path())).expect("runtime");
@@ -148,6 +173,7 @@ mod tests {
         let listed = handle_line(&rt, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
             .expect("tools/list");
         assert!(listed.contains("\"echo\""));
+        assert!(listed.contains("\"exfil\""));
 
         let called = handle_line(
             &rt,
@@ -164,5 +190,34 @@ mod tests {
             .expect("outcome");
         assert!(outcome.contains("\"schema_version\":1"));
         assert!(outcome.contains("\"status\":\"success\""));
+    }
+
+    #[test]
+    fn tools_call_exfil_deny_audited_via_jsonrpc() {
+        let audit = NamedTempFile::new().expect("temp audit");
+        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+
+        let called = handle_line(
+            &rt,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exfil","arguments":{"text":"payload"}}}"#,
+        )
+        .expect("tools/call");
+        assert!(
+            called.contains("\"isError\":true"),
+            "expected isError, got: {called}"
+        );
+
+        let jsonl = std::fs::read_to_string(audit.path()).expect("audit");
+        let outcome = jsonl
+            .lines()
+            .find(|l| l.contains("\"phase\":\"outcome\""))
+            .expect("outcome");
+        assert!(outcome.contains("\"schema_version\":1"));
+        assert!(
+            outcome.contains("\"status\":\"denied\"")
+                || outcome.contains("MCP deny-smoke: exfil blocked"),
+            "expected deny audit, got: {outcome}"
+        );
+        assert!(outcome.contains("\"tool_id\":\"exfil\""));
     }
 }
