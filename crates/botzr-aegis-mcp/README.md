@@ -29,20 +29,39 @@ cargo run -p botzr-aegis-mcp -- --audit /tmp/aegis-mcp-audit.jsonl
 cargo run -p botzr-aegis-mcp -- --policy path/to/policy.yaml --audit /tmp/aegis-mcp-audit.jsonl
 ```
 
-Point a Cursor/Claude-style MCP host at the binary (stdio). Example host config shape:
+### Host smoke (spawn → tools/call → audit)
+
+Reproducible end-to-end path without a full agent host (AEG-29):
+
+```bash
+./scripts/mcp-stdio-smoke.sh
+# keep the audit file after a green run:
+./scripts/mcp-stdio-smoke.sh --keep-audit
+```
+
+The script builds `botzr-aegis-mcp`, spawns it with `--audit`, sends `initialize` +
+`tools/call` (echo) over stdio, and exits non-zero unless the audit JSONL contains a
+`schema_version: 1` success outcome.
+
+### Cursor / Claude MCP client config
+
+Point a Cursor/Claude-style MCP host at the built binary (stdio). Logs go to
+**stderr**; stdout is reserved for MCP JSON-RPC (one message per line).
 
 ```json
 {
   "mcpServers": {
     "aegis": {
-      "command": "/path/to/botzr-aegis-mcp",
+      "command": "/absolute/path/to/target/debug/botzr-aegis-mcp",
       "args": ["--audit", "/tmp/aegis-mcp-audit.jsonl"]
     }
   }
 }
 ```
 
-Logs go to **stderr**; stdout is reserved for MCP JSON-RPC (one message per line).
+Build first with `cargo build -p botzr-aegis-mcp`, then set `command` to that binary
+path (or wrap with `cargo run -p botzr-aegis-mcp --` if your host allows multi-arg
+commands). Optional: add `"--policy", "/path/to/policy.yaml"` to `args`.
 
 ## Smoke tool
 
