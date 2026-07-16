@@ -12,9 +12,18 @@
 
 **Authority:** AEG-12 D17; `examples/dreamd-poc/DECISIONS.md` (OQ-13 lock); AEG-25.
 
+## Multi-tool catalog + deny smoke (AEG-28)
+
+Catalog tools: `echo` (allow) and `exfil` (same WASM bytes; denied by default policy at
+station 1). Advertising a second tool that is policy-denied proves the MCP path still
+emits Intent+Outcome audit on refuse — without inventing a second guest binary.
+
+Default policy when `--policy` is omitted is embedded in `bridge.rs`
+(`DEFAULT_DENY_EXFIL_POLICY`). Host-supplied `--policy` replaces it entirely.
+
 ## Model A vs Model B honesty
 
-This scaffold’s smoke path is **Model A** (registered WASM `echo` fixture → `Runtime::execute_tool_call`). Isolation is wasmtime + grant-configured WASI.
+This scaffold’s smoke path is **Model A** (registered WASM `echo`/`exfil` fixture → `Runtime::execute_tool_call`). Isolation is wasmtime + grant-configured WASI.
 
 **Model B** (host functions) is a different trust boundary: the effect runs in host Rust; capability check + audit only — sandbox does not contain the effect. See [`docs/threat-model.md`](../../docs/threat-model.md) §3. Do not market Model B as full sandbox isolation.
 

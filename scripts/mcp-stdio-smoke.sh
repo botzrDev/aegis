@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# MCP stdio host smoke (AEG-29): spawn botzr-aegis-mcp → initialize → tools/call → audit.
+# MCP stdio host smoke (AEG-29 / AEG-28): spawn botzr-aegis-mcp → protocol → audit.
 #
 # Usage (from workspace root):
-#   ./scripts/mcp-stdio-smoke.sh
-#   ./scripts/mcp-stdio-smoke.sh --keep-audit   # leave AUDIT_PATH for inspection
+#   ./scripts/mcp-stdio-smoke.sh              # initialize + tools/list + echo allow
+#   ./scripts/mcp-stdio-smoke.sh --deny       # also tools/call exfil → policy deny audit
+#   ./scripts/mcp-stdio-smoke.sh --keep-audit # leave AUDIT_PATH for inspection
 #
-# Exit 0 only when tools/call echoes successfully and audit JSONL has a schema v1
-# success outcome. Requires `cargo` (builds the mcp binary).
+# Exit 0 only when required audit outcomes are present (schema v1). Requires cargo.
 
 set -euo pipefail
 
@@ -14,9 +14,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 KEEP_AUDIT=0
+RUN_DENY=0
 for arg in "$@"; do
   case "$arg" in
     --keep-audit) KEEP_AUDIT=1 ;;
+    --deny) RUN_DENY=1 ;;
     -h|--help)
       sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -53,25 +55,33 @@ fi
 
 echo "==> spawn: $BIN --audit $AUDIT_PATH" >&2
 
-# stdout = JSON-RPC; binary readiness logs go to this script's stderr.
-RESPONSES="$(
-  {
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"aegis-mcp-stdio-smoke","version":"0"}}}'
-    # Notification — server returns silence (no id).
-    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"mcp-stdio-smoke"}}}'
-  } | "$BIN" --audit "$AUDIT_PATH"
-)"
+REQS=$(mktemp)
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"aegis-mcp-stdio-smoke","version":"0"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"text":"mcp-stdio-smoke"}}}'
+  if [[ "$RUN_DENY" -eq 1 ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"exfil","arguments":{"text":"should-be-denied"}}}'
+  fi
+} >"$REQS"
+
+RESPONSES="$("$BIN" --audit "$AUDIT_PATH" <"$REQS")"
+rm -f "$REQS"
+
+expect_lines=3
+[[ "$RUN_DENY" -eq 1 ]] && expect_lines=4
 
 line_count="$(printf '%s\n' "$RESPONSES" | grep -c . || true)"
-if [[ "$line_count" -lt 2 ]]; then
-  echo "error: expected ≥2 JSON-RPC responses (initialize + tools/call), got:" >&2
+if [[ "$line_count" -lt "$expect_lines" ]]; then
+  echo "error: expected ≥${expect_lines} JSON-RPC responses, got ${line_count}:" >&2
   printf '%s\n' "$RESPONSES" >&2
   exit 1
 fi
 
 INIT_LINE="$(printf '%s\n' "$RESPONSES" | sed -n '1p')"
-CALL_LINE="$(printf '%s\n' "$RESPONSES" | sed -n '2p')"
+LIST_LINE="$(printf '%s\n' "$RESPONSES" | sed -n '2p')"
+CALL_LINE="$(printf '%s\n' "$RESPONSES" | sed -n '3p')"
 
 if ! printf '%s' "$INIT_LINE" | grep -q 'botzr-aegis-mcp'; then
   echo "error: initialize response missing serverInfo name:" >&2
@@ -79,14 +89,24 @@ if ! printf '%s' "$INIT_LINE" | grep -q 'botzr-aegis-mcp'; then
   exit 1
 fi
 
-if ! printf '%s' "$CALL_LINE" | grep -q 'mcp-stdio-smoke'; then
-  echo "error: tools/call did not echo payload:" >&2
-  echo "$CALL_LINE" >&2
+if ! printf '%s' "$LIST_LINE" | grep -q '"echo"'; then
+  echo "error: tools/list missing echo:" >&2
+  echo "$LIST_LINE" >&2
+  exit 1
+fi
+if ! printf '%s' "$LIST_LINE" | grep -q '"exfil"'; then
+  echo "error: tools/list missing exfil (multi-tool catalog):" >&2
+  echo "$LIST_LINE" >&2
   exit 1
 fi
 
+if ! printf '%s' "$CALL_LINE" | grep -q 'mcp-stdio-smoke'; then
+  echo "error: tools/call echo did not echo payload:" >&2
+  echo "$CALL_LINE" >&2
+  exit 1
+fi
 if printf '%s' "$CALL_LINE" | grep -q '"isError":true'; then
-  echo "error: tools/call returned isError=true:" >&2
+  echo "error: tools/call echo returned isError=true:" >&2
   echo "$CALL_LINE" >&2
   exit 1
 fi
@@ -102,24 +122,47 @@ if ! grep -q '"phase":"intent"' "$AUDIT_PATH"; then
   exit 1
 fi
 
-OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" || true)"
-if [[ -z "$OUTCOME" ]]; then
-  echo "error: audit missing outcome line:" >&2
+SUCCESS_OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" | grep '"tool_id":"echo"' || true)"
+if [[ -z "$SUCCESS_OUTCOME" ]]; then
+  SUCCESS_OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" | grep '"status":"success"' || true)"
+fi
+if [[ -z "$SUCCESS_OUTCOME" ]]; then
+  echo "error: missing success outcome for echo:" >&2
   cat "$AUDIT_PATH" >&2
   exit 1
 fi
-
-if ! printf '%s' "$OUTCOME" | grep -q '"schema_version":1'; then
-  echo "error: outcome missing schema_version 1:" >&2
-  echo "$OUTCOME" >&2
+if ! printf '%s' "$SUCCESS_OUTCOME" | grep -q '"schema_version":1'; then
+  echo "error: echo outcome missing schema_version 1:" >&2
+  echo "$SUCCESS_OUTCOME" >&2
   exit 1
 fi
 
-if ! printf '%s' "$OUTCOME" | grep -q '"status":"success"'; then
-  echo "error: outcome not success:" >&2
-  echo "$OUTCOME" >&2
-  exit 1
-fi
+if [[ "$RUN_DENY" -eq 1 ]]; then
+  DENY_LINE="$(printf '%s\n' "$RESPONSES" | sed -n '4p')"
+  if ! printf '%s' "$DENY_LINE" | grep -q '"isError":true'; then
+    echo "error: tools/call exfil expected isError=true:" >&2
+    echo "$DENY_LINE" >&2
+    exit 1
+  fi
 
-echo "ok: MCP stdio smoke — initialize + tools/call + audit schema v1 success" >&2
+  DENY_OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" | grep '"tool_id":"exfil"' || true)"
+  if [[ -z "$DENY_OUTCOME" ]]; then
+    echo "error: missing audit outcome for exfil:" >&2
+    cat "$AUDIT_PATH" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$DENY_OUTCOME" | grep -q '"schema_version":1'; then
+    echo "error: exfil outcome missing schema_version 1:" >&2
+    echo "$DENY_OUTCOME" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$DENY_OUTCOME" | grep -Eq '"status":"denied"|MCP deny-smoke: exfil blocked'; then
+    echo "error: exfil outcome not a policy deny:" >&2
+    echo "$DENY_OUTCOME" >&2
+    exit 1
+  fi
+  echo "ok: MCP stdio smoke — catalog + echo allow + exfil deny audited" >&2
+else
+  echo "ok: MCP stdio smoke — catalog + echo allow + audit schema v1 success" >&2
+fi
 exit 0

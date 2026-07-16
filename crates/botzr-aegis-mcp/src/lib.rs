@@ -6,5 +6,8 @@
 mod bridge;
 mod mcp;
 
-pub use bridge::{build_runtime, call_echo, ECHO_TOOL_ID};
+pub use bridge::{
+    build_runtime, call_echo, call_tool, CATALOG_TOOL_IDS, DEFAULT_DENY_EXFIL_POLICY, ECHO_TOOL_ID,
+    EXFIL_TOOL_ID,
+};
 pub use mcp::handle_line;
