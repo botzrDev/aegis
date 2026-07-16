@@ -138,6 +138,7 @@ containment cases and measured costs — they do not certify the instrument.
 | Artifact | What it shows |
 |---|---|
 | [Threat model](docs/threat-model.md) | Scope, trust boundaries, named non-goals, residual risks |
+| [OQ-15 Part B review](https://github.com/botzrDev/aegis/issues/19) | Structured packaging peer review (solo-maintainer exception logged) |
 | [Audit schema freeze](docs/audit-schema.md) | `schema_version: 1` wire contract (Intent/Outcome); digests + sinks honesty |
 | [`SECURITY.md`](SECURITY.md) | Private disclosure process and in-scope crates |
 | [DamageBot demo](examples/damage-bot-demo/README.md) | Six adversarial cases refused through `Runtime::execute_tool_call` (Model A + Model B) |

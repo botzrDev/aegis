@@ -1,7 +1,8 @@
 # Aegis threat model
 
-> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-07-14 (AEG-35 honesty pass)  
-> **Related:** [SECURITY.md](../SECURITY.md) · [Audit schema freeze](audit-schema.md) · [DamageBot demo](../examples/damage-bot-demo/README.md) · [Benchmarks](../benches/results/hot_path.md)
+> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-07-16 (AEG-36 Part B review)  
+> **Related:** [SECURITY.md](../SECURITY.md) · [Audit schema freeze](audit-schema.md) · [DamageBot demo](../examples/damage-bot-demo/README.md) · [Benchmarks](../benches/results/hot_path.md)  
+> **Part B review:** [OQ-15 peer review (#19)](https://github.com/botzrDev/aegis/issues/19)
 
 Aegis is a **research instrument** for testing what agent tool isolation actually
 guarantees. This document states what the runtime protects, what it does not, and
@@ -125,8 +126,8 @@ When correctly configured and integrated, Aegis v1 aims to ensure:
    grant, never from the raw request.
 3. **Filesystem containment (Model A).** cap-std preopens block `..` traversal,
    symlink escape, and TOCTOU races that defeat naive path-prefix checks.
-4. **Network containment (Model B).** Host HTTP imports check `NetGrant.allowed_hosts`
-   before any outbound request.
+4. **Network containment (Model B).** Host HTTP imports check `NetGrant.http`
+   allow-list entries (`host` / `ports` / `methods`) before any outbound request.
 5. **Resource bounds.** Per-call memory cap, epoch wall-clock budget, and
    `max_output_bytes` limit unbounded guest output. The output cap is enforced
    **orchestrator-side** on the bytes a call returns — not a wasmtime store
@@ -270,6 +271,7 @@ coordinated disclosure policy.
 
 Built against Gap Resolutions G9 (return-value exfil non-goal) and G15 (security
 response process), OQ-15 T6 (written threat model), AEG-35 (audit-field honesty vs
-shipped `audit.rs` / schema freeze), and the Hardened Implementation Design
-trust-model sections. Amendments should be logged in project planning docs and
-reflected here.
+shipped `audit.rs` / schema freeze), AEG-36 (OQ-15 Part B structured review —
+[issue #19](https://github.com/botzrDev/aegis/issues/19)), and the Hardened
+Implementation Design trust-model sections. Amendments should be logged in project
+planning docs and reflected here.
