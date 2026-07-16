@@ -149,11 +149,11 @@ containment cases and measured costs — they do not certify the instrument.
 ## Status
 
 The enforcement pipeline is wired and tested end-to-end; demos, benchmarks, and the
-threat model are published. Packaging toward `v0.1.0` is in progress — **there is no
-tagged release yet**. The `aegis` CLI supports `aegis run` for one-shot WASM
-execution through the pipeline. Track the current commit on
-[`main`](https://github.com/botzrDev/aegis) and
-[releases](https://github.com/botzrDev/aegis/releases) for the first tag.
+threat model are published. The first packaging tag —
+[**`v0.1.0`**](https://github.com/botzrDev/aegis/releases/tag/v0.1.0) — is cut. The
+`aegis` CLI supports `aegis run` for one-shot WASM execution through the pipeline.
+The crates are not published to crates.io yet; build from
+[`main`](https://github.com/botzrDev/aegis) or the tag.
 
 ## License
 
