@@ -1,5 +1,7 @@
 //! Narrowing-only delegation — sub-grants are a strict subset of the parent.
 
+use std::path::Path;
+
 use botzr_aegis_core::CapabilityGrant;
 
 use crate::error::CapabilityError;
@@ -26,9 +28,9 @@ pub fn narrow_grant(
 
     let sub = mint_grant(sub_manifest, grant_id, ceiling)?;
 
-    ensure_limits_narrowed(parent_grant, &sub)?;
-    ensure_fs_grant_narrowed(parent_grant, &sub)?;
-    ensure_net_grant_narrowed(parent_grant, &sub)?;
+    // Single grant-level guard: every axis is checked by the one subset oracle
+    // (the same `check_grant_subset` that backs `grant_is_subset`).
+    ensure_grant_narrowed(parent_grant, &sub)?;
 
     Ok(sub)
 }
@@ -95,125 +97,53 @@ fn validate_net_narrowing(
     Ok(())
 }
 
-fn ensure_limits_narrowed(
-    parent: &CapabilityGrant,
-    sub: &CapabilityGrant,
-) -> Result<(), CapabilityError> {
+/// The single subset oracle (AEG-39). Answers "is `sub` no broader than
+/// `parent` on every grant axis?" — the `max_memory_bytes` / `max_wall_ms` /
+/// `max_output_bytes` limits, filesystem read/write containment (component-aware),
+/// and net http host/ports/methods (⊆, case-insensitive methods). Returns
+/// `Ok(())` when `sub` is a subset, or `Err(detail)` naming the first axis on
+/// which `sub` escalates.
+///
+/// Both the public bool verifier [`grant_is_subset`] and the production
+/// narrowing guard [`ensure_grant_narrowed`] derive from this one function —
+/// there is no second, divergent axis comparison anywhere in the crate. A `sub`
+/// with `None` fs/net is always a subset; a `sub` with `Some` against a parent
+/// `None` escalates.
+fn check_grant_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> Result<(), String> {
     if sub.max_memory_bytes > parent.max_memory_bytes {
-        return Err(CapabilityError::Escalation {
-            detail: format!(
-                "max_memory_bytes escalation: sub={} parent={}",
-                sub.max_memory_bytes, parent.max_memory_bytes
-            ),
-        });
+        return Err(format!(
+            "max_memory_bytes escalation: sub={} parent={}",
+            sub.max_memory_bytes, parent.max_memory_bytes
+        ));
     }
     if sub.max_wall_ms > parent.max_wall_ms {
-        return Err(CapabilityError::Escalation {
-            detail: format!(
-                "max_wall_ms escalation: sub={} parent={}",
-                sub.max_wall_ms, parent.max_wall_ms
-            ),
-        });
+        return Err(format!(
+            "max_wall_ms escalation: sub={} parent={}",
+            sub.max_wall_ms, parent.max_wall_ms
+        ));
     }
     if sub.max_output_bytes > parent.max_output_bytes {
-        return Err(CapabilityError::Escalation {
-            detail: format!(
-                "max_output_bytes escalation: sub={} parent={}",
-                sub.max_output_bytes, parent.max_output_bytes
-            ),
-        });
-    }
-    Ok(())
-}
-
-fn ensure_fs_grant_narrowed(
-    parent: &CapabilityGrant,
-    sub: &CapabilityGrant,
-) -> Result<(), CapabilityError> {
-    let Some(sub_fs) = &sub.fs else {
-        return Ok(());
-    };
-    let parent_fs = parent.fs.as_ref();
-
-    for path in sub_fs.read_paths.iter().chain(sub_fs.write_paths.iter()) {
-        let in_parent_read = parent_fs
-            .map(|p| p.read_paths.iter().any(|parent| path.starts_with(parent)))
-            .unwrap_or(false);
-        let in_parent_write = parent_fs
-            .map(|p| p.write_paths.iter().any(|parent| path.starts_with(parent)))
-            .unwrap_or(false);
-        let is_write = sub_fs.write_paths.iter().any(|w| w == path);
-        if is_write && !in_parent_write {
-            return Err(CapabilityError::Escalation {
-                detail: format!("fs.write grant escalation for `{path}`"),
-            });
-        }
-        if !is_write && !in_parent_read && !in_parent_write {
-            return Err(CapabilityError::Escalation {
-                detail: format!("fs.read grant escalation for `{path}`"),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn ensure_net_grant_narrowed(
-    parent: &CapabilityGrant,
-    sub: &CapabilityGrant,
-) -> Result<(), CapabilityError> {
-    let Some(sub_net) = &sub.net else {
-        return Ok(());
-    };
-    let parent_http = parent
-        .net
-        .as_ref()
-        .map(|n| n.http.as_slice())
-        .unwrap_or(&[]);
-
-    for sub_http in &sub_net.http {
-        let allowed = parent_http.iter().any(|parent| {
-            parent.host == sub_http.host
-                && sub_http
-                    .ports
-                    .iter()
-                    .all(|port| parent.ports.contains(port))
-                && sub_http.methods.iter().all(|method| {
-                    parent
-                        .methods
-                        .iter()
-                        .any(|m| m.eq_ignore_ascii_case(method))
-                })
-        });
-        if !allowed {
-            return Err(CapabilityError::Escalation {
-                detail: format!("net.http grant escalation for host `{}`", sub_http.host),
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Returns true when `sub` is no broader than `parent` on every grant axis.
-pub fn grant_is_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> bool {
-    if sub.max_memory_bytes > parent.max_memory_bytes || sub.max_wall_ms > parent.max_wall_ms {
-        return false;
+        return Err(format!(
+            "max_output_bytes escalation: sub={} parent={}",
+            sub.max_output_bytes, parent.max_output_bytes
+        ));
     }
 
     if let Some(sub_fs) = &sub.fs {
         let parent_fs = parent.fs.as_ref();
         for path in sub_fs.read_paths.iter().chain(sub_fs.write_paths.iter()) {
             let in_parent_read = parent_fs
-                .map(|p| p.read_paths.iter().any(|parent| path.starts_with(parent)))
+                .map(|p| p.read_paths.iter().any(|root| path_contained(root, path)))
                 .unwrap_or(false);
             let in_parent_write = parent_fs
-                .map(|p| p.write_paths.iter().any(|parent| path.starts_with(parent)))
+                .map(|p| p.write_paths.iter().any(|root| path_contained(root, path)))
                 .unwrap_or(false);
             let is_write = sub_fs.write_paths.iter().any(|w| w == path);
             if is_write && !in_parent_write {
-                return false;
+                return Err(format!("fs.write grant escalation for `{path}`"));
             }
             if !is_write && !in_parent_read && !in_parent_write {
-                return false;
+                return Err(format!("fs.read grant escalation for `{path}`"));
             }
         }
     }
@@ -239,19 +169,66 @@ pub fn grant_is_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> bool 
                     })
             });
             if !allowed {
-                return false;
+                return Err(format!(
+                    "net.http grant escalation for host `{}`",
+                    sub_http.host
+                ));
             }
         }
     }
 
-    true
+    Ok(())
+}
+
+/// Component-aware path containment: is `child` equal to, or nested under,
+/// `parent`? Compares path *components* via [`Path::starts_with`], never a raw
+/// string prefix — so sibling paths like `/tmp/foo` vs `/tmp/foobar` are never
+/// confused (AEG-39). Grant strings are already absolute canonical paths from
+/// mint; non-recursive need semantics stay in `path_need_allowed`.
+fn path_contained(parent: &str, child: &str) -> bool {
+    let parent_path = Path::new(parent);
+    let child_path = Path::new(child);
+    child_path == parent_path || child_path.starts_with(parent_path)
+}
+
+/// Returns true when `sub` is no broader than `parent` on every grant axis.
+///
+/// Thin bool view over [`check_grant_subset`] — the single subset oracle shared
+/// with production narrowing.
+pub fn grant_is_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> bool {
+    check_grant_subset(parent, sub).is_ok()
+}
+
+/// Guard form of the subset oracle used by [`narrow_grant`]: `Ok(())` when `sub`
+/// narrows `parent`, else [`CapabilityError::Escalation`] naming the offending
+/// axis. Wraps the same [`check_grant_subset`] oracle as [`grant_is_subset`] —
+/// no duplicated axis logic.
+fn ensure_grant_narrowed(
+    parent: &CapabilityGrant,
+    sub: &CapabilityGrant,
+) -> Result<(), CapabilityError> {
+    check_grant_subset(parent, sub).map_err(|detail| CapabilityError::Escalation { detail })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manifest::{FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits};
-    use botzr_aegis_core::ToolId;
+    use botzr_aegis_core::{FsGrant, ToolId};
+
+    /// A minimal deny-all grant with only the limit axes populated. Callers
+    /// override `fs` / `net` with struct-update syntax to probe one axis.
+    fn bare_grant(max_output_bytes: u64) -> CapabilityGrant {
+        CapabilityGrant {
+            grant_id: "g".into(),
+            tool_id: ToolId::new("t"),
+            fs: None,
+            net: None,
+            max_memory_bytes: 1024,
+            max_wall_ms: 1_000,
+            max_output_bytes,
+        }
+    }
 
     fn parent_fixture() -> (tempfile::TempDir, ToolManifest, CapabilityGrant) {
         let dir = tempfile::tempdir().unwrap();
@@ -415,5 +392,47 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, CapabilityError::Escalation { .. }));
+    }
+
+    #[test]
+    fn oracle_rejects_output_cap_escalation() {
+        // AEG-39: the shared oracle — not only the mint path — must reject an
+        // output cap that escalates. The old `grant_is_subset` ignored this axis.
+        let parent = bare_grant(1024);
+        let escalated = bare_grant(1025); // one byte over on the output axis only
+        assert!(!grant_is_subset(&parent, &escalated));
+        // An equal output cap stays a subset.
+        assert!(grant_is_subset(&parent, &bare_grant(1024)));
+    }
+
+    #[test]
+    fn oracle_rejects_sibling_prefix_path() {
+        // AEG-39: `/tmp/foobar` is a *sibling* of `/tmp/foo`, not a child. A raw
+        // string prefix would wrongly accept it; component-aware containment must not.
+        let parent = CapabilityGrant {
+            fs: Some(FsGrant {
+                read_paths: vec!["/tmp/foo".into()],
+                write_paths: vec![],
+            }),
+            ..bare_grant(1024)
+        };
+        let sibling = CapabilityGrant {
+            fs: Some(FsGrant {
+                read_paths: vec!["/tmp/foobar".into()],
+                write_paths: vec![],
+            }),
+            ..bare_grant(1024)
+        };
+        assert!(!grant_is_subset(&parent, &sibling));
+
+        // A genuine child under the parent path is still a subset.
+        let nested = CapabilityGrant {
+            fs: Some(FsGrant {
+                read_paths: vec!["/tmp/foo/bar".into()],
+                write_paths: vec![],
+            }),
+            ..bare_grant(1024)
+        };
+        assert!(grant_is_subset(&parent, &nested));
     }
 }
