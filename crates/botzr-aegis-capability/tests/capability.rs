@@ -93,6 +93,9 @@ proptest! {
     fn narrowed_grant_never_broader_than_parent(
         sub_memory in 1u64..=(1 << 20),
         sub_wall in 1u64..=5_000u64,
+        // Output cap varied within the parent's ceiling (1 MiB default) so the
+        // property actually exercises the output axis the oracle now covers.
+        sub_output in 1u64..=(1 << 20),
     ) {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("fixtures/nested")).unwrap();
@@ -125,7 +128,7 @@ proptest! {
         .with_limits(ToolLimits {
             max_memory_bytes: sub_memory,
             max_wall_ms: sub_wall,
-            ..ToolLimits::default()
+            max_output_bytes: sub_output,
         });
 
         let sub = narrow_grant(
