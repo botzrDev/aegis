@@ -8,7 +8,9 @@ POLICY → CAPABILITY → SANDBOX → AUDIT
 
 via `Runtime::execute_tool_call`. This is a research scaffold — not a production MCP firewall.
 
-**Decision lock:** see [`DECISIONS.md`](./DECISIONS.md) (D17 / OQ-13). Former crate name was `botzr-aegis-sidecar` (UDS gRPC story retired).
+**Decision lock:** MCP over stdio is **decision D17** (OQ-13) — see [`DECISIONS.md`](./DECISIONS.md).
+
+**Arriving from `botzr-aegis-sidecar`?** That is the **retired** former name of this crate; the rename was in-place — one crate, one binary, no separate sidecar to install. Its UDS gRPC/HTTP transport story is **retired** with the name: D17 replaced it with stdio JSON-RPC, chosen for reproducibility (deterministic spawn, no port races, every request/response pair capturable).
 
 ## In-process vs out-of-process
 
@@ -18,6 +20,23 @@ via `Runtime::execute_tool_call`. This is a research scaffold — not a producti
 | **Out-of-process MCP** | this binary | Hosts that speak MCP stdio and should not link the crate graph |
 
 Do not re-wire dreamd through this binary.
+
+## Install (crates.io)
+
+Binary, from the `botzr-aegis-*` namespace (v0.1.0):
+
+```bash
+cargo install botzr-aegis-mcp
+```
+
+Library mode does not need this binary — depend on the runtime directly:
+
+```toml
+[dependencies]
+botzr-aegis-runtime = "0.1.0"
+```
+
+To build from this checkout instead, see below.
 
 ## Run (stdio)
 
@@ -77,7 +96,9 @@ Both tools use the same Model A WASM fixture (`tests/fixtures/echo-tool/`). Argu
 
 ## Trust model
 
-Smoke path is **Model A** (WASM isolation). **Model B** host functions are a weaker boundary — see [`docs/threat-model.md`](../../docs/threat-model.md).
+Smoke path is **Model A** (WASM isolation): the `echo`/`exfil` fixture executes inside wasmtime, so the boundary is the sandbox plus grant-configured WASI.
+
+**Model B** (host functions) is **not** full sandbox isolation — never describe it as such. The effect runs in host Rust; the only boundary is the capability check the host function enforces before the effect, plus the audit record. The sandbox does not contain a Model B effect. See [`docs/threat-model.md`](../../docs/threat-model.md) §3.
 
 ## Protocol surface
 

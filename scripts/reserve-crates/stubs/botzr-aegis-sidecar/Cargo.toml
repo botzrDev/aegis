@@ -1,13 +1,19 @@
 [package]
 name = "botzr-aegis-sidecar"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 license = "MIT"
-description = "Reserved: sidecar gateway for Aegis — secure execution runtime for AI agent tool calls (Phase 2)."
+description = "RETIRED name — no implementation was ever published here. The Aegis Phase 2 gateway is MCP over stdio: use botzr-aegis-mcp instead. This release is a redirect only."
 repository = "https://github.com/botzrDev/aegis"
 readme = "README.md"
-keywords = ["aegis", "agent", "sidecar", "security"]
+keywords = ["aegis", "agent", "mcp", "deprecated", "security"]
 categories = ["development-tools"]
 
 [lib]
 path = "src/lib.rs"
+
+# Standalone package: this redirect stub is published by hand from its own
+# directory and is not a member of the root workspace. The empty table makes it
+# its own workspace root so `cargo package`/`cargo publish` do not try to attach
+# it to the workspace at the repo root.
+[workspace]

@@ -1,4 +1,16 @@
-# Reserve `botzr-aegis-*` on crates.io (AEG-7)
+# Reserve `botzr-aegis-*` on crates.io (AEG-7) — HISTORICAL
+
+> **This document is historical.** It describes the AEG-7 `0.0.0` name-reservation flow, which is **already complete**. It is **not** the release procedure for real crates, and the flow below should never be re-run.
+>
+> **Real crate publishing is AEG-31**, done with `cargo publish -p <crate>` from the workspace root — not with the script in this directory.
+
+## Current reality (2026-07-16)
+
+- `botzr-aegis-core 0.2.0` and `botzr-aegis-sandbox 0.1.0` are published as **real crates** from the workspace.
+- The other reserved names still sit at their `0.0.0` reservation stubs.
+- `botzr-aegis-sidecar` is **retired** in favor of `botzr-aegis-mcp` (MCP stdio gateway, D17). Its stub dir now carries a `0.0.1` retirement redirect, published **by hand from its own directory** — `reserve.sh` does not publish it.
+
+## What AEG-7 did (for the record)
 
 Placeholder publish of all eight v1 crate names. crates.io has no separate “reserve” API — the first `cargo publish` claims the name.
 
@@ -44,7 +56,7 @@ From the repo root:
 ./scripts/reserve-crates/reserve.sh --dry-run
 
 # 3. Publish all eight (irreversible — claims the names)
-./scripts/reserve-crates/reserve.sh --publish
+./scripts/reserve-crates/reserve.sh --publish   # historical AEG-7 flow — do not run for AEG-31
 ```
 
 The script skips crates already on crates.io and waits **120s** between uploads (crates.io rate-limits new-crate publishes aggressively). Override with `--delay 180` or `PUBLISH_DELAY=180`.
@@ -75,7 +87,7 @@ Or open each crate page, e.g. `https://crates.io/crates/botzr-aegis-core`.
 | Error | Fix |
 |---|---|
 | `403` / `must verify email` | Confirm email on crates.io |
-| `429 Too Many Requests` | Wait for the GMT time in the error, then `./scripts/reserve-crates/reserve.sh --publish` (auto-resumes) |
+| `429 Too Many Requests` | Historical AEG-7 fix, no longer used: wait for the GMT time in the error, then `./scripts/reserve-crates/reserve.sh --publish` (auto-resumes) |
 | `crate name is already taken` | Someone beat us — stop, pick a new prefix, reopen OQ-14 |
 | `missing README` | Stub README missing — re-run from a clean checkout |
 | `timeout waiting for crate upload` | Retry single crate: `cd scripts/reserve-crates/stubs/botzr-aegis-core && cargo publish` |
