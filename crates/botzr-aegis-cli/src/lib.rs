@@ -191,10 +191,7 @@ pub fn usage_text() -> String {
 }
 
 /// Build a configured runtime from optional policy/audit paths (no tools yet).
-pub fn build_runtime(
-    policy: Option<&Path>,
-    audit: Option<&Path>,
-) -> Result<Runtime, String> {
+pub fn build_runtime(policy: Option<&Path>, audit: Option<&Path>) -> Result<Runtime, String> {
     let mut rt = Runtime::new();
 
     if let Some(path) = policy {
@@ -276,25 +273,26 @@ pub fn dispatch(cmd: Command) -> ExitCode {
             eprint!("{}", usage_text());
             ExitCode::SUCCESS
         }
-        Command::Ready { policy, audit } => match build_runtime(policy.as_deref(), audit.as_deref())
-        {
-            Ok(rt) => {
-                eprintln!(
-                    "aegis {} — research runtime for secure agent tool execution",
-                    env!("CARGO_PKG_VERSION")
-                );
-                eprintln!("Pipeline: policy → capability → sandbox → audit");
-                eprintln!("Audit: {}", rt.audit().path().display());
-                eprintln!(
+        Command::Ready { policy, audit } => {
+            match build_runtime(policy.as_deref(), audit.as_deref()) {
+                Ok(rt) => {
+                    eprintln!(
+                        "aegis {} — research runtime for secure agent tool execution",
+                        env!("CARGO_PKG_VERSION")
+                    );
+                    eprintln!("Pipeline: policy → capability → sandbox → audit");
+                    eprintln!("Audit: {}", rt.audit().path().display());
+                    eprintln!(
                     "Runtime ready — use `aegis run --component <WASM> --id <TOOL_ID>` to execute"
                 );
-                ExitCode::SUCCESS
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                ExitCode::from(1)
-            }
-        },
+        }
         Command::Run(args) => match execute_run(&args) {
             Ok(out) => {
                 if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), &out) {

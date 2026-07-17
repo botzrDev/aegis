@@ -1,6 +1,6 @@
 # RETIRED — use `botzr-aegis-mcp` instead
 
-The name `botzr-aegis-sidecar` is **retired**. It is not maintained, and nothing will ever ship under it.
+The name `botzr-aegis-sidecar` is **retired**. It is not maintained, and no functional implementation will ship under it.
 
 **Replacement:**
 
