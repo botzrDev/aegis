@@ -31,7 +31,8 @@ rules:
     reason: "MCP deny-smoke: exfil blocked at policy"
 "#;
 
-const ECHO_WASM: &[u8] = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
+// Vendored copy so `cargo publish` verifies without the monorepo test tree.
+const ECHO_WASM: &[u8] = include_bytes!("../fixtures/echo.wasm");
 
 /// Build a runtime with the multi-tool catalog registered.
 ///

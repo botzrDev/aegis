@@ -10,6 +10,15 @@ description = "Phase 2 MCP stdio gateway for Aegis — tools/call → Runtime pi
 readme = "README.md"
 keywords = ["aegis", "agent", "security", "mcp"]
 categories = ["development-tools"]
+# Ship the Model A smoke fixture so package verification does not need the
+# monorepo `tests/fixtures/` tree.
+include = [
+    "src/**/*",
+    "fixtures/**/*",
+    "Cargo.toml",
+    "README.md",
+    "DECISIONS.md",
+]
 
 [lints]
 workspace = true
