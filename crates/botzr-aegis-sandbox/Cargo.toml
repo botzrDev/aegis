@@ -1,6 +1,8 @@
 [package]
 name = "botzr-aegis-sandbox"
-version.workspace = true
+# Independently versioned: crates.io 0.1.0 still depends on core ^0.1.0.
+# Republish against core 0.2.0 so runtime (and downstream) can verify.
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
