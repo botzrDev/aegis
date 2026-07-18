@@ -7,8 +7,8 @@ use std::hint::black_box;
 use std::path::Path;
 
 use botzr_aegis_capability::{
-    CapabilityResolver, FsNeeds, HttpNeed, NetNeeds, PathNeed, PolicyCeiling, ToolInfo, ToolKind,
-    ToolLimits, ToolManifest,
+    CapabilityResolver, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits,
+    ToolManifest,
 };
 use botzr_aegis_core::ToolId;
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
@@ -62,7 +62,7 @@ fn setup_resolver(tool_id: &str, base: &Path) -> CapabilityResolver {
     resolver
 }
 
-/// Mirror runtime: evaluate → PolicyCeiling from decision.limits → resolve_with_ceiling.
+/// Mirror runtime: evaluate → decision.limits (a `ResourceCeiling`) → resolve_with_ceiling.
 fn hot_path_iter(
     engine: &PolicyEngine,
     resolver: &CapabilityResolver,
@@ -74,11 +74,8 @@ fn hot_path_iter(
     } else {
         black_box(engine.evaluate(&PolicyRequest::for_tool(tool_id)))
     };
-    let ceiling = PolicyCeiling {
-        max_memory_bytes: decision.limits.max_memory_bytes,
-        max_wall_ms: decision.limits.max_wall_ms,
-        max_output_bytes: decision.limits.max_output_bytes,
-    };
+    // Same core type on both sides — pass the ceiling straight through.
+    let ceiling = decision.limits;
     let _ = black_box(resolver.resolve_with_ceiling(tool_id, ceiling));
 }
 

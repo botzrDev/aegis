@@ -2,57 +2,32 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use botzr_aegis_core::{CapabilityGrant, FsGrant, HttpGrant, NetGrant};
+use botzr_aegis_core::{CapabilityGrant, FsGrant, HttpGrant, NetGrant, ResourceCeiling};
 
 use crate::error::CapabilityError;
 use crate::manifest::{HttpNeed, NetNeeds, PathNeed, ToolLimits, ToolManifest};
 
-/// Optional policy ceiling that may only lower manifest limits, never raise.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct PolicyCeiling {
-    pub max_memory_bytes: Option<u64>,
-    pub max_wall_ms: Option<u64>,
-    pub max_output_bytes: Option<u64>,
-}
-
-impl PolicyCeiling {
-    /// Combine two ceilings by taking the *tighter* bound on each axis (a
-    /// present cap always beats absent; two caps take the min). Used to fold a
-    /// per-call policy ceiling into the resolver's standing ceiling — the result
-    /// can only lower limits, never raise them.
-    pub fn combine(self, other: PolicyCeiling) -> PolicyCeiling {
-        PolicyCeiling {
-            max_memory_bytes: tighter(self.max_memory_bytes, other.max_memory_bytes),
-            max_wall_ms: tighter(self.max_wall_ms, other.max_wall_ms),
-            max_output_bytes: tighter(self.max_output_bytes, other.max_output_bytes),
-        }
-    }
-
-    pub fn apply(self, manifest: ToolLimits) -> ToolLimits {
-        ToolLimits {
-            max_memory_bytes: self
-                .max_memory_bytes
-                .map(|cap| cap.min(manifest.max_memory_bytes))
-                .unwrap_or(manifest.max_memory_bytes),
-            max_wall_ms: self
-                .max_wall_ms
-                .map(|cap| cap.min(manifest.max_wall_ms))
-                .unwrap_or(manifest.max_wall_ms),
-            max_output_bytes: self
-                .max_output_bytes
-                .map(|cap| cap.min(manifest.max_output_bytes))
-                .unwrap_or(manifest.max_output_bytes),
-        }
-    }
-}
-
-/// Take the tighter (smaller) of two optional caps; a present cap always wins
-/// over an absent one.
-fn tighter(a: Option<u64>, b: Option<u64>) -> Option<u64> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(x.min(y)),
-        (Some(x), None) | (None, Some(x)) => Some(x),
-        (None, None) => None,
+/// Lower a manifest's declared [`ToolLimits`] by a policy [`ResourceCeiling`] —
+/// each `Some` axis takes the min of the cap and the manifest value; `None`
+/// leaves that axis at the manifest value. A ceiling may only lower, never raise.
+///
+/// This apply-to-manifest step lives in `capability` because it needs
+/// `ToolLimits`; the ceiling *data* contract (`combine`/`is_unconstrained`) is
+/// core-owned on [`ResourceCeiling`].
+fn apply_ceiling(ceiling: ResourceCeiling, manifest: ToolLimits) -> ToolLimits {
+    ToolLimits {
+        max_memory_bytes: ceiling
+            .max_memory_bytes
+            .map(|cap| cap.min(manifest.max_memory_bytes))
+            .unwrap_or(manifest.max_memory_bytes),
+        max_wall_ms: ceiling
+            .max_wall_ms
+            .map(|cap| cap.min(manifest.max_wall_ms))
+            .unwrap_or(manifest.max_wall_ms),
+        max_output_bytes: ceiling
+            .max_output_bytes
+            .map(|cap| cap.min(manifest.max_output_bytes))
+            .unwrap_or(manifest.max_output_bytes),
     }
 }
 
@@ -61,11 +36,11 @@ fn tighter(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 pub fn mint_grant(
     manifest: &ToolManifest,
     grant_id: impl Into<String>,
-    ceiling: PolicyCeiling,
+    ceiling: ResourceCeiling,
 ) -> Result<CapabilityGrant, CapabilityError> {
     validate_http_needs(manifest.net.as_ref())?;
 
-    let limits = ceiling.apply(manifest.limits);
+    let limits = apply_ceiling(ceiling, manifest.limits);
     let fs = manifest
         .fs
         .as_ref()
@@ -237,7 +212,7 @@ mod tests {
             dir.path(),
         );
 
-        let grant = mint_grant(&manifest, "g1", PolicyCeiling::default()).unwrap();
+        let grant = mint_grant(&manifest, "g1", ResourceCeiling::default()).unwrap();
         assert_eq!(grant.tool_id.as_str(), "noop");
         assert!(grant.fs.is_none());
         assert!(grant.net.is_none());
@@ -266,7 +241,7 @@ mod tests {
         let grant = mint_grant(
             &manifest,
             "g1",
-            PolicyCeiling {
+            ResourceCeiling {
                 max_memory_bytes: Some(512 * 1024),
                 max_wall_ms: Some(1_000),
                 max_output_bytes: Some(1024),
@@ -300,7 +275,7 @@ mod tests {
         let grant = mint_grant(
             &manifest,
             "g1",
-            PolicyCeiling {
+            ResourceCeiling {
                 max_memory_bytes: None,
                 max_wall_ms: None,
                 max_output_bytes: Some(4096),
@@ -329,7 +304,7 @@ mod tests {
             }],
         });
 
-        let err = mint_grant(&manifest, "g1", PolicyCeiling::default()).unwrap_err();
+        let err = mint_grant(&manifest, "g1", ResourceCeiling::default()).unwrap_err();
         assert!(matches!(err, CapabilityError::NetDenied { .. }));
     }
 
@@ -352,7 +327,7 @@ mod tests {
             write: vec![],
         });
 
-        let grant = mint_grant(&manifest, "g1", PolicyCeiling::default()).unwrap();
+        let grant = mint_grant(&manifest, "g1", ResourceCeiling::default()).unwrap();
         let fs = grant.fs.expect("fs grant");
         assert_eq!(fs.read_paths.len(), 1);
         assert!(fs.read_paths[0].ends_with("fixtures"));

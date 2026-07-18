@@ -2,11 +2,11 @@
 
 use std::path::Path;
 
-use botzr_aegis_core::CapabilityGrant;
+use botzr_aegis_core::{CapabilityGrant, ResourceCeiling};
 
 use crate::error::CapabilityError;
 use crate::manifest::{FsNeeds, NetNeeds, ToolManifest};
-use crate::mint::{http_need_allowed, mint_grant, path_need_allowed, PolicyCeiling};
+use crate::mint::{http_need_allowed, mint_grant, path_need_allowed};
 
 /// Mint a sub-tool grant that is a strict subset of the parent grant + manifest.
 ///
@@ -17,7 +17,7 @@ pub fn narrow_grant(
     parent_manifest: &ToolManifest,
     sub_manifest: &ToolManifest,
     grant_id: impl Into<String>,
-    ceiling: PolicyCeiling,
+    ceiling: ResourceCeiling,
 ) -> Result<CapabilityGrant, CapabilityError> {
     validate_fs_narrowing(
         parent_manifest.fs.as_ref(),
@@ -262,7 +262,7 @@ mod tests {
         });
 
         let parent_grant =
-            mint_grant(&parent_manifest, "parent-grant", PolicyCeiling::default()).unwrap();
+            mint_grant(&parent_manifest, "parent-grant", ResourceCeiling::default()).unwrap();
         (dir, parent_manifest, parent_grant)
     }
 
@@ -300,7 +300,7 @@ mod tests {
             &parent_manifest,
             &sub_manifest,
             "child-grant",
-            PolicyCeiling::default(),
+            ResourceCeiling::default(),
         )
         .unwrap();
 
@@ -330,7 +330,7 @@ mod tests {
             &parent_manifest,
             &sub_manifest,
             "bad-grant",
-            PolicyCeiling::default(),
+            ResourceCeiling::default(),
         )
         .unwrap_err();
         assert!(matches!(err, CapabilityError::Escalation { .. }));
@@ -361,7 +361,7 @@ mod tests {
             &parent_manifest,
             &sub_manifest,
             "greedy-grant",
-            PolicyCeiling::default(),
+            ResourceCeiling::default(),
         )
         .unwrap_err();
         assert!(matches!(err, CapabilityError::Escalation { .. }));
@@ -388,7 +388,7 @@ mod tests {
             &parent_manifest,
             &sub_manifest,
             "bad-grant",
-            PolicyCeiling::default(),
+            ResourceCeiling::default(),
         )
         .unwrap_err();
         assert!(matches!(err, CapabilityError::Escalation { .. }));

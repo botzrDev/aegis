@@ -5,6 +5,7 @@
 mod audit;
 mod error;
 mod grant;
+mod limits;
 mod policy;
 mod tool;
 
@@ -14,6 +15,7 @@ pub use audit::{
 };
 pub use error::AegisError;
 pub use grant::{CapabilityGrant, FsGrant, HttpGrant, NetGrant, DEFAULT_MAX_OUTPUT_BYTES};
+pub use limits::ResourceCeiling;
 pub use policy::PolicyAction;
 pub use tool::{ToolId, ToolKind};
 

@@ -2,9 +2,9 @@
 
 use botzr_aegis_capability::{
     grant_is_subset, narrow_grant, CapabilityError, CapabilityResolver, FsNeeds, HttpNeed,
-    NetNeeds, PathNeed, PolicyCeiling, ToolInfo, ToolKind, ToolLimits, ToolManifest,
+    NetNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest,
 };
-use botzr_aegis_core::{CapabilityOutcome, ToolId};
+use botzr_aegis_core::{CapabilityOutcome, ResourceCeiling, ToolId};
 use proptest::prelude::*;
 
 fn fixture_manifest(id: &str, base: &std::path::Path) -> ToolManifest {
@@ -136,7 +136,7 @@ proptest! {
             &parent_manifest,
             &sub_manifest,
             "child-grant",
-            PolicyCeiling::default(),
+            ResourceCeiling::default(),
         ).expect("narrowing should succeed for valid subset");
 
         prop_assert!(grant_is_subset(&parent_grant, &sub));
@@ -173,7 +173,7 @@ fn narrowing_rejects_limit_escalation() {
         &parent_manifest,
         &sub_manifest,
         "bad-grant",
-        PolicyCeiling::default(),
+        ResourceCeiling::default(),
     )
     .unwrap_err();
     assert!(matches!(err, CapabilityError::Escalation { .. }));
