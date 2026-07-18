@@ -2,7 +2,7 @@
 
 Structured audit records for Aegis — wraps the entire enforcement pipeline (POLICY → CAPABILITY → SANDBOX → **AUDIT**).
 
-Always emitted on every exit path: success, policy deny, capability deny, resource-exceeded, trap, and panic.
+Always emitted on every exit path: success, policy deny, capability deny, resource-exceeded, trap, panic, and abandon.
 
 ## Schema
 
@@ -13,7 +13,7 @@ Each tool call produces a two-phase audit trail:
 1. **Intent** — recorded before execution begins (`call_id`, `tool_id`, `input_digest`)
 2. **Outcome** — recorded when the call completes (`policy`, `capability`, `execution`; optional `wall_ms` / `peak_memory_bytes`)
 
-If the runtime panics during execution, the `CallSession`'s `Drop` guard emits a trap record automatically (fail-closed: every call is accounted for).
+A begun `CallSession` is fail-closed by construction. Its seeds serialize as default-deny (never `allowed` / `granted` / `success`), and an incomplete session always emits exactly one outcome when dropped — a trap on panic, a host-denied `session abandoned` on any other abandon / early return / error. A forgotten `complete()` can never leave an orphan intent (fail-closed: every call is accounted for).
 
 ## Writer
 

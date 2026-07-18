@@ -50,6 +50,8 @@ fn write_golden_snapshots() {
         ("capability_denied", golden_capability_denied_record()),
         ("trap", golden_trap_record()),
         ("resource_exceeded", golden_resource_exceeded_record()),
+        ("panic", golden_panic_record()),
+        ("abandoned_session", golden_abandoned_session_record()),
     ];
     for (name, record) in cases {
         let json = to_json_line(&record).expect("serialize");
@@ -157,6 +159,46 @@ fn golden_resource_exceeded_record() -> AuditRecord {
     )
 }
 
+/// Wire shape of the `CallSession::Drop` panic-guard outcome: default-deny
+/// seeds (no station ran before the unwind) plus a host-panic trap.
+fn golden_panic_record() -> AuditRecord {
+    AuditRecord::new(
+        "call-golden-7",
+        ToolId::new("panic"),
+        "dead10cc",
+        PolicyOutcome::Denied {
+            reason: "not evaluated".into(),
+        },
+        CapabilityOutcome::Denied {
+            reason: "not evaluated".into(),
+            denied_capability: None,
+        },
+        ExecutionOutcome::Trap {
+            message: "host panic during tool call".into(),
+        },
+    )
+}
+
+/// Wire shape of an abandoned session (begun, never `complete()`d, dropped
+/// without a panic): default-deny seeds plus a fail-closed host-denied.
+fn golden_abandoned_session_record() -> AuditRecord {
+    AuditRecord::new(
+        "call-golden-8",
+        ToolId::new("abandoned"),
+        "0ab0ab0a",
+        PolicyOutcome::Denied {
+            reason: "not evaluated".into(),
+        },
+        CapabilityOutcome::Denied {
+            reason: "not evaluated".into(),
+            denied_capability: None,
+        },
+        ExecutionOutcome::HostDenied {
+            reason: "session abandoned".into(),
+        },
+    )
+}
+
 #[test]
 fn golden_policy_deny() {
     assert_golden("policy_deny", &golden_policy_deny_record());
@@ -185,6 +227,16 @@ fn golden_trap() {
 #[test]
 fn golden_resource_exceeded() {
     assert_golden("resource_exceeded", &golden_resource_exceeded_record());
+}
+
+#[test]
+fn golden_panic() {
+    assert_golden("panic", &golden_panic_record());
+}
+
+#[test]
+fn golden_abandoned_session() {
+    assert_golden("abandoned_session", &golden_abandoned_session_record());
 }
 
 #[test]
