@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-8","tool_id":"abandoned","input_digest":"0ab0ab0a","policy":{"status":"denied","reason":"not evaluated"},"capability":{"status":"denied","reason":"not evaluated","denied_capability":null},"execution":{"status":"host_denied","reason":"session abandoned"}}

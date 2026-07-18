@@ -21,8 +21,11 @@ Each tool call produces **two JSONL lines** (G3):
 1. **Intent** — appended **before** sandbox / host work begins (`phase: "intent"`).
 2. **Outcome** — appended on **every exit path** (`phase: "outcome"`), including
    policy deny, capability deny, success, trap, resource exceeded, and host deny.
-   If the runtime panics mid-call, the `CallSession` `Drop` guard emits a trap
-   outcome so the call is still accounted for.
+   The `CallSession` `Drop` guard makes this structural: an incomplete session
+   always emits exactly one fail-closed outcome — a `trap` (`"host panic during
+   tool call"`) if the runtime panics mid-call, otherwise a `host_denied`
+   (`"session abandoned"`) for any other abandon / early return / error — so a
+   forgotten `complete()` can never leave an orphan intent.
 
 | Rust type | `phase` value | Role |
 |---|---|---|
@@ -150,6 +153,8 @@ Schema drift fails CI. Cite these fixtures:
 - `pending_approval.json`
 - `trap.json`
 - `resource_exceeded.json`
+- `panic.json` — `Drop` panic-guard outcome (default-deny seeds + host-panic trap)
+- `abandoned_session.json` — begun-but-never-completed outcome (default-deny seeds + `host_denied` `session abandoned`)
 
 **Deny-suite goldens —** `tests/deny-suite/tests/golden/`
 

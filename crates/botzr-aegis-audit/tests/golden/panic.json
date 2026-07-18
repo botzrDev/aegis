@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"outcome","call_id":"call-golden-7","tool_id":"panic","input_digest":"dead10cc","policy":{"status":"denied","reason":"not evaluated"},"capability":{"status":"denied","reason":"not evaluated","denied_capability":null},"execution":{"status":"trap","message":"host panic during tool call"}}
