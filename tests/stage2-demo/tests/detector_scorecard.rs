@@ -14,7 +14,7 @@ use std::path::Path;
 use aegis_stage2_demo::native::scan_native;
 use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
-use botzr_aegis_core::{AuditRecord, ExecutionOutcome, ToolId};
+use botzr_aegis_core::{AegisError, AuditRecord, ExecutionOutcome, ToolId};
 use botzr_aegis_runtime::{sha256_hex, Runtime};
 use serde_json::Value;
 
@@ -82,7 +82,7 @@ fn outcome(rt: &Runtime) -> AuditRecord {
     serde_json::from_str(&lines[1]).expect("outcome parses")
 }
 
-fn run_detector(rt: &Runtime, input: &[u8]) -> Result<Vec<u8>, String> {
+fn run_detector(rt: &Runtime, input: &[u8]) -> Result<Vec<u8>, AegisError> {
     rt.execute_tool_call(ToolId::new("path-detector"), sha256_hex(input), input)
 }
 
@@ -146,7 +146,10 @@ fn write_escape_denied() {
 
     let err = run_detector(&rt, br#"{"attack":"write_escape"}"#)
         .expect_err("write under a read-only preopen must fail");
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::Trap { .. }),
+        "expected Trap, got {err:?}"
+    );
 
     let record = outcome(&rt);
     assert!(
@@ -173,7 +176,10 @@ fn http_probe_denied() {
 
     let err = run_detector(&rt, br#"{"attack":"http_probe"}"#)
         .expect_err("http without a net grant must fail");
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::Trap { .. }),
+        "expected Trap, got {err:?}"
+    );
 
     let record = outcome(&rt);
     assert!(
@@ -220,7 +226,10 @@ fn wall_clock_cap_trips() {
     let err = rt
         .execute_tool_call(ToolId::new("path-detector-spin"), "deadbeef".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
+        "expected ResourceExceeded(wall_clock), got {err:?}"
+    );
 
     let record = outcome(&rt);
     assert!(

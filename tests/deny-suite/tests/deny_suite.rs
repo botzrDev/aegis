@@ -23,7 +23,8 @@ use botzr_aegis_capability::{
     ToolKind, ToolLimits, ToolManifest,
 };
 use botzr_aegis_core::{
-    AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ResourceCeiling, ToolId,
+    AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ResourceCeiling,
+    ToolId,
 };
 use botzr_aegis_policy::PolicyEngine;
 use botzr_aegis_runtime::Runtime;
@@ -124,7 +125,12 @@ rules:
     let err = rt
         .execute_tool_call(ToolId::new("exfil"), "11111111".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "policy denied: blocked in deny-suite");
+    assert_eq!(
+        err,
+        AegisError::PolicyDenied {
+            reason: "blocked in deny-suite".into()
+        }
+    );
 
     let mut record = outcome(&rt);
     assert!(matches!(record.policy, PolicyOutcome::Denied { .. }));
@@ -157,8 +163,8 @@ rules:
         .execute_tool_call(ToolId::new("transfer"), "aaaaaaaa".into(), b"{}")
         .unwrap_err();
     assert!(
-        err.starts_with("policy pending approval:"),
-        "unexpected error: {err}"
+        matches!(err, AegisError::PendingApproval { .. }),
+        "unexpected error: {err:?}"
     );
 
     let record = outcome(&rt);
@@ -185,7 +191,10 @@ fn unregistered_tool_is_capability_denied() {
     let err = rt
         .execute_tool_call(ToolId::new("ghost"), "22222222".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::CapabilityDenied { ref reason, denied_capability: _ } if reason.contains("tool not registered")),
+        "expected CapabilityDenied for unregistered tool, got {err:?}"
+    );
 
     let mut record = outcome(&rt);
     assert!(matches!(record.policy, PolicyOutcome::Allowed));
@@ -219,7 +228,10 @@ fn unresolvable_fs_need_is_capability_denied() {
     let err = rt
         .execute_tool_call(ToolId::new("fs-reader"), "55555555".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::CapabilityDenied { .. }),
+        "expected CapabilityDenied for fs, got {err:?}"
+    );
 
     let record = outcome(&rt);
     match &record.capability {
@@ -256,7 +268,10 @@ fn wildcard_net_need_is_capability_denied() {
     let err = rt
         .execute_tool_call(ToolId::new("net-wildcard"), "33333333".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::CapabilityDenied { .. }),
+        "expected CapabilityDenied for net, got {err:?}"
+    );
 
     let mut record = outcome(&rt);
     match &record.capability {
@@ -291,7 +306,10 @@ fn wall_clock_cap_trips_through_pipeline() {
     let err = rt
         .execute_tool_call(ToolId::new("spin"), "66666666".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
+        "expected ResourceExceeded(wall_clock), got {err:?}"
+    );
 
     let record = outcome(&rt);
     assert!(matches!(record.policy, PolicyOutcome::Allowed));
@@ -322,7 +340,10 @@ fn memory_cap_trips_through_pipeline() {
     let err = rt
         .execute_tool_call(ToolId::new("grow-touch"), "44444444".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "memory"),
+        "expected ResourceExceeded(memory), got {err:?}"
+    );
 
     let mut record = outcome(&rt);
     assert!(matches!(

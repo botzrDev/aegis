@@ -7,11 +7,9 @@ mod pipeline;
 
 use std::collections::HashMap;
 
-use botzr_aegis_audit::{AuditError, AuditWriter};
+use botzr_aegis_audit::AuditWriter;
 use botzr_aegis_capability::{CapabilityResolver, ToolManifest};
-use botzr_aegis_core::{
-    CapabilityGrant, ExecutionOutcome, PolicyAction, ToolId, PIPELINE_STAGES,
-};
+use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId, PIPELINE_STAGES};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
 use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine, SandboxRun};
 
@@ -143,7 +141,7 @@ impl Runtime {
         tool_id: ToolId,
         input_digest: String,
         input: &[u8],
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, AegisError> {
         let policy_request = PolicyRequest::for_tool(&tool_id);
         self.drive_pipeline(
             tool_id.clone(),
@@ -170,8 +168,6 @@ impl Runtime {
                     }
                 }
             },
-            // Model A collapses every no-output outcome to one caller string.
-            |_outcome| "execution failed".to_string(),
         )
     }
 }
@@ -209,10 +205,6 @@ pub fn pipeline_stages() -> &'static [&'static str] {
     PIPELINE_STAGES
 }
 
-fn audit_err_to_string(err: AuditError) -> String {
-    format!("audit failure (fail-closed): {err}")
-}
-
 /// Enforce the grant's per-call output ceiling on returned bytes (G8).
 ///
 /// This is an **orchestrator-side** cap on the bytes a call returns — not a
@@ -233,27 +225,13 @@ fn enforce_output_cap(
     }
 }
 
-/// Caller-facing message for a policy rejection at station 1. Denials are
-/// actionable by design (G4) — the reason travels back to the caller.
-fn policy_rejection_message(action: &PolicyAction) -> String {
-    match action {
-        PolicyAction::Deny { reason } => format!("policy denied: {reason}"),
-        PolicyAction::RateLimited { reason } => format!("policy rate limited: {reason}"),
-        PolicyAction::PendingApproval { approval_id } => {
-            format!("policy pending approval: {approval_id}")
-        }
-        // `Allow` never reaches this path.
-        PolicyAction::Allow => "policy allowed".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
 
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-    use botzr_aegis_core::CapabilityOutcome;
+    use botzr_aegis_core::{AegisError, CapabilityOutcome};
     use botzr_aegis_policy::PolicyEngine;
 
     /// Build an echo manifest with an explicit `max_output_bytes` ceiling.
@@ -301,7 +279,12 @@ rules:
             .execute_tool_call(ToolId::new("smoke"), "deadbeef".into(), b"{}")
             .unwrap_err();
         // Policy reason surfaces — proves station 1 rejected, not capability.
-        assert_eq!(err, "policy denied: blocked in test");
+        assert_eq!(
+            err,
+            AegisError::PolicyDenied {
+                reason: "blocked in test".into()
+            }
+        );
 
         let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
             .unwrap()
@@ -328,8 +311,8 @@ rules:
             .execute_tool_call(ToolId::new("smoke"), "deadbeef".into(), b"{}")
             .unwrap_err();
         assert!(
-            err.starts_with("policy pending approval: apr-gate-smoke-smoke-"),
-            "unexpected error: {err}"
+            matches!(err, AegisError::PendingApproval { ref approval_id } if approval_id.starts_with("apr-gate-smoke-smoke-")),
+            "unexpected error: {err:?}"
         );
     }
 
@@ -385,7 +368,12 @@ rules:
         let err = rt
             .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
             .unwrap_err();
-        assert_eq!(err, "execution failed");
+        assert_eq!(
+            err,
+            AegisError::ResourceExceeded {
+                kind: "output".into()
+            }
+        );
 
         let outcome = std::fs::read_to_string(rt.audit().path())
             .unwrap()
@@ -514,7 +502,10 @@ rules:
             1 << 20,
             "memory unchanged from manifest"
         );
-        assert_eq!(grant.max_output_bytes, 4096, "output unchanged from manifest");
+        assert_eq!(
+            grant.max_output_bytes, 4096,
+            "output unchanged from manifest"
+        );
     }
 
     #[test]

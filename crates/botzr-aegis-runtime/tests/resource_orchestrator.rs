@@ -4,7 +4,7 @@ use std::path::Path;
 
 use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-use botzr_aegis_core::{AuditRecord, ExecutionOutcome, ToolId};
+use botzr_aegis_core::{AegisError, AuditRecord, ExecutionOutcome, ToolId};
 use botzr_aegis_runtime::Runtime;
 
 const SPIN: &str = r#"
@@ -39,7 +39,10 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
     let err = rt
         .execute_tool_call(ToolId::new("spin"), "deadbeef".into(), b"{}")
         .unwrap_err();
-    assert_eq!(err, "execution failed");
+    assert!(
+        matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
+        "expected ResourceExceeded(wall_clock), got {err:?}"
+    );
 
     let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
         .unwrap()

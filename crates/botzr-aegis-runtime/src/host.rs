@@ -3,7 +3,7 @@
 //! Host tools skip the WASM sandbox station; the grant is enforced by the
 //! effect handler before any I/O. Audit still wraps the full call.
 
-use botzr_aegis_core::{ExecutionOutcome, ToolId, PIPELINE_STAGES};
+use botzr_aegis_core::{AegisError, ExecutionOutcome, ToolId, PIPELINE_STAGES};
 use botzr_aegis_policy::PolicyRequest;
 
 use crate::pipeline::ExecutionStep;
@@ -68,14 +68,12 @@ impl Runtime {
     ///
     /// Model B adapter: the shared [`Runtime::drive_pipeline`] owns policy,
     /// capability, output-cap, and audit; this method only supplies the host
-    /// effect as the execution step and Model B's caller error string (the host
-    /// denial reason, or `"host execution failed"` for any other no-output
-    /// outcome).
+    /// effect as the execution step.
     pub fn execute_host_call<F>(
         &self,
         req: HostCallRequest<'_>,
         effect: F,
-    ) -> Result<Vec<u8>, String>
+    ) -> Result<Vec<u8>, AegisError>
     where
         F: FnOnce(&botzr_aegis_core::CapabilityGrant, &[u8]) -> Result<Vec<u8>, HostEffectError>,
     {
@@ -101,12 +99,6 @@ impl Runtime {
                     metrics: None,
                 },
             },
-            // Model B surfaces a host denial's reason; anything else (e.g. an
-            // output-cap `ResourceExceeded`) collapses to a generic string.
-            |outcome| match outcome {
-                ExecutionOutcome::HostDenied { reason } => reason.clone(),
-                _ => "host execution failed".to_string(),
-            },
         )
     }
 }
@@ -120,7 +112,7 @@ pub fn wasm_pipeline_stages() -> &'static [&'static str] {
 mod tests {
     use super::*;
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-    use botzr_aegis_core::CapabilityGrant;
+    use botzr_aegis_core::{AegisError, CapabilityGrant};
 
     #[test]
     fn host_pipeline_omits_sandbox() {
@@ -152,7 +144,12 @@ rules:
                 |_grant, _input| Ok(b"ok".to_vec()),
             )
             .unwrap_err();
-        assert_eq!(err, "policy denied: blocked in test");
+        assert_eq!(
+            err,
+            AegisError::PolicyDenied {
+                reason: "blocked in test".into()
+            }
+        );
     }
 
     #[test]
@@ -222,7 +219,12 @@ rules:
                 |_grant: &CapabilityGrant, _input| Ok(vec![b'x'; 100]),
             )
             .unwrap_err();
-        assert_eq!(err, "host execution failed");
+        assert_eq!(
+            err,
+            AegisError::ResourceExceeded {
+                kind: "output".into()
+            }
+        );
 
         let outcome = std::fs::read_to_string(rt.audit().path())
             .unwrap()
@@ -264,7 +266,12 @@ rules:
                 },
             )
             .unwrap_err();
-        assert_eq!(err, "path outside grant");
+        assert_eq!(
+            err,
+            AegisError::HostDenied {
+                reason: "path outside grant".into()
+            }
+        );
 
         let text = std::fs::read_to_string(rt.audit().path()).unwrap();
         assert!(text.contains("path outside grant"));

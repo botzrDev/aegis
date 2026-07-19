@@ -7,6 +7,7 @@
 use serde_json::{json, Value};
 
 use crate::bridge::{call_tool, CATALOG_TOOL_IDS, ECHO_TOOL_ID, EXFIL_TOOL_ID};
+use botzr_aegis_core::AegisError;
 use botzr_aegis_runtime::Runtime;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -135,11 +136,27 @@ fn tools_call(rt: &Runtime, params: &Value) -> Result<Value, (i32, String)> {
                 "isError": false
             }))
         }
-        // Pipeline already audited deny/trap/error.
+        // Pipeline already audited deny/trap/error. Includes a stable
+        // machine-readable error code for programmatic consumers.
         Err(err) => Ok(json!({
-            "content": [{ "type": "text", "text": err }],
-            "isError": true
+            "content": [{ "type": "text", "text": err.to_string() }],
+            "isError": true,
+            "code": error_code(&err)
         })),
+    }
+}
+
+/// Stable machine-readable error code for each AegisError variant.
+fn error_code(err: &AegisError) -> &'static str {
+    match err {
+        AegisError::PolicyDenied { .. } => "POLICY_DENIED",
+        AegisError::RateLimited { .. } => "RATE_LIMITED",
+        AegisError::PendingApproval { .. } => "PENDING_APPROVAL",
+        AegisError::CapabilityDenied { .. } => "CAPABILITY_DENIED",
+        AegisError::Trap { .. } => "TRAP",
+        AegisError::ResourceExceeded { .. } => "RESOURCE_EXCEEDED",
+        AegisError::HostDenied { .. } => "HOST_DENIED",
+        AegisError::Audit { .. } => "AUDIT_ERROR",
     }
 }
 
@@ -219,5 +236,24 @@ mod tests {
             "expected deny audit, got: {outcome}"
         );
         assert!(outcome.contains("\"tool_id\":\"exfil\""));
+    }
+
+    #[test]
+    fn tools_call_exfil_returns_machine_readable_error_code() {
+        let rt = build_runtime(None, None).expect("runtime");
+
+        let called = handle_line(
+            &rt,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exfil","arguments":{"text":"payload"}}}"#,
+        )
+        .expect("tools/call");
+        assert!(
+            called.contains("\"isError\":true"),
+            "expected isError, got: {called}"
+        );
+        assert!(
+            called.contains("POLICY_DENIED"),
+            "expected POLICY_DENIED error code, got: {called}"
+        );
     }
 }

@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use botzr_aegis_audit::AuditWriter;
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::ToolId;
+use botzr_aegis_core::{AegisError, ToolId};
 use botzr_aegis_policy::PolicyEngine;
 use botzr_aegis_runtime::{sha256_hex, Runtime};
 
@@ -211,11 +211,13 @@ pub fn build_runtime(policy: Option<&Path>, audit: Option<&Path>) -> Result<Runt
     Ok(rt)
 }
 
-pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, String> {
-    let mut rt = build_runtime(args.policy.as_deref(), args.audit.as_deref())?;
+pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
+    let mut rt = build_runtime(args.policy.as_deref(), args.audit.as_deref())
+        .map_err(|e| AegisError::HostDenied { reason: e })?;
 
-    let bytes = std::fs::read(&args.component)
-        .map_err(|e| format!("read component {}: {e}", args.component.display()))?;
+    let bytes = std::fs::read(&args.component).map_err(|e| AegisError::HostDenied {
+        reason: format!("read component {}: {e}", args.component.display()),
+    })?;
 
     let base = args.base_dir.clone().unwrap_or_else(|| {
         args.component
@@ -244,9 +246,11 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, String> {
     }
 
     rt.register(manifest, bytes)
-        .map_err(|e| format!("register {}: {e}", args.id))?;
+        .map_err(|e| AegisError::HostDenied {
+            reason: format!("register {}: {e}", args.id),
+        })?;
 
-    let input = load_input(args)?;
+    let input = load_input(args).map_err(|e| AegisError::HostDenied { reason: e })?;
     let digest = sha256_hex(&input);
 
     eprintln!(

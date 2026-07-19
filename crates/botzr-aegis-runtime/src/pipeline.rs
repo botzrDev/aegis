@@ -12,11 +12,12 @@
 
 use botzr_aegis_audit::CallSession;
 use botzr_aegis_core::{
-    CallMetrics, CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId,
+    AegisError, CallMetrics, CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyAction,
+    PolicyOutcome, ToolId,
 };
 use botzr_aegis_policy::PolicyRequest;
 
-use crate::{audit_err_to_string, enforce_output_cap, policy_rejection_message, Runtime};
+use crate::{enforce_output_cap, Runtime};
 
 /// What an adapter's execution step hands back to the driver.
 ///
@@ -44,23 +45,25 @@ impl Runtime {
     /// the wasmtime sandbox / fixture (Model A) or the host effect (Model B). It
     /// is invoked **only** after policy allows *and* a grant is minted — a denied
     /// policy is rejected at station 1 and never reaches capability or the
-    /// execution adapter. `map_error` turns the terminal execution outcome into
-    /// the caller-facing error string, the one place Model A ("execution failed")
-    /// and Model B (host reason / "host execution failed") legitimately differ.
-    pub(crate) fn drive_pipeline<E, M>(
+    /// execution adapter. Error construction is station-aware: policy deny →
+    /// `PolicyDenied`, capability deny → `CapabilityDenied`, execution trap →
+    /// `Trap`, and so on.
+    pub(crate) fn drive_pipeline<E>(
         &self,
         tool_id: ToolId,
         input_digest: String,
         policy_request: &PolicyRequest<'_>,
         execute_step: E,
-        map_error: M,
-    ) -> Result<Vec<u8>, String>
+    ) -> Result<Vec<u8>, AegisError>
     where
         E: FnOnce(&CapabilityGrant) -> ExecutionStep,
-        M: FnOnce(&ExecutionOutcome) -> String,
     {
-        let mut session = CallSession::begin(&self.audit, tool_id.clone(), input_digest)
-            .map_err(audit_err_to_string)?;
+        let mut session =
+            CallSession::begin(&self.audit, tool_id.clone(), input_digest).map_err(|e| {
+                AegisError::Audit {
+                    message: format!("{e}"),
+                }
+            })?;
 
         // Station 1 — POLICY. Grab the decision once; a denied, rate-limited, or
         // pending-approval call is rejected here and never mints a grant or
@@ -77,8 +80,21 @@ impl Runtime {
             session.set_execution(ExecutionOutcome::HostDenied {
                 reason: "not executed".into(),
             });
-            session.complete().map_err(audit_err_to_string)?;
-            return Err(policy_rejection_message(&decision.action));
+            session.complete().map_err(|e| AegisError::Audit {
+                message: format!("{e}"),
+            })?;
+            return Err(match &decision.action {
+                PolicyAction::Deny { reason } => AegisError::PolicyDenied {
+                    reason: reason.clone(),
+                },
+                PolicyAction::RateLimited { reason } => AegisError::RateLimited {
+                    reason: reason.clone(),
+                },
+                PolicyAction::PendingApproval { approval_id } => AegisError::PendingApproval {
+                    approval_id: approval_id.clone(),
+                },
+                PolicyAction::Allow => unreachable!(),
+            });
         }
 
         session.set_policy(PolicyOutcome::Allowed);
@@ -120,14 +136,37 @@ impl Runtime {
             ),
         };
 
-        // Derive the caller-facing error from the terminal outcome before it is
-        // moved into the audit record; it is only meaningful when the call
-        // produced no output.
         let failure = execution.clone();
         session.set_execution(execution);
-        session.complete().map_err(audit_err_to_string)?;
+        session.complete().map_err(|e| AegisError::Audit {
+            message: format!("{e}"),
+        })?;
 
-        output.ok_or_else(|| map_error(&failure))
+        // Capability deny gets its own variant to the caller even though audit
+        // records execution as HostDenied{"capability denied"}.
+        if let CapabilityOutcome::Denied {
+            reason,
+            denied_capability,
+        } = &capability_outcome
+        {
+            return Err(AegisError::CapabilityDenied {
+                reason: reason.clone(),
+                denied_capability: denied_capability.clone(),
+            });
+        }
+
+        output.ok_or_else(|| match &failure {
+            ExecutionOutcome::Trap { message } => AegisError::Trap {
+                message: message.clone(),
+            },
+            ExecutionOutcome::ResourceExceeded { kind } => {
+                AegisError::ResourceExceeded { kind: kind.clone() }
+            }
+            ExecutionOutcome::HostDenied { reason } => AegisError::HostDenied {
+                reason: reason.clone(),
+            },
+            ExecutionOutcome::Success => unreachable!("no output on Err path"),
+        })
     }
 }
 
@@ -137,6 +176,7 @@ mod tests {
     use std::cell::Cell;
 
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
+    use botzr_aegis_core::AegisError;
     use botzr_aegis_policy::PolicyEngine;
 
     /// Read the last JSONL line the runtime's audit sink recorded.
@@ -198,12 +238,19 @@ rules:
                         metrics: None,
                     }
                 },
-                |_outcome| "fake error".to_string(),
             )
             .unwrap_err();
 
-        assert_eq!(err, "policy denied: blocked in test");
-        assert!(!called.get(), "execution adapter must not run on policy deny");
+        assert_eq!(
+            err,
+            AegisError::PolicyDenied {
+                reason: "blocked in test".into()
+            }
+        );
+        assert!(
+            !called.get(),
+            "execution adapter must not run on policy deny"
+        );
 
         let outcome = last_audit_line(&rt);
         assert!(outcome.contains("\"status\":\"denied\""), "got: {outcome}");
@@ -233,11 +280,13 @@ rules:
                         metrics: None,
                     }
                 },
-                |_outcome| "fake error".to_string(),
             )
             .unwrap_err();
 
-        assert_eq!(err, "fake error");
+        assert!(
+            matches!(err, AegisError::CapabilityDenied { .. }),
+            "expected CapabilityDenied, got {err:?}"
+        );
         assert!(
             !called.get(),
             "execution adapter must not run on capability deny"
@@ -268,7 +317,6 @@ rules:
                         metrics: None,
                     }
                 },
-                |_outcome| "fake error".to_string(),
             )
             .expect("granted call succeeds");
 
@@ -297,11 +345,15 @@ rules:
                     bytes: vec![b'x'; 100],
                     metrics: None,
                 },
-                |_outcome| "fake error".to_string(),
             )
             .unwrap_err();
 
-        assert_eq!(err, "fake error");
+        assert_eq!(
+            err,
+            AegisError::ResourceExceeded {
+                kind: "output".into()
+            }
+        );
 
         let outcome = last_audit_line(&rt);
         assert!(
@@ -312,10 +364,9 @@ rules:
     }
 
     #[test]
-    fn map_error_reads_the_terminal_outcome() {
-        // The failure-string strategy sees the real terminal outcome. A Failed
-        // step carrying HostDenied lets a Model-B-style strategy surface its
-        // reason (proving the fork stays in the adapter, not the driver).
+    fn host_denied_is_surfaced_as_typed_error() {
+        // A Failed step carrying HostDenied surfaces as AegisError::HostDenied
+        // (no more map_error callback — the driver maps uniformly).
         let mut rt = Runtime::new();
         let tool = ToolId::new("gated");
         register_capped(&mut rt, &tool, 1024);
@@ -331,13 +382,14 @@ rules:
                     },
                     metrics: None,
                 },
-                |outcome| match outcome {
-                    ExecutionOutcome::HostDenied { reason } => reason.clone(),
-                    _ => "host execution failed".to_string(),
-                },
             )
             .unwrap_err();
 
-        assert_eq!(err, "path outside grant");
+        assert_eq!(
+            err,
+            AegisError::HostDenied {
+                reason: "path outside grant".into()
+            }
+        );
     }
 }

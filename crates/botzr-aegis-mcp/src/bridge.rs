@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use botzr_aegis_audit::AuditWriter;
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::ToolId;
+use botzr_aegis_core::{AegisError, ToolId};
 use botzr_aegis_policy::PolicyEngine;
 use botzr_aegis_runtime::{sha256_hex, Runtime};
 
@@ -84,16 +84,18 @@ pub fn build_runtime(
 }
 
 /// Run a catalog tool through the full enforcement pipeline.
-pub fn call_tool(rt: &Runtime, tool_id: &str, text: &str) -> Result<Vec<u8>, String> {
+pub fn call_tool(rt: &Runtime, tool_id: &str, text: &str) -> Result<Vec<u8>, AegisError> {
     if !CATALOG_TOOL_IDS.contains(&tool_id) {
-        return Err(format!("unknown tool: {tool_id}"));
+        return Err(AegisError::HostDenied {
+            reason: format!("unknown tool: {tool_id}"),
+        });
     }
     let input = text.as_bytes();
     rt.execute_tool_call(ToolId::new(tool_id), sha256_hex(input), input)
 }
 
 /// Run the echo tool through the full enforcement pipeline.
-pub fn call_echo(rt: &Runtime, text: &str) -> Result<Vec<u8>, String> {
+pub fn call_echo(rt: &Runtime, text: &str) -> Result<Vec<u8>, AegisError> {
     call_tool(rt, ECHO_TOOL_ID, text)
 }
 
@@ -104,6 +106,7 @@ fn echo_fixture_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use botzr_aegis_core::AegisError;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -138,8 +141,8 @@ mod tests {
         let err = call_tool(&rt, EXFIL_TOOL_ID, "secret")
             .expect_err("exfil must be denied by default policy");
         assert!(
-            err.contains("denied") || err.contains("blocked"),
-            "unexpected error: {err}"
+            matches!(err, AegisError::PolicyDenied { ref reason } if reason.contains("MCP deny-smoke")),
+            "unexpected error: {err:?}"
         );
 
         let jsonl = std::fs::read_to_string(audit.path()).expect("audit readable");
