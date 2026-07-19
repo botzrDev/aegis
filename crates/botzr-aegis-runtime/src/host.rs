@@ -3,14 +3,11 @@
 //! Host tools skip the WASM sandbox station; the grant is enforced by the
 //! effect handler before any I/O. Audit still wraps the full call.
 
-use botzr_aegis_audit::CallSession;
-use botzr_aegis_core::{
-    CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId, PIPELINE_STAGES,
-};
+use botzr_aegis_core::{ExecutionOutcome, ToolId, PIPELINE_STAGES};
 use botzr_aegis_policy::PolicyRequest;
 
+use crate::pipeline::ExecutionStep;
 use crate::Runtime;
-use crate::{audit_err_to_string, enforce_output_cap, policy_rejection_message};
 
 /// Policy axes + payload for a Model B host tool call.
 #[derive(Debug, Clone)]
@@ -68,6 +65,12 @@ impl Runtime {
     ///
     /// The `effect` closure receives the minted grant and must enforce it before
     /// any host-side I/O. Sandbox is not invoked.
+    ///
+    /// Model B adapter: the shared [`Runtime::drive_pipeline`] owns policy,
+    /// capability, output-cap, and audit; this method only supplies the host
+    /// effect as the execution step and Model B's caller error string (the host
+    /// denial reason, or `"host execution failed"` for any other no-output
+    /// outcome).
     pub fn execute_host_call<F>(
         &self,
         req: HostCallRequest<'_>,
@@ -76,59 +79,35 @@ impl Runtime {
     where
         F: FnOnce(&botzr_aegis_core::CapabilityGrant, &[u8]) -> Result<Vec<u8>, HostEffectError>,
     {
-        let mut session = CallSession::begin(&self.audit, req.tool_id.clone(), req.input_digest)
-            .map_err(audit_err_to_string)?;
-
-        let decision = self.policy.evaluate(&req.policy);
-        let policy_outcome = PolicyOutcome::from(&decision.action);
-
-        if !matches!(policy_outcome, PolicyOutcome::Allowed) {
-            session.set_policy(policy_outcome);
-            session.set_capability(CapabilityOutcome::Denied {
-                reason: "policy blocked before capability".into(),
-                denied_capability: None,
-            });
-            session.set_execution(ExecutionOutcome::HostDenied {
-                reason: "not executed".into(),
-            });
-            session.complete().map_err(audit_err_to_string)?;
-            return Err(policy_rejection_message(&decision.action));
-        }
-
-        session.set_policy(PolicyOutcome::Allowed);
-
-        // `decision.limits` is the core `ResourceCeiling` the resolver takes —
-        // pass it straight through; no field-by-field map to transpose.
-        let ceiling = decision.limits;
-        let capability_outcome = self
-            .capabilities
-            .resolve_with_ceiling(&req.tool_id, ceiling);
-        session.set_capability(capability_outcome.clone());
-
-        let (execution, output) = match &capability_outcome {
-            CapabilityOutcome::Granted { grant } => match effect(grant, req.input) {
-                Ok(bytes) => match enforce_output_cap(grant, bytes) {
-                    Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
-                    Err(outcome) => (outcome, None),
+        let HostCallRequest {
+            tool_id,
+            input_digest,
+            input,
+            policy,
+        } = req;
+        self.drive_pipeline(
+            tool_id,
+            input_digest,
+            &policy,
+            // Execution step: run the host effect. It never reports sandbox
+            // metrics; the driver still applies the output cap to its bytes.
+            move |grant| match effect(grant, input) {
+                Ok(bytes) => ExecutionStep::Produced {
+                    bytes,
+                    metrics: None,
                 },
-                Err(err) => (err.to_execution_outcome(), None),
+                Err(err) => ExecutionStep::Failed {
+                    outcome: err.to_execution_outcome(),
+                    metrics: None,
+                },
             },
-            CapabilityOutcome::Denied { .. } => (
-                ExecutionOutcome::HostDenied {
-                    reason: "capability denied".into(),
-                },
-                None,
-            ),
-        };
-
-        let host_error = match &execution {
-            ExecutionOutcome::HostDenied { reason } => Some(reason.clone()),
-            _ => None,
-        };
-        session.set_execution(execution);
-        session.complete().map_err(audit_err_to_string)?;
-
-        output.ok_or_else(|| host_error.unwrap_or_else(|| "host execution failed".into()))
+            // Model B surfaces a host denial's reason; anything else (e.g. an
+            // output-cap `ResourceExceeded`) collapses to a generic string.
+            |outcome| match outcome {
+                ExecutionOutcome::HostDenied { reason } => reason.clone(),
+                _ => "host execution failed".to_string(),
+            },
+        )
     }
 }
 

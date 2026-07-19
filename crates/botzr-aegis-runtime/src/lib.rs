@@ -3,17 +3,19 @@
 mod digest;
 mod error;
 pub mod host;
+mod pipeline;
 
 use std::collections::HashMap;
 
-use botzr_aegis_audit::{AuditError, AuditWriter, CallSession};
+use botzr_aegis_audit::{AuditError, AuditWriter};
 use botzr_aegis_capability::{CapabilityResolver, ToolManifest};
 use botzr_aegis_core::{
-    CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyAction, PolicyOutcome, ToolId,
-    PIPELINE_STAGES,
+    CapabilityGrant, ExecutionOutcome, PolicyAction, ToolId, PIPELINE_STAGES,
 };
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
-use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine};
+use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine, SandboxRun};
+
+use crate::pipeline::ExecutionStep;
 
 pub use digest::sha256_hex;
 pub use error::RegisterError;
@@ -132,88 +134,60 @@ impl Runtime {
     }
 
     /// Execute a tool call through POLICY → CAPABILITY → SANDBOX → AUDIT.
+    ///
+    /// Model A adapter: the shared [`Runtime::drive_pipeline`] owns policy,
+    /// capability, output-cap, and audit; this method only supplies the wasmtime
+    /// execution step and Model A's caller error string.
     pub fn execute_tool_call(
         &self,
         tool_id: ToolId,
         input_digest: String,
         input: &[u8],
     ) -> Result<Vec<u8>, String> {
-        let mut session = CallSession::begin(&self.audit, tool_id.clone(), input_digest.clone())
-            .map_err(audit_err_to_string)?;
-
-        // Station 1 — POLICY. Grab the active set once; a denied, rate-limited,
-        // or pending-approval call is rejected here and never mints a grant.
-        let decision = self.policy.evaluate(&PolicyRequest::for_tool(&tool_id));
-        let policy_outcome = PolicyOutcome::from(&decision.action);
-
-        if !matches!(policy_outcome, PolicyOutcome::Allowed) {
-            session.set_policy(policy_outcome);
-            session.set_capability(CapabilityOutcome::Denied {
-                reason: "policy blocked before capability".into(),
-                denied_capability: None,
-            });
-            session.set_execution(ExecutionOutcome::HostDenied {
-                reason: "not executed".into(),
-            });
-            session.complete().map_err(audit_err_to_string)?;
-            return Err(policy_rejection_message(&decision.action));
-        }
-
-        session.set_policy(PolicyOutcome::Allowed);
-
-        // Station 2 — CAPABILITY. Fold any policy-derived ceiling into the
-        // resolver (lowers limits only; never raises). `decision.limits` is the
-        // same core `ResourceCeiling` the resolver takes — no field-by-field map,
-        // so an axis transposition is impossible.
-        let ceiling = decision.limits;
-        let capability_outcome = self.capabilities.resolve_with_ceiling(&tool_id, ceiling);
-        session.set_capability(capability_outcome.clone());
-
-        let (execution, output) = match &capability_outcome {
-            CapabilityOutcome::Granted { grant } => {
+        let policy_request = PolicyRequest::for_tool(&tool_id);
+        self.drive_pipeline(
+            tool_id.clone(),
+            input_digest,
+            &policy_request,
+            // Execution step: run the prepared component or fixture in the
+            // wasmtime sandbox. A tool that was never registered here is a host
+            // denial. The sandbox reports metrics on every run (success or trap).
+            |grant| {
                 if let Some(prepared) = self.prepared.get(&tool_id) {
                     let run = self.sandbox.execute(prepared, grant, input);
-                    session.set_metrics(run.metrics);
-                    match run.output {
-                        Ok(bytes) => match enforce_output_cap(grant, bytes) {
-                            Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
-                            Err(outcome) => (outcome, None),
-                        },
-                        Err(err) => (err.to_execution_outcome(), None),
-                    }
+                    sandbox_step(run)
                 } else if let Some(fixture) = self.fixtures.get(&tool_id) {
                     let run =
                         self.sandbox
                             .execute_fixture(&fixture.prepared, grant, &fixture.export);
-                    session.set_metrics(run.metrics);
-                    match run.output {
-                        Ok(bytes) => match enforce_output_cap(grant, bytes) {
-                            Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
-                            Err(outcome) => (outcome, None),
-                        },
-                        Err(err) => (err.to_execution_outcome(), None),
-                    }
+                    sandbox_step(run)
                 } else {
-                    (
-                        ExecutionOutcome::HostDenied {
+                    ExecutionStep::Failed {
+                        outcome: ExecutionOutcome::HostDenied {
                             reason: "tool not registered in runtime".into(),
                         },
-                        None,
-                    )
+                        metrics: None,
+                    }
                 }
-            }
-            CapabilityOutcome::Denied { .. } => (
-                ExecutionOutcome::HostDenied {
-                    reason: "capability denied".into(),
-                },
-                None,
-            ),
-        };
+            },
+            // Model A collapses every no-output outcome to one caller string.
+            |_outcome| "execution failed".to_string(),
+        )
+    }
+}
 
-        session.set_execution(execution);
-        session.complete().map_err(audit_err_to_string)?;
-
-        output.ok_or_else(|| "execution failed".into())
+/// Map a sandbox run into the driver's execution step, preserving metrics on
+/// both the success and error branches (Model A always meters).
+fn sandbox_step(run: SandboxRun) -> ExecutionStep {
+    match run.output {
+        Ok(bytes) => ExecutionStep::Produced {
+            bytes,
+            metrics: Some(run.metrics),
+        },
+        Err(err) => ExecutionStep::Failed {
+            outcome: err.to_execution_outcome(),
+            metrics: Some(run.metrics),
+        },
     }
 }
 
@@ -279,6 +253,7 @@ mod tests {
     use std::path::Path;
 
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
+    use botzr_aegis_core::CapabilityOutcome;
     use botzr_aegis_policy::PolicyEngine;
 
     /// Build an echo manifest with an explicit `max_output_bytes` ceiling.
