@@ -9,13 +9,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use botzr_aegis_core::PolicyAction;
+use botzr_aegis_core::{PolicyAction, ResourceCeiling};
 
 use crate::error::PolicyError;
 use crate::eval::{select, PolicyDecision, PolicyRequest, Selection};
 use crate::parse::parse_str;
 use crate::ratelimit::RateLimiter;
-use crate::set::{DefaultAction, PolicyLimits, PolicySet, Rule, RuleKind};
+use crate::set::{DefaultAction, PolicySet, Rule, RuleKind};
 
 /// Result of a hot reload — the digests either side of an atomic swap, for the
 /// `old → new` audit record (G5). On parse/validate failure the old set keeps
@@ -96,14 +96,14 @@ impl PolicyEngine {
         match select(&set, req) {
             Selection::Default(DefaultAction::Allow) => PolicyDecision {
                 action: PolicyAction::Allow,
-                limits: PolicyLimits::default(),
+                limits: ResourceCeiling::default(),
                 matched_rule: None,
             },
             Selection::Default(DefaultAction::Deny) => PolicyDecision {
                 action: PolicyAction::Deny {
                     reason: "no matching rule (default deny)".to_string(),
                 },
-                limits: PolicyLimits::default(),
+                limits: ResourceCeiling::default(),
                 matched_rule: None,
             },
             Selection::Matched(rule) => self.finalize(rule, req),
@@ -125,14 +125,14 @@ impl PolicyEngine {
                         .clone()
                         .unwrap_or_else(|| format!("denied by rule `{}`", rule.id)),
                 },
-                limits: PolicyLimits::default(),
+                limits: ResourceCeiling::default(),
                 matched_rule,
             },
             RuleKind::PendingApproval => PolicyDecision {
                 action: PolicyAction::PendingApproval {
                     approval_id: self.mint_approval_id(rule, req),
                 },
-                limits: PolicyLimits::default(),
+                limits: ResourceCeiling::default(),
                 matched_rule,
             },
             RuleKind::RateLimit => {
@@ -156,7 +156,7 @@ impl PolicyEngine {
                                 )
                             }),
                         },
-                        limits: PolicyLimits::default(),
+                        limits: ResourceCeiling::default(),
                         matched_rule,
                     }
                 }

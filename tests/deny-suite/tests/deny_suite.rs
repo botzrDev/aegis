@@ -19,10 +19,12 @@
 
 use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{
-    mint_grant, narrow_grant, CapabilityError, FsNeeds, HttpNeed, NetNeeds, PathNeed,
-    PolicyCeiling, ToolInfo, ToolKind, ToolLimits, ToolManifest,
+    mint_grant, narrow_grant, CapabilityError, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo,
+    ToolKind, ToolLimits, ToolManifest,
 };
-use botzr_aegis_core::{AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId};
+use botzr_aegis_core::{
+    AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ResourceCeiling, ToolId,
+};
 use botzr_aegis_policy::PolicyEngine;
 use botzr_aegis_runtime::Runtime;
 
@@ -355,7 +357,7 @@ fn narrowing_refuses_limit_escalation() {
         ..ToolLimits::default()
     });
     let parent_grant =
-        mint_grant(&parent_manifest, "parent-1", PolicyCeiling::default()).expect("parent mints");
+        mint_grant(&parent_manifest, "parent-1", ResourceCeiling::default()).expect("parent mints");
 
     let sub_manifest = ToolManifest::new(info("child"), base.path()).with_limits(ToolLimits {
         max_memory_bytes: 1 << 21, // 2 MiB — above the parent's 1 MiB
@@ -368,7 +370,7 @@ fn narrowing_refuses_limit_escalation() {
         &parent_manifest,
         &sub_manifest,
         "child-1",
-        PolicyCeiling::default(),
+        ResourceCeiling::default(),
     )
     .expect_err("raising the memory ceiling must be refused");
     assert!(matches!(err, CapabilityError::Escalation { .. }), "{err:?}");

@@ -9,9 +9,9 @@
 //! This module is pure and allocation-light; rate-limit counter state and
 //! approval-id minting live in [`crate::engine`] so the set stays immutable.
 
-use botzr_aegis_core::{PolicyAction, ToolId};
+use botzr_aegis_core::{PolicyAction, ResourceCeiling, ToolId};
 
-use crate::set::{DefaultAction, PolicyLimits, PolicySet, Rule};
+use crate::set::{DefaultAction, PolicySet, Rule};
 
 /// What a caller is trying to do, evaluated against the active policy set. Axes
 /// beyond `tool_id` are optional; a rule that constrains an axis the request
@@ -57,7 +57,7 @@ impl<'a> PolicyRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyDecision {
     pub action: PolicyAction,
-    pub limits: PolicyLimits,
+    pub limits: ResourceCeiling,
     pub matched_rule: Option<String>,
 }
 

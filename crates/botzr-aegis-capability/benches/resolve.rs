@@ -6,10 +6,10 @@ use std::hint::black_box;
 use std::path::Path;
 
 use botzr_aegis_capability::{
-    CapabilityResolver, FsNeeds, HttpNeed, NetNeeds, PathNeed, PolicyCeiling, ToolInfo, ToolKind,
+    CapabilityResolver, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind,
     ToolLimits, ToolManifest,
 };
-use botzr_aegis_core::ToolId;
+use botzr_aegis_core::{ResourceCeiling, ToolId};
 use criterion::{criterion_group, criterion_main, Criterion};
 
 /// Same shape as `capability/tests/capability.rs` `fixture_manifest`.
@@ -51,7 +51,7 @@ fn capability_resolve(c: &mut Criterion) {
     let mut group = c.benchmark_group("capability_resolve");
     group.bench_function("registered_tool", |b| {
         b.iter(|| {
-            black_box(resolver.resolve_with_ceiling(&tool_id, PolicyCeiling::default()));
+            black_box(resolver.resolve_with_ceiling(&tool_id, ResourceCeiling::default()));
         });
     });
     group.finish();

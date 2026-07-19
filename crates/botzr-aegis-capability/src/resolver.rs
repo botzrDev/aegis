@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use botzr_aegis_core::{CapabilityGrant, CapabilityOutcome, ToolId};
+use botzr_aegis_core::{CapabilityGrant, CapabilityOutcome, ResourceCeiling, ToolId};
 
 use crate::error::CapabilityError;
 use crate::manifest::ToolManifest;
-use crate::mint::{mint_grant, PolicyCeiling};
+use crate::mint::mint_grant;
 
 static GRANT_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -19,7 +19,7 @@ fn next_grant_id(tool_id: &ToolId) -> String {
 #[derive(Debug, Default)]
 pub struct CapabilityResolver {
     tools: HashMap<ToolId, ToolManifest>,
-    ceiling: PolicyCeiling,
+    ceiling: ResourceCeiling,
 }
 
 impl CapabilityResolver {
@@ -27,7 +27,7 @@ impl CapabilityResolver {
         Self::default()
     }
 
-    pub fn with_ceiling(mut self, ceiling: PolicyCeiling) -> Self {
+    pub fn with_ceiling(mut self, ceiling: ResourceCeiling) -> Self {
         self.ceiling = ceiling;
         self
     }
@@ -41,18 +41,18 @@ impl CapabilityResolver {
     /// applying only the resolver's standing ceiling.
     #[must_use = "capability resolution must be handled — denial never reaches sandbox"]
     pub fn resolve(&self, tool_id: &ToolId) -> CapabilityOutcome {
-        self.resolve_with_ceiling(tool_id, PolicyCeiling::default())
+        self.resolve_with_ceiling(tool_id, ResourceCeiling::default())
     }
 
     /// Resolve with an additional per-call ceiling (e.g. one the policy engine
     /// derived for this call). The call ceiling is folded into the resolver's
-    /// standing ceiling by [`PolicyCeiling::combine`], so it can only *lower*
+    /// standing ceiling by [`ResourceCeiling::combine`], so it can only *lower*
     /// limits — policy never raises what a tool declared.
     #[must_use = "capability resolution must be handled — denial never reaches sandbox"]
     pub fn resolve_with_ceiling(
         &self,
         tool_id: &ToolId,
-        call_ceiling: PolicyCeiling,
+        call_ceiling: ResourceCeiling,
     ) -> CapabilityOutcome {
         match self.resolve_inner(tool_id, self.ceiling.combine(call_ceiling)) {
             Ok(grant) => CapabilityOutcome::Granted { grant },
@@ -66,7 +66,7 @@ impl CapabilityResolver {
     fn resolve_inner(
         &self,
         tool_id: &ToolId,
-        ceiling: PolicyCeiling,
+        ceiling: ResourceCeiling,
     ) -> Result<CapabilityGrant, CapabilityError> {
         let manifest =
             self.tools

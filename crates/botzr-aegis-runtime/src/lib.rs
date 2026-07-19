@@ -7,7 +7,7 @@ pub mod host;
 use std::collections::HashMap;
 
 use botzr_aegis_audit::{AuditError, AuditWriter, CallSession};
-use botzr_aegis_capability::{CapabilityResolver, PolicyCeiling, ToolManifest};
+use botzr_aegis_capability::{CapabilityResolver, ToolManifest};
 use botzr_aegis_core::{
     CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyAction, PolicyOutcome, ToolId,
     PIPELINE_STAGES,
@@ -162,12 +162,10 @@ impl Runtime {
         session.set_policy(PolicyOutcome::Allowed);
 
         // Station 2 — CAPABILITY. Fold any policy-derived ceiling into the
-        // resolver (lowers limits only; never raises).
-        let ceiling = PolicyCeiling {
-            max_memory_bytes: decision.limits.max_memory_bytes,
-            max_wall_ms: decision.limits.max_wall_ms,
-            max_output_bytes: decision.limits.max_output_bytes,
-        };
+        // resolver (lowers limits only; never raises). `decision.limits` is the
+        // same core `ResourceCeiling` the resolver takes — no field-by-field map,
+        // so an axis transposition is impossible.
+        let ceiling = decision.limits;
         let capability_outcome = self.capabilities.resolve_with_ceiling(&tool_id, ceiling);
         session.set_capability(capability_outcome.clone());
 
@@ -493,5 +491,98 @@ rules:
         let mut rt = Runtime::new();
         let err = rt.register(manifest, wasm.to_vec()).unwrap_err();
         assert!(matches!(err, RegisterError::Sha256Mismatch { .. }));
+    }
+
+    #[test]
+    fn policy_lowered_limit_flows_to_grant_per_axis() {
+        // AEG-38 §3.D.1: a rule that lowers ONLY the wall axis must lower wall on
+        // the minted grant while memory and output stay at the manifest's limits.
+        let yaml = r#"
+version: 1
+default: allow
+rules:
+  - id: cap-wall
+    action: allow
+    tool: capped
+    limits: { max_wall_ms: 1000 }
+"#;
+        let engine = PolicyEngine::from_yaml(yaml).unwrap();
+        let tool = ToolId::new("capped");
+
+        let mut resolver = CapabilityResolver::new();
+        resolver.register(
+            ToolManifest::new(
+                ToolInfo {
+                    id: tool.clone(),
+                    version: "0.1.0".into(),
+                    kind: ToolKind::Wasm,
+                },
+                std::env::temp_dir(),
+            )
+            .with_limits(ToolLimits {
+                max_memory_bytes: 1 << 20,
+                max_wall_ms: 10_000,
+                max_output_bytes: 4096,
+            }),
+        );
+
+        // Mirror the production seam exactly: `decision.limits` *is* the ceiling.
+        let decision = engine.evaluate(&PolicyRequest::for_tool(&tool));
+        let grant = match resolver.resolve_with_ceiling(&tool, decision.limits) {
+            CapabilityOutcome::Granted { grant } => grant,
+            other => panic!("expected grant, got {other:?}"),
+        };
+
+        assert_eq!(grant.max_wall_ms, 1_000, "policy lowers the wall axis");
+        assert_eq!(
+            grant.max_memory_bytes,
+            1 << 20,
+            "memory unchanged from manifest"
+        );
+        assert_eq!(grant.max_output_bytes, 4096, "output unchanged from manifest");
+    }
+
+    #[test]
+    fn axis_sentinels_survive_policy_to_grant_without_transposition() {
+        // AEG-38 §3.D.2: distinct per-axis sentinels (memory=11, wall=22,
+        // output=33) must each land on the *matching* grant axis after
+        // evaluate → resolve. This fails loudly if any seam maps e.g.
+        // `max_wall_ms: decision.limits.max_memory_bytes`.
+        let yaml = r#"
+version: 1
+default: allow
+rules:
+  - id: sentinels
+    action: allow
+    tool: sentinel-tool
+    limits: { max_memory_bytes: 11, max_wall_ms: 22, max_output_bytes: 33 }
+"#;
+        let engine = PolicyEngine::from_yaml(yaml).unwrap();
+        let tool = ToolId::new("sentinel-tool");
+
+        // Pin the parse → decision map first (catches a transposition in parse).
+        let decision = engine.evaluate(&PolicyRequest::for_tool(&tool));
+        assert_eq!(decision.limits.max_memory_bytes, Some(11));
+        assert_eq!(decision.limits.max_wall_ms, Some(22));
+        assert_eq!(decision.limits.max_output_bytes, Some(33));
+
+        // Manifest defaults (64 MiB / 30 s / 1 MiB) all exceed the sentinels, so
+        // each sentinel is the tighter bound and flows straight through to grant.
+        let mut resolver = CapabilityResolver::new();
+        resolver.register(ToolManifest::new(
+            ToolInfo {
+                id: tool.clone(),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            std::env::temp_dir(),
+        ));
+        let grant = match resolver.resolve_with_ceiling(&tool, decision.limits) {
+            CapabilityOutcome::Granted { grant } => grant,
+            other => panic!("expected grant, got {other:?}"),
+        };
+        assert_eq!(grant.max_memory_bytes, 11, "memory sentinel on memory axis");
+        assert_eq!(grant.max_wall_ms, 22, "wall sentinel on wall axis");
+        assert_eq!(grant.max_output_bytes, 33, "output sentinel on output axis");
     }
 }

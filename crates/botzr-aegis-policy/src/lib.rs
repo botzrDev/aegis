@@ -15,12 +15,13 @@ mod parse;
 mod ratelimit;
 mod set;
 
+pub use botzr_aegis_core::ResourceCeiling;
 pub use engine::{PolicyEngine, ReloadOutcome, ReloadSource};
 pub use error::PolicyError;
 pub use eval::{PolicyDecision, PolicyRequest};
 pub use parse::{parse_str, SUPPORTED_POLICY_VERSION};
 pub use ratelimit::RateLimiter;
-pub use set::{DefaultAction, Matcher, PolicyLimits, PolicySet, RateSpec, Rule, RuleKind};
+pub use set::{DefaultAction, Matcher, PolicySet, RateSpec, Rule, RuleKind};
 
 #[cfg(test)]
 mod tests {

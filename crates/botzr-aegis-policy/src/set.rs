@@ -7,6 +7,8 @@
 //! lives here (rate-limit counters live in the engine, so a reload never resets
 //! them).
 
+use botzr_aegis_core::ResourceCeiling;
+
 /// Action taken when no rule matches a request. Policy only *restricts* — the
 /// capability resolver remains the default-deny layer — so the default is
 /// [`DefaultAction::Allow`] unless a document opts into `default: deny`.
@@ -31,23 +33,6 @@ pub enum RuleKind {
 pub struct RateSpec {
     pub max: u32,
     pub per_seconds: u64,
-}
-
-/// Optional resource ceiling a rule imposes. Policy may only *lower* limits, so
-/// these map onto a capability `PolicyCeiling` (`None` = do not constrain).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct PolicyLimits {
-    pub max_memory_bytes: Option<u64>,
-    pub max_wall_ms: Option<u64>,
-    pub max_output_bytes: Option<u64>,
-}
-
-impl PolicyLimits {
-    pub fn is_unconstrained(&self) -> bool {
-        self.max_memory_bytes.is_none()
-            && self.max_wall_ms.is_none()
-            && self.max_output_bytes.is_none()
-    }
 }
 
 /// Match predicate for a rule. A `None` axis (or the literal `"*"`) matches any
@@ -107,7 +92,10 @@ pub struct Rule {
     pub priority: i32,
     pub reason: Option<String>,
     pub rate: Option<RateSpec>,
-    pub limits: PolicyLimits,
+    /// Optional resource ceiling this rule imposes. Policy may only *lower*
+    /// limits (`None` = do not constrain that axis) — the same core-owned
+    /// [`ResourceCeiling`] the capability resolver folds into grant minting.
+    pub limits: ResourceCeiling,
 }
 
 /// The validated, immutable rule set the hot path evaluates.

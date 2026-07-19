@@ -4,7 +4,6 @@
 //! effect handler before any I/O. Audit still wraps the full call.
 
 use botzr_aegis_audit::CallSession;
-use botzr_aegis_capability::PolicyCeiling;
 use botzr_aegis_core::{
     CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId, PIPELINE_STAGES,
 };
@@ -98,11 +97,9 @@ impl Runtime {
 
         session.set_policy(PolicyOutcome::Allowed);
 
-        let ceiling = PolicyCeiling {
-            max_memory_bytes: decision.limits.max_memory_bytes,
-            max_wall_ms: decision.limits.max_wall_ms,
-            max_output_bytes: decision.limits.max_output_bytes,
-        };
+        // `decision.limits` is the core `ResourceCeiling` the resolver takes —
+        // pass it straight through; no field-by-field map to transpose.
+        let ceiling = decision.limits;
         let capability_outcome = self
             .capabilities
             .resolve_with_ceiling(&req.tool_id, ceiling);

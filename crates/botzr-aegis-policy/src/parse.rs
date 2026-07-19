@@ -31,8 +31,10 @@ use std::collections::HashSet;
 
 use serde::Deserialize;
 
+use botzr_aegis_core::ResourceCeiling;
+
 use crate::error::PolicyError;
-use crate::set::{DefaultAction, Matcher, PolicyLimits, PolicySet, RateSpec, Rule, RuleKind};
+use crate::set::{DefaultAction, Matcher, PolicySet, RateSpec, Rule, RuleKind};
 
 /// Highest `version` this build understands.
 pub const SUPPORTED_POLICY_VERSION: u32 = 1;
@@ -176,7 +178,7 @@ fn compile_rule(raw: RawRule) -> Result<Rule, PolicyError> {
 
     let limits = raw
         .limits
-        .map(|l| PolicyLimits {
+        .map(|l| ResourceCeiling {
             max_memory_bytes: l.max_memory_bytes,
             max_wall_ms: l.max_wall_ms,
             max_output_bytes: l.max_output_bytes,
