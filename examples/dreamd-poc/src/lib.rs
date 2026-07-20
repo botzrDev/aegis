@@ -3,12 +3,17 @@
 //! Mirrors the `append_node` / `search_nodes` contract from dreamd's MCP surface
 //! (`dreamd-core/src/mcp/mod.rs`) without pulling the full dreamd dependency
 //! graph. Production wiring calls `MemoryMcpServer` in-process or over UDS.
+//!
+//! FS access goes through [`HostEffectContext`] (cap-std Dir / preopen-style).
+//! Private grant-helper functions (`grant_allows_*`, `resolve_target_path`,
+//! `path_is_under`) have been removed — the context owns all grant enforcement.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
-use botzr_aegis_core::{CapabilityGrant, ToolId};
-use botzr_aegis_runtime::{sha256_hex, HostEffectError};
+use botzr_aegis_core::ToolId;
+use botzr_aegis_runtime::{sha256_hex, HostEffectContext, HostEffectError};
 use serde::{Deserialize, Serialize};
 
 pub const TOOL_APPEND: &str = "append_node";
@@ -143,9 +148,10 @@ pub struct SearchHit {
 }
 
 /// Append a learning node under `.agent/` after grant enforcement.
+///
+/// FS access goes through [`HostEffectContext`] (cap-std Dir / preopen-style).
 pub fn append_node_effect(
-    grant: &CapabilityGrant,
-    project_root: &Path,
+    ctx: &HostEffectContext,
     input: &[u8],
 ) -> Result<Vec<u8>, HostEffectError> {
     let req: AppendInput = serde_json::from_slice(input).map_err(|e| HostEffectError::Failed {
@@ -156,19 +162,15 @@ pub fn append_node_effect(
         AppendZone::Episodic => PathBuf::from(".agent/episodic/AGENT_LEARNINGS.jsonl"),
         AppendZone::Personal => PathBuf::from(".agent/personal/notes.jsonl"),
     };
-    let target = project_root.join(&rel);
 
-    if !grant_allows_write(grant, &target)? {
-        return Err(HostEffectError::GrantDenied {
-            reason: format!("write denied for {}", rel.display()),
-        });
-    }
-
-    if let Some(parent) = target.parent() {
+    // Create parent directory if needed (within grant, safe to use std::fs).
+    if let Some(parent) = rel.parent() {
         std::fs::create_dir_all(parent).map_err(|e| HostEffectError::Failed {
             reason: format!("mkdir {}: {e}", parent.display()),
         })?;
     }
+
+    let mut file = ctx.open_write_append(&rel)?;
 
     let id = format!("evt_{}", &sha256_hex(input)[..26]);
     let timestamp = "2026-07-10T00:00:00Z".to_string();
@@ -181,15 +183,8 @@ pub fn append_node_effect(
         "skill_action": req.skill_action,
     });
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&target)
-        .map_err(|e| HostEffectError::Failed {
-            reason: format!("open {}: {e}", target.display()),
-        })?;
     writeln!(file, "{line}").map_err(|e| HostEffectError::Failed {
-        reason: format!("write {}: {e}", target.display()),
+        reason: format!("write: {e}"),
     })?;
 
     let out = AppendOutput {
@@ -204,22 +199,32 @@ pub fn append_node_effect(
 
 /// BM25-free recall stub: substring scan over episodic JSONL (PoC only).
 pub fn search_nodes_effect(
-    grant: &CapabilityGrant,
-    project_root: &Path,
+    ctx: &HostEffectContext,
     input: &[u8],
 ) -> Result<Vec<u8>, HostEffectError> {
     let req: SearchInput = serde_json::from_slice(input).map_err(|e| HostEffectError::Failed {
         reason: format!("invalid search_nodes JSON: {e}"),
     })?;
 
-    let jsonl = project_root.join(".agent/episodic/AGENT_LEARNINGS.jsonl");
-    if !grant_allows_read(grant, &jsonl)? {
-        return Err(HostEffectError::GrantDenied {
-            reason: "read denied for .agent/episodic".into(),
-        });
-    }
+    let target = PathBuf::from(".agent/episodic/AGENT_LEARNINGS.jsonl");
+    let text = match ctx.open_read(&target) {
+        Ok(mut file) => {
+            let mut s = String::new();
+            use std::io::Read;
+            file.read_to_string(&mut s)
+                .map_err(|e| HostEffectError::Failed {
+                    reason: format!("read {}: {e}", target.display()),
+                })?;
+            s
+        }
+        Err(HostEffectError::GrantDenied { .. }) => {
+            return Err(HostEffectError::GrantDenied {
+                reason: "read denied for .agent/episodic".into(),
+            });
+        }
+        Err(HostEffectError::Failed { .. }) => String::new(),
+    };
 
-    let text = std::fs::read_to_string(&jsonl).unwrap_or_default();
     let query = req.query.to_ascii_lowercase();
     let mut hits = Vec::new();
     for line in text.lines() {
@@ -244,6 +249,11 @@ pub fn search_nodes_effect(
     serde_json::to_vec(&SearchOutput { results: hits }).map_err(|e| HostEffectError::Failed {
         reason: format!("serialize response: {e}"),
     })
+}
+
+/// Scaffold minimal `.agent/episodic/` layout for PoC tests.
+pub fn init_agent_store(project_root: &Path) {
+    std::fs::create_dir_all(project_root.join(".agent/episodic")).expect("create .agent/episodic");
 }
 
 /// Bare search for D5 overhead benchmark (no Aegis wrapper).
@@ -272,72 +282,6 @@ pub fn search_nodes_bare(project_root: &Path, input: &[u8]) -> Vec<u8> {
         }
     }
     serde_json::to_vec(&SearchOutput { results: hits }).unwrap()
-}
-
-fn grant_allows_write(grant: &CapabilityGrant, target: &Path) -> Result<bool, HostEffectError> {
-    let Some(fs) = &grant.fs else {
-        return Ok(false);
-    };
-    let resolved = resolve_target_path(target)?;
-    Ok(fs
-        .write_paths
-        .iter()
-        .any(|root| path_is_under(&resolved, root)))
-}
-
-fn grant_allows_read(grant: &CapabilityGrant, target: &Path) -> Result<bool, HostEffectError> {
-    let Some(fs) = &grant.fs else {
-        return Ok(false);
-    };
-    let resolved = if target.exists() {
-        resolve_target_path(target)?
-    } else {
-        // Missing index file is valid for empty recall.
-        return Ok(fs.read_paths.iter().any(|root| {
-            target
-                .parent()
-                .and_then(|p| std::fs::canonicalize(p).ok())
-                .is_some_and(|canon| {
-                    let candidate = canon.join(target.file_name().unwrap_or_default());
-                    path_is_under(&candidate.to_string_lossy(), root)
-                })
-        }));
-    };
-    Ok(fs
-        .read_paths
-        .iter()
-        .any(|root| path_is_under(&resolved, root)))
-}
-
-/// Resolve a path for grant checks: canonicalize the parent, join the final
-/// component (so not-yet-created files are still checked correctly).
-fn resolve_target_path(target: &Path) -> Result<String, HostEffectError> {
-    let parent = target.parent().ok_or_else(|| HostEffectError::Failed {
-        reason: format!("path has no parent: {}", target.display()),
-    })?;
-    if !parent.exists() {
-        std::fs::create_dir_all(parent).map_err(|e| HostEffectError::Failed {
-            reason: format!("mkdir {}: {e}", parent.display()),
-        })?;
-    }
-    let parent_canon = std::fs::canonicalize(parent).map_err(|e| HostEffectError::Failed {
-        reason: format!("canonicalize {}: {e}", parent.display()),
-    })?;
-    let name = target.file_name().ok_or_else(|| HostEffectError::Failed {
-        reason: format!("path has no file name: {}", target.display()),
-    })?;
-    Ok(parent_canon.join(name).to_string_lossy().into_owned())
-}
-
-fn path_is_under(path: &str, root: &str) -> bool {
-    let path = Path::new(path);
-    let root = Path::new(root);
-    path == root || path.starts_with(root)
-}
-
-/// Scaffold minimal `.agent/episodic/` layout for PoC tests.
-pub fn init_agent_store(project_root: &Path) {
-    std::fs::create_dir_all(project_root.join(".agent/episodic")).expect("create .agent/episodic");
 }
 
 #[cfg(test)]

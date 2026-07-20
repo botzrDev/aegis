@@ -250,6 +250,7 @@ dependencies = [
  "botzr-aegis-core",
  "botzr-aegis-policy",
  "botzr-aegis-sandbox",
+ "cap-std",
  "criterion",
  "serde_json",
  "sha2",

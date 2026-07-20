@@ -2,7 +2,7 @@
 
 use botzr_aegis_core::ToolId;
 use botzr_aegis_policy::PolicyRequest;
-use botzr_aegis_runtime::{sha256_hex, HostCallRequest, Runtime};
+use botzr_aegis_runtime::{sha256_hex, HostCallRequest, HostEffectContext, Runtime};
 use dreamd_poc::{
     append_node_effect, init_agent_store, policy_engine, register_dreamd_tools,
     search_nodes_effect, AppendInput, AppendZone, CAP_FS_EPISODIC, CAP_FS_PERSONAL, TOOL_APPEND,
@@ -22,7 +22,6 @@ fn setup_runtime(dir: &TempDir) -> Runtime {
 fn append_episodic_allowed_with_audit_success() {
     let dir = TempDir::new().unwrap();
     let rt = setup_runtime(&dir);
-    let root = dir.path().to_path_buf();
 
     let input = AppendInput {
         content: "tokio channels need bounded capacity".into(),
@@ -39,9 +38,12 @@ fn append_episodic_allowed_with_audit_success() {
                 tool.clone(),
                 sha256_hex(&bytes),
                 &bytes,
-                PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
+                botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
             ),
-            |grant, input| append_node_effect(grant, &root, input),
+            |grant, input| {
+                let ctx = HostEffectContext::new(grant);
+                append_node_effect(&ctx, input)
+            },
         )
         .expect("episodic append allowed");
 
@@ -60,7 +62,6 @@ fn append_episodic_allowed_with_audit_success() {
 fn append_personal_denied_without_owner_role() {
     let dir = TempDir::new().unwrap();
     let rt = setup_runtime(&dir);
-    let root = dir.path().to_path_buf();
 
     let input = AppendInput {
         content: "private note".into(),
@@ -77,9 +78,12 @@ fn append_personal_denied_without_owner_role() {
                 tool.clone(),
                 sha256_hex(&bytes),
                 &bytes,
-                PolicyRequest::for_tool(&tool).with_capability(CAP_FS_PERSONAL),
+                botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_PERSONAL),
             ),
-            |grant, input| append_node_effect(grant, &root, input),
+            |grant, input| {
+                let ctx = HostEffectContext::new(grant);
+                append_node_effect(&ctx, input)
+            },
         )
         .unwrap_err();
 
@@ -99,7 +103,6 @@ fn append_personal_denied_without_owner_role() {
 fn append_personal_allowed_with_owner_role() {
     let dir = TempDir::new().unwrap();
     let rt = setup_runtime(&dir);
-    let root = dir.path().to_path_buf();
 
     let input = AppendInput {
         content: "owner-only note".into(),
@@ -115,11 +118,14 @@ fn append_personal_allowed_with_owner_role() {
             tool.clone(),
             sha256_hex(&bytes),
             &bytes,
-            PolicyRequest::for_tool(&tool)
+            botzr_aegis_policy::PolicyRequest::for_tool(&tool)
                 .with_capability(CAP_FS_PERSONAL)
                 .with_role("owner"),
         ),
-        |grant, input| append_node_effect(grant, &root, input),
+        |grant, input| {
+            let ctx = HostEffectContext::new(grant);
+            append_node_effect(&ctx, input)
+        },
     )
     .expect("owner role allows personal write");
 
@@ -131,7 +137,6 @@ fn append_personal_allowed_with_owner_role() {
 fn search_nodes_returns_seeded_hit() {
     let dir = TempDir::new().unwrap();
     let rt = setup_runtime(&dir);
-    let root = dir.path().to_path_buf();
 
     // Seed one learning directly.
     let seed = AppendInput {
@@ -147,9 +152,13 @@ fn search_nodes_returns_seeded_hit() {
             append_tool.clone(),
             sha256_hex(&seed_bytes),
             &seed_bytes,
-            PolicyRequest::for_tool(&append_tool).with_capability(CAP_FS_EPISODIC),
+            botzr_aegis_policy::PolicyRequest::for_tool(&append_tool)
+                .with_capability(CAP_FS_EPISODIC),
         ),
-        |grant, input| append_node_effect(grant, &root, input),
+        |grant, input| {
+            let ctx = HostEffectContext::new(grant);
+            append_node_effect(&ctx, input)
+        },
     )
     .unwrap();
 
@@ -163,9 +172,12 @@ fn search_nodes_returns_seeded_hit() {
                 search_tool.clone(),
                 sha256_hex(&query_bytes),
                 &query_bytes,
-                PolicyRequest::for_tool(&search_tool),
+                botzr_aegis_policy::PolicyRequest::for_tool(&search_tool),
             ),
-            |grant, input| search_nodes_effect(grant, &root, input),
+            |grant, input| {
+                let ctx = HostEffectContext::new(grant);
+                search_nodes_effect(&ctx, input)
+            },
         )
         .expect("search allowed");
 
@@ -179,7 +191,6 @@ fn search_nodes_returns_seeded_hit() {
 fn dream_consolidation_requires_approval() {
     let dir = TempDir::new().unwrap();
     let rt = setup_runtime(&dir);
-    let root = dir.path().to_path_buf();
     let tool = ToolId::new(TOOL_DREAM);
     let input = b"{}";
 
@@ -189,12 +200,12 @@ fn dream_consolidation_requires_approval() {
                 tool.clone(),
                 sha256_hex(input),
                 input,
-                PolicyRequest::for_tool(&tool),
+                botzr_aegis_policy::PolicyRequest::for_tool(&tool),
             ),
             |grant, _| {
+                let ctx = HostEffectContext::new(grant);
                 append_node_effect(
-                    grant,
-                    &root,
+                    &ctx,
                     br#"{"content":"x","source_harness":"t","skill_action":"d::dream"}"#,
                 )
             },

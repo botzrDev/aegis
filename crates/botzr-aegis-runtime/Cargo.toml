@@ -20,6 +20,7 @@ botzr-aegis-capability = { workspace = true }
 botzr-aegis-core = { workspace = true }
 botzr-aegis-policy = { workspace = true }
 botzr-aegis-sandbox = { workspace = true }
+cap-std = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 

@@ -2,6 +2,12 @@
 //!
 //! v1 slice: log is a no-op sink; http always denies unless the grant carries
 //! a matching host entry (no real network I/O in this slice).
+//!
+//! HTTP allow-check logic is shared with `botzr-aegis-runtime` via
+//! `botzr-aegis-core::http_check` — one source of truth for "is this GET
+//! host allowed?".
+
+use botzr_aegis_core::http_get_allowed;
 
 use crate::bindings::aegis::host::http::{self, Deny, Response};
 use crate::bindings::aegis::host::log::{self, Level};
@@ -28,42 +34,13 @@ impl log::Host for ToolState {
 
 impl http::Host for ToolState {
     async fn get(&mut self, url: String) -> Result<Response, Deny> {
-        let host = parse_http_host(&url).ok_or_else(|| Deny {
-            reason: "malformed url".into(),
-        })?;
-
-        let net = self.grant().net.as_ref().ok_or_else(|| Deny {
-            reason: "network denied: no net grant".into(),
-        })?;
-
-        let allowed = net.http.iter().any(|entry| {
-            entry.host == host && entry.methods.iter().any(|m| m.eq_ignore_ascii_case("GET"))
-        });
-
-        if !allowed {
-            return Err(Deny {
-                reason: format!("network denied: host {host} not in grant"),
-            });
-        }
+        // Shared allow-check from core — same logic as HostEffectContext::http_get.
+        http_get_allowed(self.grant(), &url).map_err(|reason| Deny { reason })?;
 
         // v1: no real network — grant check passed, effect is stubbed.
         Err(Deny {
             reason: "http host stub: no network in v1 slice".into(),
         })
-    }
-}
-
-/// Extract the host portion from an `http(s)://host/...` URL (no IDNA).
-fn parse_http_host(url: &str) -> Option<String> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    let host = rest.split(['/', '?', '#']).next()?;
-    let host = host.split(':').next()?;
-    if host.is_empty() {
-        None
-    } else {
-        Some(host.to_ascii_lowercase())
     }
 }
 
@@ -90,21 +67,12 @@ mod tests {
 
     fn allow_get(host: &str) -> NetGrant {
         NetGrant {
-            http: vec![HttpGrant {
+            http: vec![botzr_aegis_core::HttpGrant {
                 host: host.into(),
                 ports: vec![443],
                 methods: vec!["GET".into()],
             }],
         }
-    }
-
-    #[test]
-    fn parse_http_host_extracts_authority() {
-        assert_eq!(
-            parse_http_host("https://Example.COM/path"),
-            Some("example.com".into())
-        );
-        assert_eq!(parse_http_host("not-a-url"), None);
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use botzr_aegis_core::ToolId;
 use botzr_aegis_policy::PolicyRequest;
-use botzr_aegis_runtime::{sha256_hex, HostCallRequest, Runtime};
+use botzr_aegis_runtime::{sha256_hex, HostCallRequest, HostEffectContext, Runtime};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dreamd_poc::{
     init_agent_store, policy_engine, register_dreamd_tools, search_nodes_bare, search_nodes_effect,
@@ -38,7 +38,10 @@ fn seed_store(dir: &TempDir) -> (Runtime, PathBuf, Vec<u8>) {
                 &bytes,
                 PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
             ),
-            |grant, input| dreamd_poc::append_node_effect(grant, &root, input),
+            |grant, input| {
+                let ctx = HostEffectContext::new(grant);
+                dreamd_poc::append_node_effect(&ctx, input)
+            },
         )
         .expect("seed append");
     }
@@ -70,7 +73,10 @@ fn bench_search_overhead(c: &mut Criterion) {
                         black_box(&query_bytes),
                         PolicyRequest::for_tool(&tool),
                     ),
-                    |grant, input| search_nodes_effect(grant, &root, input),
+                    |grant, input| {
+                        let ctx = HostEffectContext::new(grant);
+                        search_nodes_effect(&ctx, input)
+                    },
                 )
                 .expect("wrapped search"),
             )

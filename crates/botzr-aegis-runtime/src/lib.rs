@@ -3,6 +3,7 @@
 mod digest;
 mod error;
 pub mod host;
+mod host_effect;
 mod pipeline;
 
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ use crate::pipeline::ExecutionStep;
 pub use digest::sha256_hex;
 pub use error::RegisterError;
 pub use host::{HostCallRequest, HostEffectError};
+pub use host_effect::{HostEffectContext, HttpStubResponse, LogLevel};
 
 /// Runtime configuration.
 pub struct Runtime {
