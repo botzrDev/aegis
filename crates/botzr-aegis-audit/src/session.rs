@@ -195,22 +195,24 @@ mod tests {
     fn complete_then_drop_emits_exactly_one_outcome() {
         let writer = crate::writer::AuditWriter::open_temp().unwrap();
         let path = writer.path().to_path_buf();
-        let mut session =
-            CallSession::begin(&writer, ToolId::new("ok-tool"), "abc123").unwrap();
+        let mut session = CallSession::begin(&writer, ToolId::new("ok-tool"), "abc123").unwrap();
         session.set_policy(PolicyOutcome::Allowed);
         session.set_execution(ExecutionOutcome::Success);
         session.complete().unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         // complete() consumes the session; its Drop must not append a second line.
-        assert_eq!(outcome_count(&text), 1, "complete then drop must not duplicate");
+        assert_eq!(
+            outcome_count(&text),
+            1,
+            "complete then drop must not duplicate"
+        );
         assert!(text.contains("\"execution\":{\"status\":\"success\"}"));
     }
 
     #[test]
     fn begin_seeds_never_serialize_allowed_or_success() {
         let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let session =
-            CallSession::begin(&writer, ToolId::new("seed-tool"), "abc123").unwrap();
+        let session = CallSession::begin(&writer, ToolId::new("seed-tool"), "abc123").unwrap();
         let json = crate::to_json_line(&session.to_record()).unwrap();
         assert!(
             !json.contains("\"policy\":{\"status\":\"allowed\"}"),

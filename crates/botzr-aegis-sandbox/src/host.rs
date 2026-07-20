@@ -48,7 +48,7 @@ impl http::Host for ToolState {
 mod tests {
     use super::*;
 
-    use botzr_aegis_core::{CapabilityGrant, HttpGrant, NetGrant, ToolId};
+    use botzr_aegis_core::{CapabilityGrant, NetGrant, ToolId};
     use http::Host as _;
     use wasmtime_wasi::WasiCtxBuilder;
 

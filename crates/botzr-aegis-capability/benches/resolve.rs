@@ -6,8 +6,8 @@ use std::hint::black_box;
 use std::path::Path;
 
 use botzr_aegis_capability::{
-    CapabilityResolver, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind,
-    ToolLimits, ToolManifest,
+    CapabilityResolver, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits,
+    ToolManifest,
 };
 use botzr_aegis_core::{ResourceCeiling, ToolId};
 use criterion::{criterion_group, criterion_main, Criterion};

@@ -110,6 +110,24 @@ imported functions. The WASM sandbox isolates the guest's *decision logic*, but 
 Evidence: DamageBot `http_exfil` cases — grant gate enforced in `host.rs`; calls
 without `NetGrant` or to disallowed hosts are refused and audited.
 
+#### Context-owned effects vs the raw closure escape hatch
+
+Model B enforcement is **not uniform**, and the difference is load-bearing:
+
+| Path | Enforcement | Status |
+|---|---|---|
+| `HostEffectContext` methods (`http_get`, `open_read`, `open_write_append`, `log_emit`) | **Structural** — the grant is checked before any effect, and FS access is a cap-std `Dir` opened from the grant, so an un-granted path is unreachable rather than merely unchecked | Supported |
+| Raw `Runtime::execute_host_call` closure | **Convention only** — the runtime hands the closure a `&CapabilityGrant` and checks nothing before the effect runs; it applies the output cap afterwards | Research escape hatch |
+
+The structural guarantee described in this document covers **context-owned effects
+only**. A raw closure that forgets its check is exactly the "missing grant check in
+a new host function" residual risk below — the runtime cannot catch it. The closure
+API is kept deliberately for research and experiment wiring; Aegis-owned effects
+must go through `HostEffectContext`.
+
+Neither path is sandbox isolation. `HostEffectContext` narrows *which* effects a
+grant can reach; it does not contain the effect once it runs in host Rust.
+
 **Design consequence:** keep the host-function set small and hand-audited. Prefer
 Model A wherever tool logic can live in WASM; reserve Model B for effects that
 genuinely must touch the host.
@@ -197,6 +215,12 @@ Do not market Model B host functions as "sandboxed." They are grant-checked,
 audited proxies. Isolation guarantees for Model B are exactly as strong as the
 hand-audited host-function set.
 
+`HostEffectContext` does not change that. It makes the *check* structural for the
+effects it owns (§3), so those effects cannot skip the grant — but the effect still
+executes with host privileges. Effects wired through the raw `execute_host_call`
+closure are not even structurally checked; they remain convention-checked by their
+author.
+
 ### Host environment credentials (until credential injection ships)
 
 Model B host functions that call real APIs may inherit the host process's ambient
@@ -233,7 +257,7 @@ honest non-goals is the product posture.
 
 | Risk | Severity | Notes |
 |---|---|---|
-| Missing grant check in a new host function | **Critical** | #1 sandbox bypass for Model B; mitigated by keeping the host-function set tiny |
+| Missing grant check in a new host function | **Critical** | #1 sandbox bypass for Model B; mitigated by keeping the host-function set tiny and routing Aegis-owned effects through `HostEffectContext`. Raw `execute_host_call` closures remain exposed to this |
 | Hand-rolled path checks instead of cap-std | **High** | Bypassable via `..`, symlinks, TOCTOU — use cap-std preopens for Model A |
 | Policy evaluated after capability minted | **High** | Pipeline order violation; denied calls must never get a `Store` |
 | Hung Model B I/O ignoring epoch | **Medium** | Wall-clock timeout + cancellation token required for host I/O |

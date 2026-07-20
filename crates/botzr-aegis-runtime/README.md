@@ -26,6 +26,17 @@ rt.register(manifest, wasm_bytes)?;
 let output = rt.execute_tool_call(tool_id, sha256_hex(input), input)?;
 ```
 
+## Model B host effects
+
+Host tools (Model B) run their effect in host Rust, so the sandbox protects
+nothing. Use `HostEffectContext` — it checks the grant before every effect it
+owns (`http_get`, `open_read`, `open_write_append`, `log_emit`) and reaches the
+filesystem only through cap-std `Dir` handles opened from the grant.
+
+`Runtime::execute_host_call`'s raw closure is a **research escape hatch**: the
+runtime checks nothing before it runs, so the closure author owns enforcement.
+Neither path is sandbox isolation — see [`docs/threat-model.md`](../../docs/threat-model.md) §3.
+
 ## Guarantees
 
 - **Short-circuit:** a policy denial never reaches capability or sandbox
