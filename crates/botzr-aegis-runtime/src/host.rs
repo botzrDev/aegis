@@ -66,6 +66,14 @@ impl Runtime {
     /// The `effect` closure receives the minted grant and must enforce it before
     /// any host-side I/O. Sandbox is not invoked.
     ///
+    /// **Research escape hatch:** production / Aegis-owned effects must use
+    /// [`HostEffectContext`](crate::HostEffectContext), which enforces the grant
+    /// structurally. Grant enforcement for a raw closure passed here is the
+    /// caller's responsibility — the runtime checks nothing before the effect
+    /// runs, and applies only the output cap after it returns. This API is kept
+    /// for research and experiment wiring; it is not a supported way to ship an
+    /// effect.
+    ///
     /// Model B adapter: the shared [`Runtime::drive_pipeline`] owns policy,
     /// capability, output-cap, and audit; this method only supplies the host
     /// effect as the execution step.

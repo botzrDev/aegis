@@ -1,7 +1,6 @@
 //! AEG-20 integration tests — allow + deny paths with audit records.
 
-use botzr_aegis_core::ToolId;
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_core::{AegisError, ToolId};
 use botzr_aegis_runtime::{sha256_hex, HostCallRequest, HostEffectContext, Runtime};
 use dreamd_poc::{
     append_node_effect, init_agent_store, policy_engine, register_dreamd_tools,
@@ -87,8 +86,10 @@ fn append_personal_denied_without_owner_role() {
         )
         .unwrap_err();
 
+    // AEG-42 typed surface: a policy station denial, not a stringly error.
     assert!(
-        err.contains("no matching rule (default deny)") || err.contains("personal"),
+        matches!(&err, AegisError::PolicyDenied { reason }
+            if reason.contains("no matching rule (default deny)") || reason.contains("personal")),
         "unexpected: {err}"
     );
 
@@ -213,7 +214,7 @@ fn dream_consolidation_requires_approval() {
         .unwrap_err();
 
     assert!(
-        err.starts_with("policy pending approval:"),
+        matches!(err, AegisError::PendingApproval { .. }),
         "unexpected: {err}"
     );
 }

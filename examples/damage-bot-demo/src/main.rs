@@ -32,7 +32,10 @@ fn main() -> Result<(), String> {
     .map_err(|e| format!("register: {e}"))?;
 
     // Execute a benign call (damage-bot behaves unless told to attack).
-    let output = rt.execute_tool_call(ToolId::new("damage-bot"), "default-input".into(), b"{}")?;
+    // AEG-42 typed surface: render the error for this demo's `String` main.
+    let output = rt
+        .execute_tool_call(ToolId::new("damage-bot"), "default-input".into(), b"{}")
+        .map_err(|e| format!("execute: {e}"))?;
     println!("damage-bot output: {}", String::from_utf8_lossy(&output));
     println!("audit log at: {}", rt.audit().path().display());
     Ok(())

@@ -8,7 +8,6 @@
 //! Private grant-helper functions (`grant_allows_*`, `resolve_target_path`,
 //! `path_is_under`) have been removed — the context owns all grant enforcement.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
@@ -158,17 +157,12 @@ pub fn append_node_effect(
         reason: format!("invalid append_node JSON: {e}"),
     })?;
 
+    // Paths are relative to the granted `.agent` preopen — the context owns
+    // resolution (and parent creation) inside that Dir. No ambient std::fs.
     let rel = match req.zone {
-        AppendZone::Episodic => PathBuf::from(".agent/episodic/AGENT_LEARNINGS.jsonl"),
-        AppendZone::Personal => PathBuf::from(".agent/personal/notes.jsonl"),
+        AppendZone::Episodic => PathBuf::from("episodic/AGENT_LEARNINGS.jsonl"),
+        AppendZone::Personal => PathBuf::from("personal/notes.jsonl"),
     };
-
-    // Create parent directory if needed (within grant, safe to use std::fs).
-    if let Some(parent) = rel.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| HostEffectError::Failed {
-            reason: format!("mkdir {}: {e}", parent.display()),
-        })?;
-    }
 
     let mut file = ctx.open_write_append(&rel)?;
 
@@ -190,7 +184,12 @@ pub fn append_node_effect(
     let out = AppendOutput {
         id: id.clone(),
         timestamp,
-        path: rel.to_string_lossy().into_owned(),
+        // Report the project-relative path the MCP contract advertises, not
+        // the preopen-relative one used for the effect.
+        path: Path::new(".agent")
+            .join(&rel)
+            .to_string_lossy()
+            .into_owned(),
     };
     serde_json::to_vec(&out).map_err(|e| HostEffectError::Failed {
         reason: format!("serialize response: {e}"),
@@ -206,7 +205,8 @@ pub fn search_nodes_effect(
         reason: format!("invalid search_nodes JSON: {e}"),
     })?;
 
-    let target = PathBuf::from(".agent/episodic/AGENT_LEARNINGS.jsonl");
+    // Preopen-relative: the granted root is the project's `.agent` directory.
+    let target = PathBuf::from("episodic/AGENT_LEARNINGS.jsonl");
     let text = match ctx.open_read(&target) {
         Ok(mut file) => {
             let mut s = String::new();
