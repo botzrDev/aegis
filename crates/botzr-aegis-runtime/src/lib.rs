@@ -1,5 +1,6 @@
 //! Library-mode entry point — wires the enforcement pipeline in load-bearing order.
 
+mod build;
 mod digest;
 mod error;
 pub mod host;
@@ -9,17 +10,77 @@ mod pipeline;
 use std::collections::HashMap;
 
 use botzr_aegis_audit::AuditWriter;
-use botzr_aegis_capability::{CapabilityResolver, ToolManifest};
+use botzr_aegis_capability::{CapabilityResolver, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId, PIPELINE_STAGES};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
 use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine, SandboxRun};
 
 use crate::pipeline::ExecutionStep;
 
+pub use build::{BuildError, RuntimeBuilder};
 pub use digest::sha256_hex;
 pub use error::RegisterError;
 pub use host::{HostCallRequest, HostEffectError};
 pub use host_effect::{HostEffectContext, HttpStubResponse, LogLevel};
+
+/// A Model B effect, stored in the runtime registry at registration time.
+///
+/// The handler receives the AEG-43 authority choke point
+/// ([`HostEffectContext`]) rather than a raw grant, so every effect it performs
+/// goes through structural grant enforcement. Registering the handler up front
+/// is what makes Model B registration atomic: authority (manifest) and effect
+/// (handler) can no longer be written independently.
+pub type HostHandler =
+    Box<dyn Fn(&HostEffectContext<'_>, &[u8]) -> Result<Vec<u8>, HostEffectError> + Send + Sync>;
+
+/// The executable artifact a tool is registered with.
+///
+/// Which variant is legal is decided by the manifest's
+/// [`ToolKind`]: `Wasm` accepts [`Self::WasmComponent`] or
+/// [`Self::WasmFixture`], `Host` accepts [`Self::HostHandler`]. Anything else
+/// is a [`RegisterError::KindMismatch`] at registration time.
+pub enum ToolExecutable {
+    /// A WIT-world component invoked through its `run` export (Model A).
+    WasmComponent(Vec<u8>),
+    /// A raw WASM component with no WIT world, invoked through `entry_export`
+    /// (deny-suite and resource-cap fixtures).
+    WasmFixture {
+        bytes: Vec<u8>,
+        entry_export: String,
+    },
+    /// A host-side effect (Model B) — no sandbox isolation, capability check
+    /// and audit only.
+    HostHandler(HostHandler),
+}
+
+impl ToolExecutable {
+    /// Human-readable variant name for [`RegisterError::KindMismatch`].
+    fn label(&self) -> &'static str {
+        match self {
+            Self::WasmComponent(_) => "WasmComponent",
+            Self::WasmFixture { .. } => "WasmFixture",
+            Self::HostHandler(_) => "HostHandler",
+        }
+    }
+}
+
+/// One tool's entry in the runtime registry — authority kind plus executable.
+struct ToolRegistration {
+    /// The manifest's declared kind, proven consistent with `slot` by
+    /// [`Runtime::register_tool`].
+    kind: ToolKind,
+    slot: ExecutableSlot,
+}
+
+/// The prepared, ready-to-invoke form of a [`ToolExecutable`].
+enum ExecutableSlot {
+    Wasm(PreparedTool),
+    WasmFixture {
+        prepared: PreparedFixture,
+        export: String,
+    },
+    Host(HostHandler),
+}
 
 /// Runtime configuration.
 pub struct Runtime {
@@ -27,13 +88,10 @@ pub struct Runtime {
     capabilities: CapabilityResolver,
     sandbox: SandboxEngine,
     audit: AuditWriter,
-    prepared: HashMap<ToolId, PreparedTool>,
-    fixtures: HashMap<ToolId, FixtureRegistration>,
-}
-
-struct FixtureRegistration {
-    prepared: PreparedFixture,
-    export: String,
+    /// Single registry: a tool id is present here **iff** its manifest was
+    /// written to the capability resolver (AEG-44). Replaces the former
+    /// `prepared` + `fixtures` maps, which could disagree with the resolver.
+    tools: HashMap<ToolId, ToolRegistration>,
 }
 
 impl Runtime {
@@ -63,60 +121,131 @@ impl Runtime {
         &self.audit
     }
 
-    /// Access the capability resolver for tool registration.
-    pub fn capabilities(&mut self) -> &mut CapabilityResolver {
+    /// Read-only view of the capability resolver (e.g. for introspection).
+    ///
+    /// Mutation is deliberately not exposed: writing a manifest without its
+    /// executable is the split-authority state [`Runtime::register_tool`]
+    /// exists to prevent.
+    pub fn capabilities(&self) -> &CapabilityResolver {
+        &self.capabilities
+    }
+
+    /// Crate-internal mutable access — the only writer is `register_tool`.
+    pub(crate) fn capabilities_mut(&mut self) -> &mut CapabilityResolver {
         &mut self.capabilities
+    }
+
+    /// **The** registration path: atomically associate a tool's manifest
+    /// (authority) with its executable artifact.
+    ///
+    /// Every check runs before any mutation, so a failed registration leaves
+    /// the runtime exactly as it was — no manifest without an executable, no
+    /// executable without authority. Checks, in order:
+    ///
+    /// 1. duplicate tool id → [`RegisterError::DuplicateTool`]
+    /// 2. manifest [`ToolKind`] vs. [`ToolExecutable`] variant →
+    ///    [`RegisterError::KindMismatch`]
+    /// 3. `manifest.sha256` pin against the WASM bytes (G10) →
+    ///    [`RegisterError::Sha256Mismatch`]; a pin is meaningless for a host
+    ///    handler and is ignored there
+    /// 4. sandbox prepare → [`RegisterError::SandboxPrepare`]
+    ///
+    /// Only after all four does it write the manifest and the executable slot,
+    /// together.
+    pub fn register_tool(
+        &mut self,
+        manifest: ToolManifest,
+        executable: ToolExecutable,
+    ) -> Result<(), RegisterError> {
+        // 1 — duplicate. Re-registration would let authority and executable be
+        // swapped independently; refuse instead of silently replacing.
+        if self.tools.contains_key(&manifest.tool.id) {
+            return Err(RegisterError::DuplicateTool {
+                tool_id: manifest.tool.id.to_string(),
+            });
+        }
+
+        // 2 — kind match. A Host manifest must never own a prepared component,
+        // and a Wasm manifest must never own a host effect.
+        let kind = manifest.tool.kind;
+        let matches_kind = matches!(
+            (kind, &executable),
+            (
+                ToolKind::Wasm,
+                ToolExecutable::WasmComponent(_) | ToolExecutable::WasmFixture { .. }
+            ) | (ToolKind::Host, ToolExecutable::HostHandler(_))
+        );
+        if !matches_kind {
+            return Err(RegisterError::KindMismatch {
+                declared: format!("{kind:?}"),
+                provided: executable.label(),
+            });
+        }
+
+        // 3 + 4 — digest pin then sandbox prepare, both still before any write.
+        let slot = match executable {
+            ToolExecutable::WasmComponent(bytes) => {
+                verify_sha256(&manifest, &bytes)?;
+                let prepared = self
+                    .sandbox
+                    .prepare(&bytes)
+                    .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
+                ExecutableSlot::Wasm(prepared)
+            }
+            ToolExecutable::WasmFixture {
+                bytes,
+                entry_export,
+            } => {
+                verify_sha256(&manifest, &bytes)?;
+                let prepared = self
+                    .sandbox
+                    .prepare_fixture(&bytes)
+                    .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
+                ExecutableSlot::WasmFixture {
+                    prepared,
+                    export: entry_export,
+                }
+            }
+            // No bytes to pin; `manifest.sha256` (if set) is ignored for Model B.
+            ToolExecutable::HostHandler(handler) => ExecutableSlot::Host(handler),
+        };
+
+        // 5 — both writes together. Nothing above this line mutated `self`.
+        let tool_id = manifest.tool.id.clone();
+        self.capabilities_mut().register(manifest);
+        self.tools.insert(tool_id, ToolRegistration { kind, slot });
+        Ok(())
     }
 
     /// Register a tool manifest and its WASM component bytes.
     ///
     /// When `manifest.sha256` is set, the digest must match `component_bytes`
     /// (G10). The component is prepared once and cached for repeat calls.
+    /// Thin wrapper over [`Runtime::register_tool`].
     pub fn register(
         &mut self,
         manifest: ToolManifest,
         component_bytes: Vec<u8>,
     ) -> Result<(), RegisterError> {
-        if let Some(expected) = &manifest.sha256 {
-            let actual = sha256_hex(&component_bytes);
-            if &actual != expected {
-                return Err(RegisterError::Sha256Mismatch {
-                    expected: expected.clone(),
-                    actual,
-                });
-            }
-        }
-
-        let prepared = self
-            .sandbox
-            .prepare(&component_bytes)
-            .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
-        self.capabilities.register(manifest.clone());
-        self.prepared.insert(manifest.tool.id.clone(), prepared);
-        Ok(())
+        self.register_tool(manifest, ToolExecutable::WasmComponent(component_bytes))
     }
 
     /// Register a raw WASM fixture (no WIT `run` export) for deny-suite and
     /// resource-cap tests. `entry_export` is the component export to invoke.
+    /// Thin wrapper over [`Runtime::register_tool`].
     pub fn register_fixture(
         &mut self,
         manifest: ToolManifest,
         component_bytes: Vec<u8>,
         entry_export: impl Into<String>,
     ) -> Result<(), RegisterError> {
-        let prepared = self
-            .sandbox
-            .prepare_fixture(&component_bytes)
-            .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
-        self.capabilities.register(manifest.clone());
-        self.fixtures.insert(
-            manifest.tool.id.clone(),
-            FixtureRegistration {
-                prepared,
-                export: entry_export.into(),
+        self.register_tool(
+            manifest,
+            ToolExecutable::WasmFixture {
+                bytes: component_bytes,
+                entry_export: entry_export.into(),
             },
-        );
-        Ok(())
+        )
     }
 
     /// Register using bytes loaded from `manifest.component_path` relative to
@@ -137,41 +266,69 @@ impl Runtime {
     ///
     /// Model A adapter: the shared [`Runtime::drive_pipeline`] owns policy,
     /// capability, output-cap, and audit; this method only supplies the wasmtime
-    /// execution step and Model A's caller error string.
-    pub fn execute_tool_call(
-        &self,
-        tool_id: ToolId,
-        input_digest: String,
-        input: &[u8],
-    ) -> Result<Vec<u8>, AegisError> {
+    /// execution step and Model A's caller error string. The audited
+    /// `input_digest` is derived from `input` inside the pipeline — callers
+    /// cannot supply one.
+    ///
+    /// A Model B host tool reaching this entry point fails closed: use
+    /// [`Runtime::execute_host_call`].
+    pub fn execute_tool_call(&self, tool_id: ToolId, input: &[u8]) -> Result<Vec<u8>, AegisError> {
         let policy_request = PolicyRequest::for_tool(&tool_id);
         self.drive_pipeline(
             tool_id.clone(),
-            input_digest,
+            input,
             &policy_request,
             // Execution step: run the prepared component or fixture in the
             // wasmtime sandbox. A tool that was never registered here is a host
             // denial. The sandbox reports metrics on every run (success or trap).
-            |grant| {
-                if let Some(prepared) = self.prepared.get(&tool_id) {
-                    let run = self.sandbox.execute(prepared, grant, input);
-                    sandbox_step(run)
-                } else if let Some(fixture) = self.fixtures.get(&tool_id) {
-                    let run =
-                        self.sandbox
-                            .execute_fixture(&fixture.prepared, grant, &fixture.export);
-                    sandbox_step(run)
-                } else {
-                    ExecutionStep::Failed {
-                        outcome: ExecutionOutcome::HostDenied {
-                            reason: "tool not registered in runtime".into(),
+            |grant| match self.tools.get(&tool_id) {
+                Some(registration) => {
+                    // Routing is on the slot alone; `register_tool` already
+                    // proved the slot agrees with the declared kind.
+                    debug_assert_eq!(
+                        matches!(registration.slot, ExecutableSlot::Host(_)),
+                        matches!(registration.kind, ToolKind::Host),
+                        "registration kind and executable slot must agree",
+                    );
+                    match &registration.slot {
+                        ExecutableSlot::Wasm(prepared) => {
+                            sandbox_step(self.sandbox.execute(prepared, grant, input))
+                        }
+                        ExecutableSlot::WasmFixture { prepared, export } => {
+                            sandbox_step(self.sandbox.execute_fixture(prepared, grant, export))
+                        }
+                        ExecutableSlot::Host(_) => ExecutionStep::Failed {
+                            outcome: ExecutionOutcome::HostDenied {
+                                reason: "host tool must be invoked via execute_host_call".into(),
+                            },
+                            metrics: None,
                         },
-                        metrics: None,
                     }
                 }
+                None => ExecutionStep::Failed {
+                    outcome: ExecutionOutcome::HostDenied {
+                        reason: "tool not registered in runtime".into(),
+                    },
+                    metrics: None,
+                },
             },
         )
     }
+}
+
+/// Verify a manifest's optional SHA-256 pin against the artifact bytes (G10).
+fn verify_sha256(manifest: &ToolManifest, bytes: &[u8]) -> Result<(), RegisterError> {
+    let Some(expected) = &manifest.sha256 else {
+        return Ok(());
+    };
+    let actual = sha256_hex(bytes);
+    if &actual != expected {
+        return Err(RegisterError::Sha256Mismatch {
+            expected: expected.clone(),
+            actual,
+        });
+    }
+    Ok(())
 }
 
 /// Map a sandbox run into the driver's execution step, preserving metrics on
@@ -196,8 +353,7 @@ impl Default for Runtime {
             capabilities: CapabilityResolver::new(),
             sandbox: SandboxEngine::default(),
             audit: AuditWriter::open_temp().expect("temp audit sink must open"),
-            prepared: HashMap::new(),
-            fixtures: HashMap::new(),
+            tools: HashMap::new(),
         }
     }
 }
@@ -278,7 +434,7 @@ rules:
 "#;
         let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
         let err = rt
-            .execute_tool_call(ToolId::new("smoke"), "deadbeef".into(), b"{}")
+            .execute_tool_call(ToolId::new("smoke"), b"{}")
             .unwrap_err();
         // Policy reason surfaces — proves station 1 rejected, not capability.
         assert_eq!(
@@ -310,7 +466,7 @@ rules:
 "#;
         let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
         let err = rt
-            .execute_tool_call(ToolId::new("smoke"), "deadbeef".into(), b"{}")
+            .execute_tool_call(ToolId::new("smoke"), b"{}")
             .unwrap_err();
         assert!(
             matches!(err, AegisError::PendingApproval { ref approval_id } if approval_id.starts_with("apr-gate-smoke-smoke-")),
@@ -338,7 +494,7 @@ rules:
 
         let input = b"hello-aegis";
         let out = rt
-            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .execute_tool_call(ToolId::new("echo"), input)
             .expect("echo run succeeds");
         assert_eq!(out, input);
 
@@ -368,7 +524,7 @@ rules:
         let input = b"hello-aegis";
         assert!(input.len() > 8);
         let err = rt
-            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .execute_tool_call(ToolId::new("echo"), input)
             .unwrap_err();
         assert_eq!(
             err,
@@ -407,7 +563,7 @@ rules:
         rt.register(manifest, wasm.to_vec()).expect("register echo");
 
         let out = rt
-            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .execute_tool_call(ToolId::new("echo"), input)
             .expect("payload at the cap succeeds");
         assert_eq!(out, input);
     }
@@ -434,7 +590,7 @@ rules:
 
         let input = b"a normal, well-under-1-MiB tool payload";
         let out = rt
-            .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+            .execute_tool_call(ToolId::new("echo"), input)
             .expect("normal payload under default cap succeeds");
         assert_eq!(out, input);
     }

@@ -48,16 +48,22 @@ impl Runtime {
     /// execution adapter. Error construction is station-aware: policy deny →
     /// `PolicyDenied`, capability deny → `CapabilityDenied`, execution trap →
     /// `Trap`, and so on.
+    ///
+    /// The audited `input_digest` is computed here from the exact `input` bytes
+    /// the execution step will see (AEG-44 §3.C) — no public API accepts a
+    /// caller-supplied digest, so audit cannot be made to lie about the payload.
     pub(crate) fn drive_pipeline<E>(
         &self,
         tool_id: ToolId,
-        input_digest: String,
+        input: &[u8],
         policy_request: &PolicyRequest<'_>,
         execute_step: E,
     ) -> Result<Vec<u8>, AegisError>
     where
         E: FnOnce(&CapabilityGrant) -> ExecutionStep,
     {
+        let input_digest = crate::sha256_hex(input);
+
         let mut session =
             CallSession::begin(&self.audit, tool_id.clone(), input_digest).map_err(|e| {
                 AegisError::Audit {
@@ -190,8 +196,12 @@ mod tests {
     }
 
     /// Register `tool` with an explicit output cap so a granted call is possible.
+    ///
+    /// These tests drive `drive_pipeline` with their own execution step, so the
+    /// stored handler is never invoked — it exists only because registration is
+    /// atomic now: manifest authority cannot be written without an executable.
     fn register_capped(rt: &mut Runtime, tool: &ToolId, max_output_bytes: u64) {
-        rt.capabilities().register(
+        rt.register_tool(
             ToolManifest::new(
                 ToolInfo {
                     id: tool.clone(),
@@ -204,7 +214,9 @@ mod tests {
                 max_output_bytes,
                 ..ToolLimits::default()
             }),
-        );
+            crate::ToolExecutable::HostHandler(Box::new(|_ctx, input| Ok(input.to_vec()))),
+        )
+        .expect("register host tool");
     }
 
     #[test]
@@ -229,7 +241,7 @@ rules:
         let err = rt
             .drive_pipeline(
                 tool.clone(),
-                "digest".into(),
+                b"digest-input",
                 &PolicyRequest::for_tool(&tool),
                 |_grant| {
                     called.set(true);
@@ -271,7 +283,7 @@ rules:
         let err = rt
             .drive_pipeline(
                 tool.clone(),
-                "digest".into(),
+                b"digest-input",
                 &PolicyRequest::for_tool(&tool),
                 |_grant| {
                     called.set(true);
@@ -308,7 +320,7 @@ rules:
         let out = rt
             .drive_pipeline(
                 tool.clone(),
-                "digest".into(),
+                b"digest-input",
                 &PolicyRequest::for_tool(&tool),
                 |_grant| {
                     calls.set(calls.get() + 1);
@@ -339,7 +351,7 @@ rules:
         let err = rt
             .drive_pipeline(
                 tool.clone(),
-                "digest".into(),
+                b"digest-input",
                 &PolicyRequest::for_tool(&tool),
                 |_grant| ExecutionStep::Produced {
                     bytes: vec![b'x'; 100],
@@ -374,7 +386,7 @@ rules:
         let err = rt
             .drive_pipeline(
                 tool.clone(),
-                "digest".into(),
+                b"digest-input",
                 &PolicyRequest::for_tool(&tool),
                 |_grant| ExecutionStep::Failed {
                     outcome: ExecutionOutcome::HostDenied {

@@ -37,7 +37,7 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
         .expect("register spin fixture");
 
     let err = rt
-        .execute_tool_call(ToolId::new("spin"), "deadbeef".into(), b"{}")
+        .execute_tool_call(ToolId::new("spin"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
@@ -83,7 +83,7 @@ fn golden_resource_exceeded_orchestrator_shape() {
         .expect("register spin fixture");
 
     let _ = rt
-        .execute_tool_call(ToolId::new("spin"), "0badf00d".into(), b"{}")
+        .execute_tool_call(ToolId::new("spin"), b"{}")
         .unwrap_err();
 
     let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
@@ -92,6 +92,10 @@ fn golden_resource_exceeded_orchestrator_shape() {
         .map(str::to_owned)
         .collect();
     let mut record: AuditRecord = serde_json::from_str(&lines[1]).expect("outcome parses");
+
+    // The digest is *not* normalized: since AEG-44 it is derived inside the
+    // runtime from the input bytes, so the golden pins sha256_hex(b"{}").
+    assert_eq!(record.input_digest, botzr_aegis_runtime::sha256_hex(b"{}"));
 
     // Normalize volatile / sequential fields for the schema golden (R5 contract).
     record.call_id = "call-golden-orchestrator".into();
