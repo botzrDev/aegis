@@ -152,8 +152,19 @@ The enforcement pipeline is wired and tested end-to-end; demos, benchmarks, and 
 threat model are published. The first packaging tag —
 [**`v0.1.0`**](https://github.com/botzrDev/aegis/releases/tag/v0.1.0) — is cut. The
 `aegis` CLI supports `aegis run` for one-shot WASM execution through the pipeline.
-The crates are not published to crates.io yet; build from
-[`main`](https://github.com/botzrDev/aegis) or the tag.
+Eight crates are published on [crates.io](https://crates.io/search?q=botzr-aegis) —
+`core`, `policy`, `capability`, `sandbox`, `runtime`, `audit`, `mcp`, `cli` — and the
+dependency graph resolves, so the CLI installs directly:
+
+```sh
+cargo install botzr-aegis-cli
+```
+
+Building from [`main`](https://github.com/botzrDev/aegis) or the tag still works, and is
+what you want for the in-repo demos and benchmark harnesses.
+
+A ninth name, `botzr-aegis-sidecar`, is yanked and retired: the Phase 2 gateway is MCP
+over stdio, so use `botzr-aegis-mcp` instead.
 
 ## License
 
