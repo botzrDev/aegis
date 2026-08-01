@@ -42,7 +42,8 @@ pub fn register_tool(&mut self, manifest: ToolManifest, executable: ToolExecutab
 
 pub enum ToolExecutable {
     WasmComponent(Vec<u8>),                                // Model A, WIT `run` export
-    WasmFixture { bytes: Vec<u8>, entry_export: String },  // raw WASM, no WIT world
+    #[cfg(feature = "test-utils")]                         // raw WASM, no WIT world
+    WasmFixture { bytes: Vec<u8>, entry_export: String },
     HostHandler(HostHandler),                              // Model B host effect
 }
 
@@ -56,18 +57,28 @@ a failed registration leaves the runtime exactly as it was. There is no way
 through the public API to grant a manifest without an executable, or to install
 an executable without authority.
 
-Kind and executable must agree: `ToolKind::Wasm` accepts `WasmComponent` or
-`WasmFixture`; `ToolKind::Host` accepts `HostHandler`. Anything else is
-`RegisterError::KindMismatch`. A tool id registers exactly once —
-re-registration is `RegisterError::DuplicateTool`, not a silent replace.
+Kind and executable must agree: `ToolKind::Wasm` accepts `WasmComponent` (or,
+under the `test-utils` feature, `WasmFixture`); `ToolKind::Host` accepts
+`HostHandler`. Anything else is `RegisterError::KindMismatch`. A tool id
+registers exactly once — re-registration is `RegisterError::DuplicateTool`, not
+a silent replace.
 
 Three thin wrappers cover the common cases:
 
 | Wrapper | Executable it builds |
 |---|---|
 | `register(manifest, component_bytes)` | `WasmComponent` |
-| `register_fixture(manifest, component_bytes, entry_export)` | `WasmFixture` |
+| `register_fixture(manifest, component_bytes, entry_export)` *(`test-utils` only)* | `WasmFixture` |
 | `register_from_manifest(manifest)` | `WasmComponent`, bytes read from `base_dir.join(component_path)` |
+
+### The `test-utils` feature
+
+`WasmFixture` / `register_fixture` are raw-component fixture APIs for the
+deny-suite and resource-cap tests: they instantiate a component that never
+declared the WIT `tool` world. They are **off by default** and only exist when
+the `test-utils` feature is enabled (which also turns on
+`botzr-aegis-sandbox/test-utils`). A default-features build has no fixture
+registration path at all.
 
 ```rust
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
@@ -158,7 +169,8 @@ let output = rt.execute_host_call(HostCallRequest::new(
 
 The handler is the one stored at registration time; it receives a
 `HostEffectContext` built from the minted grant, never a raw grant. Sandbox is
-not invoked (`host_pipeline_stages()` is `policy → capability → audit`). A WASM
+not invoked (`botzr_aegis_core::HOST_PIPELINE_STAGES` is
+`policy → capability → audit`). A WASM
 tool reaching this entry point fails closed, as does an unregistered tool.
 `HostCallRequest` has no `input_digest` field for the same reason as Model A.
 

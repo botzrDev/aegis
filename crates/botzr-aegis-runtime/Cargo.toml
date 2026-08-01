@@ -14,6 +14,12 @@ categories = ["development-tools"]
 [lints]
 workspace = true
 
+[features]
+# Raw-WASM-fixture registration for the deny-suite and resource-cap tests.
+# Off by default; pulls the sandbox's matching gate so the fixture path is
+# genuinely absent from a production build rather than merely undocumented.
+test-utils = ["botzr-aegis-sandbox/test-utils"]
+
 [dependencies]
 botzr-aegis-audit = { workspace = true }
 botzr-aegis-capability = { workspace = true }
@@ -25,6 +31,10 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# Self dev-dependency so this crate's own integration tests
+# (tests/registration.rs, tests/resource_orchestrator.rs) can reach the
+# `test-utils`-gated fixture API.
+botzr-aegis-runtime = { path = ".", features = ["test-utils"] }
 botzr-aegis-audit = { workspace = true }
 criterion = { workspace = true }
 serde_json = { workspace = true }

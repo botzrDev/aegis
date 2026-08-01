@@ -46,6 +46,10 @@ fn capability_resolve(c: &mut Criterion) {
 
     let tool_id = ToolId::new("reader");
     let mut resolver = CapabilityResolver::new();
+    // Benching capability resolution in isolation — deliberately not through
+    // `Runtime::register_tool`, which would add sandbox prepare to the measured
+    // path. The split-authority concern does not apply to a throwaway resolver.
+    #[allow(deprecated)]
     resolver.register(fixture_manifest("reader", dir.path()));
 
     let mut group = c.benchmark_group("capability_resolve");

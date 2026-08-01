@@ -1,7 +1,7 @@
 //! Policy engine — station 1 of the enforcement pipeline (**POLICY** →
 //! CAPABILITY → SANDBOX → AUDIT).
 //!
-//! YAML is parsed **once** into an immutable [`PolicySet`] held behind an
+//! YAML is parsed **once** into an immutable (crate-internal) `PolicySet` held behind an
 //! [`arc_swap::ArcSwap`] inside [`PolicyEngine`]; evaluation is synchronous,
 //! lock-light, and targets <100 µs (never parses at call time — anti-pattern
 //! #7). Conflict resolution follows G5 (deny-overrides · most-specific ·
@@ -15,17 +15,20 @@ mod parse;
 mod ratelimit;
 mod set;
 
+// Supported consumer surface. The compiled AST (`PolicySet`, `Rule`,
+// `Matcher`, `RateSpec`, `RuleKind`, `DefaultAction`), the rate-limiter, and
+// the YAML parser are deliberately crate-internal: they are an implementation
+// of G5 conflict resolution, not an API consumers pin against.
 pub use botzr_aegis_core::ResourceCeiling;
 pub use engine::{PolicyEngine, ReloadOutcome, ReloadSource};
 pub use error::PolicyError;
 pub use eval::{PolicyDecision, PolicyRequest};
-pub use parse::{parse_str, SUPPORTED_POLICY_VERSION};
-pub use ratelimit::RateLimiter;
-pub use set::{DefaultAction, Matcher, PolicySet, RateSpec, Rule, RuleKind};
+pub use parse::SUPPORTED_POLICY_VERSION;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::set::DefaultAction;
     use botzr_aegis_core::{PolicyAction, ToolId};
 
     fn deny_yaml() -> &'static str {

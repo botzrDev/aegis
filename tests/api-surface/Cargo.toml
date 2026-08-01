@@ -1,0 +1,27 @@
+[package]
+name = "aegis-api-surface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Deliberately NORMAL dependencies, and deliberately declared with explicit
+# paths rather than `workspace = true`: trybuild derives the throwaway crate's
+# manifest from this table, and it resolves plain path dependencies reliably.
+#
+# Load-bearing: NOTHING here enables `test-utils`. That absence is the whole
+# point of the `*_needs_test_utils` case — see tests/api_surface.rs.
+[dependencies]
+botzr-aegis-capability = { path = "../../crates/botzr-aegis-capability" }
+botzr-aegis-core = { path = "../../crates/botzr-aegis-core" }
+botzr-aegis-policy = { path = "../../crates/botzr-aegis-policy" }
+botzr-aegis-runtime = { path = "../../crates/botzr-aegis-runtime" }
+botzr-aegis-sandbox = { path = "../../crates/botzr-aegis-sandbox" }
+
+[dev-dependencies]
+trybuild = "1"

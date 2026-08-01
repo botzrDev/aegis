@@ -57,6 +57,10 @@ fn registered_tool_mints_grant() {
 
     let manifest = fixture_manifest("reader", dir.path());
     let mut resolver = CapabilityResolver::new();
+    // Unit-testing the resolver in isolation; `Runtime::register_tool` would
+    // drag the sandbox into a capability test. No executable is paired with this
+    // throwaway resolver, so the split-authority concern does not apply.
+    #[allow(deprecated)]
     resolver.register(manifest);
 
     match resolver.resolve(&ToolId::new("reader")) {

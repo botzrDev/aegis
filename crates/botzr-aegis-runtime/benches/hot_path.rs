@@ -58,6 +58,10 @@ fn fixture_manifest(id: &str, base: &Path) -> ToolManifest {
 
 fn setup_resolver(tool_id: &str, base: &Path) -> CapabilityResolver {
     let mut resolver = CapabilityResolver::new();
+    // Benching capability resolution in isolation — deliberately not through
+    // `Runtime::register_tool`, which would add sandbox prepare to the measured
+    // path. The split-authority concern does not apply to a throwaway resolver.
+    #[allow(deprecated)]
     resolver.register(fixture_manifest(tool_id, base));
     resolver
 }

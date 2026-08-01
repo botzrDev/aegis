@@ -1,0 +1,27 @@
+error[E0599]: no variant named `WasmFixture` found for enum `ToolExecutable`
+  --> tests/ui/fixture_api_needs_test_utils.rs:21:29
+   |
+21 |     let _ = ToolExecutable::WasmFixture {
+   |                             ^^^^^^^^^^^ variant not found in `ToolExecutable`
+
+error[E0599]: no method named `register_fixture` found for struct `Runtime` in the current scope
+  --> tests/ui/fixture_api_needs_test_utils.rs:26:16
+   |
+26 |     let _ = rt.register_fixture(manifest, Vec::<u8>::new(), "go");
+   |                ^^^^^^^^^^^^^^^^
+   |
+help: there is a method `register` with a similar name, but with different arguments
+  --> $WORKSPACE/crates/botzr-aegis-runtime/src/lib.rs
+   |
+   | /     pub fn register(
+   | |         &mut self,
+   | |         manifest: ToolManifest,
+   | |         component_bytes: Vec<u8>,
+   | |     ) -> Result<(), RegisterError> {
+   | |__________________________________^
+
+error[E0599]: no method named `prepare_fixture` found for struct `SandboxEngine` in the current scope
+  --> tests/ui/fixture_api_needs_test_utils.rs:30:20
+   |
+30 |     let _ = engine.prepare_fixture(&[0u8][..]);
+   |                    ^^^^^^^^^^^^^^^ method not found in `SandboxEngine`

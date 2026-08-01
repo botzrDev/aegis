@@ -19,7 +19,10 @@ pub enum AuditPhase {
 /// Pre-execution intent line — appended before sandbox work begins.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuditIntent {
-    pub schema_version: AuditSchemaVersion,
+    /// Sealed: the schema version is owned by [`AuditIntent::new`], never the
+    /// caller. A record that could be stamped with an arbitrary version is a
+    /// forgeable audit trail. Read it with [`AuditIntent::schema_version`].
+    schema_version: AuditSchemaVersion,
     pub phase: AuditPhase,
     pub call_id: String,
     pub tool_id: ToolId,
@@ -40,6 +43,11 @@ impl AuditIntent {
             input_digest: input_digest.into(),
         }
     }
+
+    /// The schema version this record was stamped with at construction.
+    pub fn schema_version(&self) -> AuditSchemaVersion {
+        self.schema_version
+    }
 }
 
 /// Observed resource usage for a sandboxed call (R5).
@@ -52,7 +60,10 @@ pub struct CallMetrics {
 /// Post-execution outcome line — one per call, every exit path.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuditRecord {
-    pub schema_version: AuditSchemaVersion,
+    /// Sealed: the schema version is owned by [`AuditRecord::new`], never the
+    /// caller. A record that could be stamped with an arbitrary version is a
+    /// forgeable audit trail. Read it with [`AuditRecord::schema_version`].
+    schema_version: AuditSchemaVersion,
     pub phase: AuditPhase,
     pub call_id: String,
     pub tool_id: ToolId,
@@ -95,6 +106,11 @@ impl AuditRecord {
         self.wall_ms = Some(metrics.wall_ms);
         self.peak_memory_bytes = Some(metrics.peak_memory_bytes);
         self
+    }
+
+    /// The schema version this record was stamped with at construction.
+    pub fn schema_version(&self) -> AuditSchemaVersion {
+        self.schema_version
     }
 }
 

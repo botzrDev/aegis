@@ -3,11 +3,21 @@
 //! Host tools skip the WASM sandbox station; the grant is enforced by the
 //! effect handler before any I/O. Audit still wraps the full call.
 
-use botzr_aegis_core::{AegisError, ExecutionOutcome, ToolId, PIPELINE_STAGES};
+use botzr_aegis_core::{AegisError, ExecutionOutcome, ToolId};
 use botzr_aegis_policy::PolicyRequest;
 
 use crate::pipeline::ExecutionStep;
 use crate::{ExecutableSlot, HostEffectContext, Runtime};
+
+/// A WASM slot reached through the Model B entry point: fail closed.
+fn wasm_via_host_entry() -> ExecutionStep {
+    ExecutionStep::Failed {
+        outcome: ExecutionOutcome::HostDenied {
+            reason: "wasm tool must be invoked via execute_tool_call".into(),
+        },
+        metrics: None,
+    }
+}
 
 /// Policy axes + payload for a Model B host tool call.
 ///
@@ -50,11 +60,6 @@ impl HostEffectError {
             }
         }
     }
-}
-
-/// Pipeline stages for Model B (sandbox is not in the hot path).
-pub fn host_pipeline_stages() -> &'static [&'static str] {
-    &["policy", "capability", "audit"]
 }
 
 impl Runtime {
@@ -101,14 +106,9 @@ impl Runtime {
                             },
                         }
                     }
-                    ExecutableSlot::Wasm(_) | ExecutableSlot::WasmFixture { .. } => {
-                        ExecutionStep::Failed {
-                            outcome: ExecutionOutcome::HostDenied {
-                                reason: "wasm tool must be invoked via execute_tool_call".into(),
-                            },
-                            metrics: None,
-                        }
-                    }
+                    ExecutableSlot::Wasm(_) => wasm_via_host_entry(),
+                    #[cfg(feature = "test-utils")]
+                    ExecutableSlot::WasmFixture { .. } => wasm_via_host_entry(),
                 },
                 None => ExecutionStep::Failed {
                     outcome: ExecutionOutcome::HostDenied {
@@ -172,16 +172,11 @@ impl Runtime {
     }
 }
 
-/// Load-bearing WASM pipeline order (includes sandbox).
-pub fn wasm_pipeline_stages() -> &'static [&'static str] {
-    PIPELINE_STAGES
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-    use botzr_aegis_core::{AegisError, CapabilityGrant};
+    use botzr_aegis_core::{AegisError, CapabilityGrant, HOST_PIPELINE_STAGES};
 
     use crate::{HostHandler, ToolExecutable};
 
@@ -220,7 +215,7 @@ mod tests {
 
     #[test]
     fn host_pipeline_omits_sandbox() {
-        assert_eq!(host_pipeline_stages(), &["policy", "capability", "audit"]);
+        assert_eq!(HOST_PIPELINE_STAGES, &["policy", "capability", "audit"]);
     }
 
     #[test]

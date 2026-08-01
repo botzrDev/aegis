@@ -23,3 +23,8 @@ pub use tool::{ToolId, ToolKind};
 
 /// Load-bearing pipeline order (do not reorder).
 pub const PIPELINE_STAGES: &[&str] = &["policy", "capability", "sandbox", "audit"];
+
+/// Model B (host-effect) pipeline order — no sandbox station. Host tools run
+/// their effect in host Rust, so isolation comes from the capability grant
+/// and audit alone (do not reorder).
+pub const HOST_PIPELINE_STAGES: &[&str] = &["policy", "capability", "audit"];

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use botzr_aegis_core::{CapabilityGrant, ResourceCeiling};
 
-use crate::error::CapabilityError;
+use crate::error::{CapabilityError, EscalationAxis};
 use crate::manifest::{FsNeeds, NetNeeds, ToolManifest};
 use crate::mint::{http_need_allowed, mint_grant, path_need_allowed};
 
@@ -48,6 +48,7 @@ fn validate_fs_narrowing(
     for sub_read in &sub.read {
         if !any_path_allowed(&parent.read, sub_read, base)? {
             return Err(CapabilityError::Escalation {
+                axis: EscalationAxis::Fs,
                 detail: format!("fs.read escalation for path `{}`", sub_read.path),
             });
         }
@@ -56,6 +57,7 @@ fn validate_fs_narrowing(
     for sub_write in &sub.write {
         if !any_path_allowed(&parent.write, sub_write, base)? {
             return Err(CapabilityError::Escalation {
+                axis: EscalationAxis::Fs,
                 detail: format!("fs.write escalation for path `{}`", sub_write.path),
             });
         }
@@ -89,6 +91,7 @@ fn validate_net_narrowing(
     for sub_http in &sub.http {
         if !parent.http.iter().any(|p| http_need_allowed(p, sub_http)) {
             return Err(CapabilityError::Escalation {
+                axis: EscalationAxis::NetHttp,
                 detail: format!("net.http escalation for host `{}`", sub_http.host),
             });
         }
@@ -101,31 +104,44 @@ fn validate_net_narrowing(
 /// `parent` on every grant axis?" — the `max_memory_bytes` / `max_wall_ms` /
 /// `max_output_bytes` limits, filesystem read/write containment (component-aware),
 /// and net http host/ports/methods (⊆, case-insensitive methods). Returns
-/// `Ok(())` when `sub` is a subset, or `Err(detail)` naming the first axis on
-/// which `sub` escalates.
+/// `Ok(())` when `sub` is a subset, or `Err((axis, detail))` naming the first
+/// axis on which `sub` escalates — the axis is typed so audit consumers never
+/// parse the detail string.
 ///
 /// Both the public bool verifier [`grant_is_subset`] and the production
 /// narrowing guard [`ensure_grant_narrowed`] derive from this one function —
 /// there is no second, divergent axis comparison anywhere in the crate. A `sub`
 /// with `None` fs/net is always a subset; a `sub` with `Some` against a parent
 /// `None` escalates.
-fn check_grant_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> Result<(), String> {
+fn check_grant_subset(
+    parent: &CapabilityGrant,
+    sub: &CapabilityGrant,
+) -> Result<(), (EscalationAxis, String)> {
     if sub.max_memory_bytes > parent.max_memory_bytes {
-        return Err(format!(
-            "max_memory_bytes escalation: sub={} parent={}",
-            sub.max_memory_bytes, parent.max_memory_bytes
+        return Err((
+            EscalationAxis::Limits,
+            format!(
+                "max_memory_bytes escalation: sub={} parent={}",
+                sub.max_memory_bytes, parent.max_memory_bytes
+            ),
         ));
     }
     if sub.max_wall_ms > parent.max_wall_ms {
-        return Err(format!(
-            "max_wall_ms escalation: sub={} parent={}",
-            sub.max_wall_ms, parent.max_wall_ms
+        return Err((
+            EscalationAxis::Limits,
+            format!(
+                "max_wall_ms escalation: sub={} parent={}",
+                sub.max_wall_ms, parent.max_wall_ms
+            ),
         ));
     }
     if sub.max_output_bytes > parent.max_output_bytes {
-        return Err(format!(
-            "max_output_bytes escalation: sub={} parent={}",
-            sub.max_output_bytes, parent.max_output_bytes
+        return Err((
+            EscalationAxis::Limits,
+            format!(
+                "max_output_bytes escalation: sub={} parent={}",
+                sub.max_output_bytes, parent.max_output_bytes
+            ),
         ));
     }
 
@@ -140,10 +156,16 @@ fn check_grant_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> Result
                 .unwrap_or(false);
             let is_write = sub_fs.write_paths.iter().any(|w| w == path);
             if is_write && !in_parent_write {
-                return Err(format!("fs.write grant escalation for `{path}`"));
+                return Err((
+                    EscalationAxis::Fs,
+                    format!("fs.write grant escalation for `{path}`"),
+                ));
             }
             if !is_write && !in_parent_read && !in_parent_write {
-                return Err(format!("fs.read grant escalation for `{path}`"));
+                return Err((
+                    EscalationAxis::Fs,
+                    format!("fs.read grant escalation for `{path}`"),
+                ));
             }
         }
     }
@@ -169,9 +191,9 @@ fn check_grant_subset(parent: &CapabilityGrant, sub: &CapabilityGrant) -> Result
                     })
             });
             if !allowed {
-                return Err(format!(
-                    "net.http grant escalation for host `{}`",
-                    sub_http.host
+                return Err((
+                    EscalationAxis::NetHttp,
+                    format!("net.http grant escalation for host `{}`", sub_http.host),
                 ));
             }
         }
@@ -207,7 +229,8 @@ fn ensure_grant_narrowed(
     parent: &CapabilityGrant,
     sub: &CapabilityGrant,
 ) -> Result<(), CapabilityError> {
-    check_grant_subset(parent, sub).map_err(|detail| CapabilityError::Escalation { detail })
+    check_grant_subset(parent, sub)
+        .map_err(|(axis, detail)| CapabilityError::Escalation { axis, detail })
 }
 
 #[cfg(test)]
@@ -434,5 +457,77 @@ mod tests {
             ..bare_grant(1024)
         };
         assert!(grant_is_subset(&parent, &nested));
+    }
+
+    #[test]
+    fn escalation_axis_is_typed_per_raise_site() {
+        // AEG-45: `denied_capability` reads a typed axis set where the escalation
+        // was raised. It must not depend on the wording of `detail`.
+        let (dir, parent_manifest, parent_grant) = parent_fixture();
+
+        // fs axis
+        let fs_sub = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("fs-child"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Wasm,
+            },
+            dir.path(),
+        )
+        .with_fs(FsNeeds {
+            read: vec![],
+            write: vec![PathNeed::new("fixtures")],
+        });
+        let err = narrow_grant(
+            &parent_grant,
+            &parent_manifest,
+            &fs_sub,
+            "g",
+            ResourceCeiling::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            CapabilityError::Escalation {
+                axis: EscalationAxis::Fs,
+                ..
+            }
+        ));
+        assert_eq!(err.denied_capability(), "fs");
+
+        // net.http axis
+        let net_sub = ToolManifest::new(
+            ToolInfo {
+                id: ToolId::new("net-child"),
+                version: "0.1.0".into(),
+                kind: ToolKind::Host,
+            },
+            dir.path(),
+        )
+        .with_net(NetNeeds {
+            http: vec![HttpNeed::get("evil.example.com")],
+        });
+        let err = narrow_grant(
+            &parent_grant,
+            &parent_manifest,
+            &net_sub,
+            "g",
+            ResourceCeiling::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.denied_capability(), "net.http");
+
+        // limits axis — via the grant-level oracle, whose detail mentions no axis word
+        let parent = bare_grant(1024);
+        let over = bare_grant(1025);
+        let err = ensure_grant_narrowed(&parent, &over).unwrap_err();
+        assert!(matches!(
+            err,
+            CapabilityError::Escalation {
+                axis: EscalationAxis::Limits,
+                ..
+            }
+        ));
+        assert_eq!(err.denied_capability(), "limits");
     }
 }

@@ -19,7 +19,9 @@ mod host;
 mod limits;
 mod state;
 
-pub use engine::{PreparedFixture, PreparedTool, SandboxEngine, SandboxRun};
+#[cfg(feature = "test-utils")]
+pub use engine::PreparedFixture;
+pub use engine::{PreparedTool, SandboxEngine, SandboxRun};
 pub use error::SandboxError;
 pub use limits::MemoryLimiter;
 pub use state::ToolState;

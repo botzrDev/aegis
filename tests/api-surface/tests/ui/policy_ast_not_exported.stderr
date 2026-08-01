@@ -1,0 +1,10 @@
+error[E0432]: unresolved imports `botzr_aegis_policy::parse_str`, `botzr_aegis_policy::Matcher`, `botzr_aegis_policy::PolicySet`, `botzr_aegis_policy::RateLimiter`, `botzr_aegis_policy::Rule`
+ --> tests/ui/policy_ast_not_exported.rs:2:26
+  |
+2 | use botzr_aegis_policy::{parse_str, Matcher, PolicySet, RateLimiter, Rule};
+  |                          ^^^^^^^^^  ^^^^^^^  ^^^^^^^^^  ^^^^^^^^^^^  ^^^^ no `Rule` in the root
+  |                          |          |        |          |
+  |                          |          |        |          no `RateLimiter` in the root
+  |                          |          |        no `PolicySet` in the root
+  |                          |          no `Matcher` in the root
+  |                          no `parse_str` in the root

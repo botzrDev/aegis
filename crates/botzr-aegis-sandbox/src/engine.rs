@@ -85,7 +85,9 @@ impl SandboxEngine {
     }
 
     /// Compile a raw component fixture (no WIT exports required). Used by the
-    /// deny-suite and resource-metering tests.
+    /// deny-suite and resource-metering tests. Requires the `test-utils`
+    /// feature.
+    #[cfg(feature = "test-utils")]
     pub fn prepare_fixture(
         &self,
         component_bytes: impl AsRef<[u8]>,
@@ -127,7 +129,9 @@ impl SandboxEngine {
         block_on_async(tool.run(self, grant, input))
     }
 
-    /// Invoke a raw fixture export (deny-suite / resource-cap tests).
+    /// Invoke a raw fixture export (deny-suite / resource-cap tests). Requires
+    /// the `test-utils` feature.
+    #[cfg(feature = "test-utils")]
     pub fn execute_fixture(
         &self,
         fixture: &PreparedFixture,
@@ -158,10 +162,13 @@ pub struct PreparedTool {
 }
 
 /// A raw component fixture for deny-suite / resource tests (no WIT exports).
+/// Requires the `test-utils` feature.
+#[cfg(feature = "test-utils")]
 pub struct PreparedFixture {
     pre: wasmtime::component::InstancePre<ToolState>,
 }
 
+#[cfg(feature = "test-utils")]
 impl PreparedFixture {
     /// Instantiate into a fresh per-call store and invoke a `func() -> ()`
     /// export.

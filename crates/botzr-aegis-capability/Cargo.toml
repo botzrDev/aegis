@@ -14,11 +14,18 @@ categories = ["development-tools"]
 [lints]
 workspace = true
 
+[features]
+# Grant-minting helpers that exist for tests and deny-all baselines only.
+test-utils = []
+
 [dependencies]
 botzr-aegis-core = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# Self dev-dependency so this crate's own integration tests can reach the
+# `test-utils`-gated helpers (tests/capability.rs uses `resolve_manifest`).
+botzr-aegis-capability = { path = ".", features = ["test-utils"] }
 criterion = { workspace = true }
 proptest = "1"
 tempfile = { workspace = true }

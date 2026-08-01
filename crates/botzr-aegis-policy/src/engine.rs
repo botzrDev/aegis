@@ -44,8 +44,10 @@ pub struct PolicyEngine {
 }
 
 impl PolicyEngine {
-    /// Wrap an already-validated set.
-    pub fn new(set: PolicySet) -> Self {
+    /// Wrap an already-validated set. Crate-internal: `PolicySet` is not part
+    /// of the supported surface — construct an engine with
+    /// [`PolicyEngine::from_yaml`] or [`PolicyEngine::load`].
+    pub(crate) fn new(set: PolicySet) -> Self {
         Self {
             active: ArcSwap::from_pointee(set),
             limiter: RateLimiter::new(),
@@ -79,8 +81,12 @@ impl PolicyEngine {
     }
 
     /// Grab the active set once (station 1). In-flight calls that captured an
-    /// earlier `Arc` complete under the set they started with.
-    pub fn snapshot(&self) -> Arc<PolicySet> {
+    /// earlier `Arc` complete under the set they started with. Crate-internal:
+    /// `PolicySet` is not part of the supported surface — consumers observe the
+    /// active set through [`PolicyEngine::active_digest`] and
+    /// [`PolicyEngine::evaluate`].
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> Arc<PolicySet> {
         self.active.load_full()
     }
 

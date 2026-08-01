@@ -11,6 +11,7 @@ members = [
     "crates/botzr-aegis-cli",
     "tests/integration",
     "tests/deny-suite",
+    "tests/api-surface",
     "tests/fixtures/echo-tool",
     "tests/fixtures/damage-bot",
     "tests/fixtures/path-detector",

@@ -1,0 +1,60 @@
+//! AEG-45: the supported consumer path. If this stops compiling, the
+//! contraction went too far.
+//!
+//! `t.pass()` compiles *and runs* the case, so `main` stays trivial and the
+//! API exercise lives in never-called functions.
+use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
+use botzr_aegis_core::{AegisError, AuditIntent, ToolId};
+use botzr_aegis_policy::{PolicyEngine, PolicyRequest, SUPPORTED_POLICY_VERSION};
+use botzr_aegis_runtime::{HostCallRequest, Runtime, RuntimeBuilder, ToolExecutable};
+
+/// Manifest construction is public: a consumer declares needs in its own code.
+#[allow(dead_code)]
+fn manifest(id: &str, kind: ToolKind) -> ToolManifest {
+    ToolManifest::new(
+        ToolInfo {
+            id: ToolId::new(id),
+            version: "0.1.0".into(),
+            kind,
+        },
+        std::env::temp_dir(),
+    )
+}
+
+/// The builder is the sanctioned way to assemble a configured runtime.
+#[allow(dead_code)]
+fn build() -> Runtime {
+    RuntimeBuilder::new().build().expect("default build")
+}
+
+#[allow(dead_code)]
+fn model_a(rt: &mut Runtime, manifest: ToolManifest, bytes: Vec<u8>) -> Result<Vec<u8>, AegisError> {
+    rt.register(manifest, bytes).expect("register");
+    rt.execute_tool_call(ToolId::new("echo"), b"hello")
+}
+
+#[allow(dead_code)]
+fn model_b(rt: &mut Runtime, manifest: ToolManifest) -> Result<Vec<u8>, AegisError> {
+    rt.register_tool(
+        manifest,
+        ToolExecutable::HostHandler(Box::new(|_ctx, input| Ok(input.to_vec()))),
+    )
+    .expect("register host tool");
+    let tool = ToolId::new("host-echo");
+    rt.execute_host_call(HostCallRequest::new(
+        tool.clone(),
+        b"{}",
+        PolicyRequest::for_tool(&tool),
+    ))
+}
+
+#[allow(dead_code)]
+fn policy_and_audit() {
+    let _engine = PolicyEngine::allow_all();
+    let _v = SUPPORTED_POLICY_VERSION;
+    let intent = AuditIntent::new("call-1", ToolId::new("smoke"), "abc");
+    // Sealed for writes, still readable through the getter.
+    assert_eq!(intent.schema_version(), botzr_aegis_core::AUDIT_SCHEMA_VERSION);
+}
+
+fn main() {}

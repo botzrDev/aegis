@@ -12,11 +12,13 @@ mod narrow;
 mod resolver;
 
 pub use botzr_aegis_core::ResourceCeiling;
-pub use error::CapabilityError;
+pub use error::{CapabilityError, EscalationAxis};
 pub use manifest::{
     FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest,
     DEFAULT_MAX_MEMORY_BYTES, DEFAULT_MAX_WALL_MS,
 };
 pub use mint::mint_grant;
 pub use narrow::{grant_is_subset, narrow_grant};
-pub use resolver::{mint_deny_all, resolve, CapabilityResolver};
+pub use resolver::CapabilityResolver;
+#[cfg(feature = "test-utils")]
+pub use resolver::{mint_deny_all, resolve};

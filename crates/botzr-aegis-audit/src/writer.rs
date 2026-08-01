@@ -54,12 +54,12 @@ impl AuditWriter {
     }
 
     pub fn emit_intent(&self, intent: &AuditIntent) -> Result<(), AuditError> {
-        validate_schema(intent.schema_version)?;
+        validate_schema(intent.schema_version())?;
         self.append_line(intent)
     }
 
     pub fn emit_outcome(&self, record: &AuditRecord) -> Result<(), AuditError> {
-        validate_schema(record.schema_version)?;
+        validate_schema(record.schema_version())?;
         self.append_line(record)
     }
 
@@ -101,15 +101,21 @@ pub fn to_json_line<T: serde::Serialize>(value: &T) -> Result<String, AuditError
 
 #[cfg(test)]
 mod tests {
-    use botzr_aegis_core::{AuditIntent, ToolId};
+    use botzr_aegis_core::AuditIntent;
 
     use super::*;
 
     #[test]
     fn rejects_unsupported_schema() {
+        // The field is sealed against direct mutation (AEG-45), so the only way
+        // an unsupported version reaches the writer is a foreign/tampered record
+        // deserialized from the wire — exactly what this guard is for.
         let writer = AuditWriter::open_temp().unwrap();
-        let mut intent = AuditIntent::new("call-1", ToolId::new("smoke"), "abc");
-        intent.schema_version = 999;
+        let intent: AuditIntent = serde_json::from_str(
+            r#"{"schema_version":999,"phase":"intent","call_id":"call-1","tool_id":"smoke","input_digest":"abc"}"#,
+        )
+        .expect("intent with a foreign schema version still deserializes");
+        assert_eq!(intent.schema_version(), 999);
         let err = writer.emit_intent(&intent).unwrap_err();
         assert!(matches!(err, AuditError::UnsupportedSchema { .. }));
     }

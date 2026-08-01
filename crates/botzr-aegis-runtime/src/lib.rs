@@ -11,9 +11,11 @@ use std::collections::HashMap;
 
 use botzr_aegis_audit::AuditWriter;
 use botzr_aegis_capability::{CapabilityResolver, ToolKind, ToolManifest};
-use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId, PIPELINE_STAGES};
+use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
-use botzr_aegis_sandbox::{PreparedFixture, PreparedTool, SandboxEngine, SandboxRun};
+#[cfg(feature = "test-utils")]
+use botzr_aegis_sandbox::PreparedFixture;
+use botzr_aegis_sandbox::{PreparedTool, SandboxEngine, SandboxRun};
 
 use crate::pipeline::ExecutionStep;
 
@@ -36,14 +38,16 @@ pub type HostHandler =
 /// The executable artifact a tool is registered with.
 ///
 /// Which variant is legal is decided by the manifest's
-/// [`ToolKind`]: `Wasm` accepts [`Self::WasmComponent`] or
-/// [`Self::WasmFixture`], `Host` accepts [`Self::HostHandler`]. Anything else
+/// [`ToolKind`]: `Wasm` accepts [`Self::WasmComponent`] or, under `test-utils`,
+/// `Self::WasmFixture`; `Host` accepts [`Self::HostHandler`]. Anything else
 /// is a [`RegisterError::KindMismatch`] at registration time.
 pub enum ToolExecutable {
     /// A WIT-world component invoked through its `run` export (Model A).
     WasmComponent(Vec<u8>),
     /// A raw WASM component with no WIT world, invoked through `entry_export`
-    /// (deny-suite and resource-cap fixtures).
+    /// (deny-suite and resource-cap fixtures). Requires the `test-utils`
+    /// feature.
+    #[cfg(feature = "test-utils")]
     WasmFixture {
         bytes: Vec<u8>,
         entry_export: String,
@@ -58,6 +62,7 @@ impl ToolExecutable {
     fn label(&self) -> &'static str {
         match self {
             Self::WasmComponent(_) => "WasmComponent",
+            #[cfg(feature = "test-utils")]
             Self::WasmFixture { .. } => "WasmFixture",
             Self::HostHandler(_) => "HostHandler",
         }
@@ -75,6 +80,7 @@ struct ToolRegistration {
 /// The prepared, ready-to-invoke form of a [`ToolExecutable`].
 enum ExecutableSlot {
     Wasm(PreparedTool),
+    #[cfg(feature = "test-utils")]
     WasmFixture {
         prepared: PreparedFixture,
         export: String,
@@ -168,13 +174,13 @@ impl Runtime {
         // 2 — kind match. A Host manifest must never own a prepared component,
         // and a Wasm manifest must never own a host effect.
         let kind = manifest.tool.kind;
-        let matches_kind = matches!(
-            (kind, &executable),
-            (
-                ToolKind::Wasm,
-                ToolExecutable::WasmComponent(_) | ToolExecutable::WasmFixture { .. }
-            ) | (ToolKind::Host, ToolExecutable::HostHandler(_))
-        );
+        let matches_kind = match (kind, &executable) {
+            (ToolKind::Wasm, ToolExecutable::WasmComponent(_)) => true,
+            #[cfg(feature = "test-utils")]
+            (ToolKind::Wasm, ToolExecutable::WasmFixture { .. }) => true,
+            (ToolKind::Host, ToolExecutable::HostHandler(_)) => true,
+            _ => false,
+        };
         if !matches_kind {
             return Err(RegisterError::KindMismatch {
                 declared: format!("{kind:?}"),
@@ -192,6 +198,7 @@ impl Runtime {
                     .map_err(|e| RegisterError::SandboxPrepare(e.to_string()))?;
                 ExecutableSlot::Wasm(prepared)
             }
+            #[cfg(feature = "test-utils")]
             ToolExecutable::WasmFixture {
                 bytes,
                 entry_export,
@@ -212,6 +219,10 @@ impl Runtime {
 
         // 5 — both writes together. Nothing above this line mutated `self`.
         let tool_id = manifest.tool.id.clone();
+        // The one sanctioned caller of the deprecated resolver write: this line
+        // and the `self.tools.insert` below are the atomic pair that keeps
+        // authority and executable from drifting apart (AEG-44).
+        #[allow(deprecated)]
         self.capabilities_mut().register(manifest);
         self.tools.insert(tool_id, ToolRegistration { kind, slot });
         Ok(())
@@ -233,6 +244,10 @@ impl Runtime {
     /// Register a raw WASM fixture (no WIT `run` export) for deny-suite and
     /// resource-cap tests. `entry_export` is the component export to invoke.
     /// Thin wrapper over [`Runtime::register_tool`].
+    ///
+    /// Requires the `test-utils` feature — a default-features build has no
+    /// fixture registration path at all.
+    #[cfg(feature = "test-utils")]
     pub fn register_fixture(
         &mut self,
         manifest: ToolManifest,
@@ -294,6 +309,7 @@ impl Runtime {
                         ExecutableSlot::Wasm(prepared) => {
                             sandbox_step(self.sandbox.execute(prepared, grant, input))
                         }
+                        #[cfg(feature = "test-utils")]
                         ExecutableSlot::WasmFixture { prepared, export } => {
                             sandbox_step(self.sandbox.execute_fixture(prepared, grant, export))
                         }
@@ -358,11 +374,6 @@ impl Default for Runtime {
     }
 }
 
-/// Returns pipeline stage names in order (for tests and docs).
-pub fn pipeline_stages() -> &'static [&'static str] {
-    PIPELINE_STAGES
-}
-
 /// Enforce the grant's per-call output ceiling on returned bytes (G8).
 ///
 /// This is an **orchestrator-side** cap on the bytes a call returns — not a
@@ -389,7 +400,7 @@ mod tests {
     use std::path::Path;
 
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-    use botzr_aegis_core::{AegisError, CapabilityOutcome};
+    use botzr_aegis_core::{AegisError, CapabilityOutcome, PIPELINE_STAGES};
     use botzr_aegis_policy::PolicyEngine;
 
     /// Build an echo manifest with an explicit `max_output_bytes` ceiling.
@@ -416,7 +427,7 @@ mod tests {
     #[test]
     fn pipeline_order_is_load_bearing() {
         assert_eq!(
-            pipeline_stages(),
+            PIPELINE_STAGES,
             &["policy", "capability", "sandbox", "audit"]
         );
     }
@@ -631,6 +642,9 @@ rules:
         let tool = ToolId::new("capped");
 
         let mut resolver = CapabilityResolver::new();
+        // Exercising the policy → capability seam in isolation; no executable is
+        // paired with this throwaway resolver, so split authority is moot.
+        #[allow(deprecated)]
         resolver.register(
             ToolManifest::new(
                 ToolInfo {
@@ -693,6 +707,9 @@ rules:
         // Manifest defaults (64 MiB / 30 s / 1 MiB) all exceed the sentinels, so
         // each sentinel is the tighter bound and flows straight through to grant.
         let mut resolver = CapabilityResolver::new();
+        // Same seam-in-isolation rationale as above: throwaway resolver, no
+        // executable, so `Runtime::register_tool` would only add noise.
+        #[allow(deprecated)]
         resolver.register(ToolManifest::new(
             ToolInfo {
                 id: tool.clone(),

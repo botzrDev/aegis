@@ -1,0 +1,11 @@
+error: use of deprecated method `botzr_aegis_capability::CapabilityResolver::register`: external crates must register tools via Runtime::register_tool — registering a manifest alone creates split authority
+  --> tests/ui/capability_register_is_runtime_internal.rs:17:14
+   |
+17 |     resolver.register(manifest);
+   |              ^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/capability_register_is_runtime_internal.rs:1:9
+   |
+1  | #![deny(deprecated)]
+   |         ^^^^^^^^^^

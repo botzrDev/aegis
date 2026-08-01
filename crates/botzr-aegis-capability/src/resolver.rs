@@ -33,6 +33,19 @@ impl CapabilityResolver {
     }
 
     /// Register a tool manifest. Re-registration replaces the prior entry.
+    ///
+    /// **Runtime-internal.** Writing a manifest here without also installing the
+    /// tool's executable is the split-authority state AEG-44 closed: it mints
+    /// authority for a tool that cannot run, and lets the two be swapped
+    /// independently. External crates must register through
+    /// `botzr_aegis_runtime::Runtime::register_tool`, which writes both together
+    /// or neither. Rust cannot scope visibility to one sibling crate, so this is
+    /// marked deprecated to make external use a compile error under `deny`.
+    #[doc(hidden)]
+    #[deprecated(
+        note = "external crates must register tools via Runtime::register_tool — \
+                registering a manifest alone creates split authority"
+    )]
     pub fn register(&mut self, manifest: ToolManifest) {
         self.tools.insert(manifest.tool.id.clone(), manifest);
     }
@@ -78,6 +91,8 @@ impl CapabilityResolver {
     }
 
     /// Resolve a manifest directly (used for tests and one-off minting).
+    /// Requires the `test-utils` feature.
+    #[cfg(feature = "test-utils")]
     #[must_use = "capability resolution must be handled — denial never reaches sandbox"]
     pub fn resolve_manifest(&self, manifest: &ToolManifest) -> CapabilityOutcome {
         match mint_grant(manifest, next_grant_id(&manifest.tool.id), self.ceiling) {
@@ -90,14 +105,20 @@ impl CapabilityResolver {
     }
 }
 
-/// Compatibility shim for the runtime stub until AEG-23 wires a shared registry.
+/// Test-only convenience: resolve a tool id against a fresh, empty resolver.
 ///
-/// Uses a process-wide empty resolver — unregistered tools are denied.
+/// The resolver has no registered manifests, so every tool id is denied with
+/// `ToolNotRegistered` — this is a deny-everything baseline, not a production
+/// resolution path. Real resolution goes through a `CapabilityResolver` owned by
+/// `botzr_aegis_runtime::Runtime`. Requires the `test-utils` feature.
+#[cfg(feature = "test-utils")]
 pub fn resolve(tool_id: ToolId) -> CapabilityOutcome {
     CapabilityResolver::new().resolve(&tool_id)
 }
 
-/// Mint helper for tests and deny-all baselines.
+/// Mint helper for tests and deny-all baselines. Requires the `test-utils`
+/// feature.
+#[cfg(feature = "test-utils")]
 pub fn mint_deny_all(tool_id: ToolId, grant_id: impl Into<String>) -> CapabilityGrant {
     CapabilityGrant::deny_all(tool_id, grant_id)
 }

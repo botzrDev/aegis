@@ -24,6 +24,12 @@ include = [
 [lints]
 workspace = true
 
+[features]
+# Raw-component fixture APIs used by the deny-suite and resource-metering
+# tests. Off by default: a production consumer has no business instantiating
+# a component that never declared the WIT `tool` world.
+test-utils = []
+
 [dependencies]
 botzr-aegis-core = { workspace = true }
 anyhow = { workspace = true }
@@ -33,5 +39,9 @@ wasmtime-wasi = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+# Self dev-dependency so this crate's own integration tests (tests/sandbox.rs)
+# can reach the `test-utils`-gated fixture API. Dev-dependency cycles on the
+# same package are explicitly legal in cargo.
+botzr-aegis-sandbox = { path = ".", features = ["test-utils"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }
