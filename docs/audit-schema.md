@@ -109,7 +109,11 @@ The `status` field selects the variant; payload fields sit beside it.
 
 **Shipped today**
 
-- `input_digest` on both Intent and Outcome.
+- `input_digest` on both Intent and Outcome. It is **runtime-derived**:
+  the pipeline computes `sha256_hex(input)` from the exact bytes the execution
+  step will see. No public runtime API (`execute_tool_call`,
+  `execute_host_call`) accepts a caller-supplied digest, so the field cannot be
+  made to disagree with the payload.
 - No raw tool input, env, or tokens in the audit line.
 
 **Absent / deferred (not in schema v1 wire format)**

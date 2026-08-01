@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::ToolId;
-use botzr_aegis_runtime::{sha256_hex, HostEffectContext, HostEffectError};
+use botzr_aegis_runtime::{
+    sha256_hex, HostEffectContext, HostEffectError, RegisterError, Runtime, ToolExecutable,
+};
 use serde::{Deserialize, Serialize};
 
 pub const TOOL_APPEND: &str = "append_node";
@@ -24,12 +26,21 @@ pub const CAP_FS_EPISODIC: &str = "fs:episodic";
 /// Policy capability axis for `personal/` writes (role-gated in policy YAML).
 pub const CAP_FS_PERSONAL: &str = "fs:personal";
 
-/// Register dreamd tool manifests against a project root (`.agent/` parent).
+/// Register the dreamd tools against a project root (`.agent/` parent).
+///
+/// Registration is atomic (AEG-44): each manifest goes in together with the
+/// Model B handler that will run for it, so there is no window in which a tool
+/// holds authority (an fs grant) with no executable behind it — and no way for
+/// a caller to swap in a different effect at call time. The runtime rejects a
+/// `ToolKind::Host` manifest paired with anything but a
+/// [`ToolExecutable::HostHandler`], so the three registrations below are the
+/// only place dreamd's authority and its effects can disagree.
+///
 /// Call after [`init_agent_store`] so fs paths canonicalize at grant-mint time.
 pub fn register_dreamd_tools(
-    resolver: &mut botzr_aegis_capability::CapabilityResolver,
+    rt: &mut Runtime,
     project_root: impl AsRef<Path>,
-) {
+) -> Result<(), RegisterError> {
     let base = project_root.as_ref();
     let append = ToolManifest::new(
         ToolInfo {
@@ -80,9 +91,33 @@ pub fn register_dreamd_tools(
         write: vec![PathNeed::recursive(".agent")],
     });
 
-    resolver.register(append);
-    resolver.register(search);
-    resolver.register(dream);
+    rt.register_tool(
+        append,
+        ToolExecutable::HostHandler(Box::new(append_node_effect)),
+    )?;
+    rt.register_tool(
+        search,
+        ToolExecutable::HostHandler(Box::new(search_nodes_effect)),
+    )?;
+    // `dream` has no effect in this PoC — consolidation persistence is deferred
+    // (G2). Its manifest exists so the policy fixture's `pending_approval` rule
+    // has a real tool to gate, and station 1 short-circuits every call before
+    // the handler is reached. Registering `None` is not an option (a Host
+    // manifest without a handler is exactly the split-authority state AEG-44
+    // removes), so the slot gets a handler that fails closed: if it ever runs,
+    // the approval gate did not hold, and the honest outcome is a refused
+    // effect, not a silent no-op success.
+    rt.register_tool(
+        dream,
+        ToolExecutable::HostHandler(Box::new(|_ctx, _input| {
+            Err(HostEffectError::Failed {
+                reason: "dream consolidation is unimplemented and must not run: \
+                         policy pending_approval should have short-circuited this call"
+                    .into(),
+            })
+        })),
+    )?;
+    Ok(())
 }
 
 /// Load the PoC policy fixture.

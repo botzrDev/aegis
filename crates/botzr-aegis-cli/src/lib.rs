@@ -3,11 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use botzr_aegis_audit::AuditWriter;
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_policy::PolicyEngine;
-use botzr_aegis_runtime::{sha256_hex, Runtime};
+use botzr_aegis_runtime::{sha256_hex, Runtime, RuntimeBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -191,24 +189,29 @@ pub fn usage_text() -> String {
 }
 
 /// Build a configured runtime from optional policy/audit paths (no tools yet).
+///
+/// Construction is delegated to [`RuntimeBuilder`] so the CLI and the MCP
+/// gateway cannot drift apart on how policy YAML is parsed or how the audit
+/// sink is opened. An unset flag is *not* the same as a permissive default the
+/// CLI invents: leaving the option `None` simply keeps the runtime's own
+/// defaults (allow-all policy, temp-file audit sink), which is what the
+/// pre-builder code did by never calling `with_policy` / `with_audit`.
+///
+/// [`BuildError`](botzr_aegis_runtime::BuildError) already carries the offending
+/// path in its `Display`, so flattening it to `String` here preserves the error
+/// text callers (and `dispatch`) print today.
 pub fn build_runtime(policy: Option<&Path>, audit: Option<&Path>) -> Result<Runtime, String> {
-    let mut rt = Runtime::new();
+    let mut builder = RuntimeBuilder::new();
 
     if let Some(path) = policy {
-        let yaml = std::fs::read_to_string(path)
-            .map_err(|e| format!("read policy {}: {e}", path.display()))?;
-        let engine = PolicyEngine::from_yaml(&yaml)
-            .map_err(|e| format!("parse policy {}: {e}", path.display()))?;
-        rt = rt.with_policy(engine);
+        builder = builder.policy_file(path).map_err(|e| e.to_string())?;
     }
 
     if let Some(path) = audit {
-        let writer =
-            AuditWriter::open(path).map_err(|e| format!("open audit {}: {e}", path.display()))?;
-        rt = rt.with_audit(writer);
+        builder = builder.audit_file(path).map_err(|e| e.to_string())?;
     }
 
-    Ok(rt)
+    builder.build().map_err(|e| e.to_string())
 }
 
 pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
@@ -251,7 +254,6 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
         })?;
 
     let input = load_input(args).map_err(|e| AegisError::HostDenied { reason: e })?;
-    let digest = sha256_hex(&input);
 
     eprintln!(
         "aegis {} — run {} through POLICY → CAPABILITY → SANDBOX → AUDIT",
@@ -259,9 +261,13 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
         args.id
     );
     eprintln!("Audit: {}", rt.audit().path().display());
-    eprintln!("input_digest: {digest}");
+    // Diagnostic only — the digest is no longer an execute argument. The runtime
+    // derives it internally for the audit record; we recompute the *same*
+    // function here purely so the operator can eyeball-match this line against
+    // the `input_digest` field in the emitted JSONL.
+    eprintln!("input_digest: {}", sha256_hex(&input));
 
-    rt.execute_tool_call(ToolId::new(args.id.clone()), digest, &input)
+    rt.execute_tool_call(ToolId::new(args.id.clone()), &input)
 }
 
 fn load_input(args: &RunArgs) -> Result<Vec<u8>, String> {

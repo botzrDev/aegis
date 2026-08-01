@@ -83,7 +83,7 @@ fn outcome(rt: &Runtime) -> AuditRecord {
 }
 
 fn run_detector(rt: &Runtime, input: &[u8]) -> Result<Vec<u8>, AegisError> {
-    rt.execute_tool_call(ToolId::new("path-detector"), sha256_hex(input), input)
+    rt.execute_tool_call(ToolId::new("path-detector"), input)
 }
 
 // --- Equivalence -------------------------------------------------------------
@@ -224,7 +224,7 @@ fn wall_clock_cap_trips() {
         .expect("register spin fixture");
 
     let err = rt
-        .execute_tool_call(ToolId::new("path-detector-spin"), "deadbeef".into(), b"{}")
+        .execute_tool_call(ToolId::new("path-detector-spin"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),

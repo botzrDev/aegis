@@ -123,7 +123,7 @@ rules:
 "#;
     let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
     let err = rt
-        .execute_tool_call(ToolId::new("exfil"), "11111111".into(), b"{}")
+        .execute_tool_call(ToolId::new("exfil"), b"{}")
         .unwrap_err();
     assert_eq!(
         err,
@@ -160,7 +160,7 @@ rules:
 "#;
     let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
     let err = rt
-        .execute_tool_call(ToolId::new("transfer"), "aaaaaaaa".into(), b"{}")
+        .execute_tool_call(ToolId::new("transfer"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::PendingApproval { .. }),
@@ -189,7 +189,7 @@ fn unregistered_tool_is_capability_denied() {
     // allow-all policy, but the tool was never registered with the resolver.
     let rt = Runtime::new();
     let err = rt
-        .execute_tool_call(ToolId::new("ghost"), "22222222".into(), b"{}")
+        .execute_tool_call(ToolId::new("ghost"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::CapabilityDenied { ref reason, denied_capability: _ } if reason.contains("tool not registered")),
@@ -224,9 +224,12 @@ fn unresolvable_fs_need_is_capability_denied() {
     });
 
     let mut rt = Runtime::new();
-    rt.capabilities().register(manifest);
+    // Registration is atomic (manifest + executable); the NOOP fixture is a
+    // stand-in body that is never reached — the resolver denies at station 2.
+    rt.register_fixture(manifest, NOOP.as_bytes().to_vec(), "go")
+        .expect("register fs-reader fixture");
     let err = rt
-        .execute_tool_call(ToolId::new("fs-reader"), "55555555".into(), b"{}")
+        .execute_tool_call(ToolId::new("fs-reader"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::CapabilityDenied { .. }),
@@ -264,9 +267,12 @@ fn wildcard_net_need_is_capability_denied() {
     });
 
     let mut rt = Runtime::new();
-    rt.capabilities().register(manifest);
+    // Same as the fs case: a real executable is registered, and the capability
+    // station still refuses before the sandbox ever runs it.
+    rt.register_fixture(manifest, NOOP.as_bytes().to_vec(), "go")
+        .expect("register net-wildcard fixture");
     let err = rt
-        .execute_tool_call(ToolId::new("net-wildcard"), "33333333".into(), b"{}")
+        .execute_tool_call(ToolId::new("net-wildcard"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::CapabilityDenied { .. }),
@@ -304,7 +310,7 @@ fn wall_clock_cap_trips_through_pipeline() {
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
     let err = rt
-        .execute_tool_call(ToolId::new("spin"), "66666666".into(), b"{}")
+        .execute_tool_call(ToolId::new("spin"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
@@ -338,7 +344,7 @@ fn memory_cap_trips_through_pipeline() {
     rt.register_fixture(manifest, GROW_TOUCH.as_bytes().to_vec(), "grow-touch")
         .expect("register grow-touch fixture");
     let err = rt
-        .execute_tool_call(ToolId::new("grow-touch"), "44444444".into(), b"{}")
+        .execute_tool_call(ToolId::new("grow-touch"), b"{}")
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "memory"),

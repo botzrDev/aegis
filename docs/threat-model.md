@@ -116,8 +116,8 @@ Model B enforcement is **not uniform**, and the difference is load-bearing:
 
 | Path | Enforcement | Status |
 |---|---|---|
-| `HostEffectContext` methods (`http_get`, `open_read`, `open_write_append`, `log_emit`) | **Structural** — the grant is checked before any effect, and FS access is a cap-std `Dir` opened from the grant, so an un-granted path is unreachable rather than merely unchecked | Supported |
-| Raw `Runtime::execute_host_call` closure | **Convention only** — the runtime hands the closure a `&CapabilityGrant` and checks nothing before the effect runs; it applies the output cap afterwards | Research escape hatch |
+| `HostEffectContext` methods (`http_get`, `open_read`, `open_write_append`, `log_emit`), reached via the handler registered with the tool and run by `Runtime::execute_host_call` | **Structural** — the grant is checked before any effect, and FS access is a cap-std `Dir` opened from the grant, so an un-granted path is unreachable rather than merely unchecked | Supported |
+| Raw closure passed to `Runtime::execute_host_call_with` | **Convention only** — the runtime hands the closure a `&CapabilityGrant` and checks nothing before the effect runs; it applies the output cap afterwards | Research escape hatch |
 
 The structural guarantee described in this document covers **context-owned effects
 only**. A raw closure that forgets its check is exactly the "missing grant check in
@@ -199,7 +199,7 @@ Partial mitigations that exist today:
 | Mitigation | Effect |
 |---|---|
 | `max_output_bytes` | Caps single-call return size, runtime-enforced on returned bytes (default 1 MiB) |
-| `input_digest` in audit | Forensic trail of call **input** without storing raw args (Intent + Outcome) |
+| `input_digest` in audit | Forensic trail of call **input** without storing raw args (Intent + Outcome); derived by the runtime from the call's own bytes, so a caller cannot record a digest that does not match the payload |
 | Policy rate limits | Friction on bulk read patterns |
 
 **Not shipped (deferred):** `output_digest` is **absent** from `AuditIntent` /
@@ -217,9 +217,9 @@ hand-audited host-function set.
 
 `HostEffectContext` does not change that. It makes the *check* structural for the
 effects it owns (§3), so those effects cannot skip the grant — but the effect still
-executes with host privileges. Effects wired through the raw `execute_host_call`
-closure are not even structurally checked; they remain convention-checked by their
-author.
+executes with host privileges. Effects wired through the raw
+`execute_host_call_with` closure are not even structurally checked; they remain
+convention-checked by their author.
 
 ### Host environment credentials (until credential injection ships)
 
@@ -257,7 +257,7 @@ honest non-goals is the product posture.
 
 | Risk | Severity | Notes |
 |---|---|---|
-| Missing grant check in a new host function | **Critical** | #1 sandbox bypass for Model B; mitigated by keeping the host-function set tiny and routing Aegis-owned effects through `HostEffectContext`. Raw `execute_host_call` closures remain exposed to this |
+| Missing grant check in a new host function | **Critical** | #1 sandbox bypass for Model B; mitigated by keeping the host-function set tiny and routing Aegis-owned effects through `HostEffectContext`. Raw `execute_host_call_with` closures remain exposed to this |
 | Hand-rolled path checks instead of cap-std | **High** | Bypassable via `..`, symlinks, TOCTOU — use cap-std preopens for Model A |
 | Policy evaluated after capability minted | **High** | Pipeline order violation; denied calls must never get a `Store` |
 | Hung Model B I/O ignoring epoch | **Medium** | Wall-clock timeout + cancellation token required for host I/O |

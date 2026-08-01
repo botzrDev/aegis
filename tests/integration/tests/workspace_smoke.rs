@@ -33,7 +33,7 @@ fn echo_tool_e2e_through_pipeline() {
 
     let input = b"{\"ping\":true}";
     let out = rt
-        .execute_tool_call(ToolId::new("echo"), sha256_hex(input), input)
+        .execute_tool_call(ToolId::new("echo"), input)
         .expect("pipeline run succeeds");
     assert_eq!(out, input);
 

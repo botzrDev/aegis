@@ -5,11 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use botzr_aegis_audit::AuditWriter;
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_policy::PolicyEngine;
-use botzr_aegis_runtime::{sha256_hex, Runtime};
+use botzr_aegis_runtime::{sha256_hex, Runtime, RuntimeBuilder};
 
 /// Allow-path Model A tool on the MCP catalog.
 pub const ECHO_TOOL_ID: &str = "echo";
@@ -36,31 +34,31 @@ const ECHO_WASM: &[u8] = include_bytes!("../fixtures/echo.wasm");
 
 /// Build a runtime with the multi-tool catalog registered.
 ///
+/// Policy/audit wiring is delegated to [`RuntimeBuilder`], so this gateway does
+/// not hand-roll policy parsing or audit-sink opening itself — one construction
+/// path shared with the CLI. Catalog registration stays here: which tools an MCP
+/// host may see is the gateway's business, not the runtime's.
+///
 /// When `policy_path` is `None`, loads [`DEFAULT_DENY_EXFIL_POLICY`] so the
 /// `exfil` deny-smoke path works without a host-supplied YAML file.
 pub fn build_runtime(
     policy_path: Option<&Path>,
     audit_path: Option<&Path>,
 ) -> Result<Runtime, String> {
-    let mut rt = Runtime::new();
+    let mut builder = RuntimeBuilder::new();
 
-    if let Some(path) = policy_path {
-        let yaml = std::fs::read_to_string(path)
-            .map_err(|e| format!("read policy {}: {e}", path.display()))?;
-        let engine = PolicyEngine::from_yaml(&yaml)
-            .map_err(|e| format!("parse policy {}: {e}", path.display()))?;
-        rt = rt.with_policy(engine);
-    } else {
-        let engine = PolicyEngine::from_yaml(DEFAULT_DENY_EXFIL_POLICY)
-            .map_err(|e| format!("parse default policy: {e}"))?;
-        rt = rt.with_policy(engine);
-    }
+    builder = match policy_path {
+        Some(path) => builder.policy_file(path).map_err(|e| e.to_string())?,
+        None => builder
+            .policy_yaml(DEFAULT_DENY_EXFIL_POLICY)
+            .map_err(|e| e.to_string())?,
+    };
 
     if let Some(path) = audit_path {
-        let writer =
-            AuditWriter::open(path).map_err(|e| format!("open audit {}: {e}", path.display()))?;
-        rt = rt.with_audit(writer);
+        builder = builder.audit_file(path).map_err(|e| e.to_string())?;
     }
+
+    let mut rt = builder.build().map_err(|e| e.to_string())?;
 
     let base = echo_fixture_dir();
     let digest = sha256_hex(ECHO_WASM);
@@ -90,8 +88,9 @@ pub fn call_tool(rt: &Runtime, tool_id: &str, text: &str) -> Result<Vec<u8>, Aeg
             reason: format!("unknown tool: {tool_id}"),
         });
     }
-    let input = text.as_bytes();
-    rt.execute_tool_call(ToolId::new(tool_id), sha256_hex(input), input)
+    // The runtime derives the input digest itself; passing one here would be a
+    // second source of truth for the same bytes.
+    rt.execute_tool_call(ToolId::new(tool_id), text.as_bytes())
 }
 
 /// Run the echo tool through the full enforcement pipeline.

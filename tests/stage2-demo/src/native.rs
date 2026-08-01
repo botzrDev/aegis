@@ -3,8 +3,10 @@
 //! Pure host Rust (no wasmtime). This reimplements the **same** scan semantics
 //! as the wasip2 guest in `tests/fixtures/path-detector/src/lib.rs`, from
 //! scratch — the scorecard asserts `scan_native` findings == the guest's findings
-//! on a shared fixture tree (design doc D10 equivalence). uveddi is a functional spec
-//! only — no uveddi code or dependency is used here (do not import it).
+//! on a shared fixture tree (design doc D10 equivalence).
+//!
+//! Provenance: no uveddi code or dependency is used here (do not import it); it
+//! is a functional spec reference only.
 
 use std::path::Path;
 

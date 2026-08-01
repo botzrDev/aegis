@@ -6,25 +6,161 @@ Aegis runtime orchestrator — wires the full enforcement pipeline in load-beari
 POLICY → CAPABILITY → SANDBOX → AUDIT
 ```
 
-This is the library-mode entry point for the Aegis research runtime. It owns one instance of each pipeline station and exposes a single `execute_tool_call(tool_id, input_digest, input)` method.
+This is the library-mode entry point for the Aegis research runtime. It owns one
+instance of each pipeline station, one registry of tools, and two execution
+entry points: `execute_tool_call` (Model A, WASM) and `execute_host_call`
+(Model B, host effect).
 
-## Usage
+## Construction
+
+`RuntimeBuilder` is the shared construction facade — the CLI and the MCP gateway
+both go through it, so policy/audit wiring lives in exactly one place. Every
+option is optional; unset means the `Runtime::default()` behaviour (`allow_all`
+policy, temp-file JSONL audit sink).
 
 ```rust
-use botzr_aegis_runtime::Runtime;
+use std::path::Path;
+use botzr_aegis_runtime::RuntimeBuilder;
 
-let rt = Runtime::new();
-// Policy and audit are configurable:
-let rt = Runtime::new()
-    .with_policy(PolicyEngine::from_yaml(yaml)?)
-    .with_audit(AuditWriter::open("/tmp/audit.jsonl")?::w);
-
-// Register a tool:
-rt.register(manifest, wasm_bytes)?;
-
-// Execute a call:
-let output = rt.execute_tool_call(tool_id, sha256_hex(input), input)?;
+let mut rt = RuntimeBuilder::new()
+    .policy_file(Path::new("policy.yaml"))?   // or .policy_yaml(yaml_str)?
+    .audit_file(Path::new("/tmp/audit.jsonl"))?
+    .build()?;                                 // -> Result<Runtime, BuildError>
 ```
+
+Policy YAML is parsed once, up front: a bad document fails at the builder call
+that supplied it, not on the first tool call.
+
+## Registration
+
+`register_tool` is **the** registration path: it associates a tool's manifest
+(authority) with its executable artifact **atomically**.
+
+```rust
+pub fn register_tool(&mut self, manifest: ToolManifest, executable: ToolExecutable)
+    -> Result<(), RegisterError>;
+
+pub enum ToolExecutable {
+    WasmComponent(Vec<u8>),                                // Model A, WIT `run` export
+    WasmFixture { bytes: Vec<u8>, entry_export: String },  // raw WASM, no WIT world
+    HostHandler(HostHandler),                              // Model B host effect
+}
+
+pub type HostHandler =
+    Box<dyn Fn(&HostEffectContext<'_>, &[u8]) -> Result<Vec<u8>, HostEffectError> + Send + Sync>;
+```
+
+Every check runs **before** any mutation — duplicate tool id, manifest
+`ToolKind` vs. `ToolExecutable` variant, SHA-256 pin (G10), sandbox prepare — so
+a failed registration leaves the runtime exactly as it was. There is no way
+through the public API to grant a manifest without an executable, or to install
+an executable without authority.
+
+Kind and executable must agree: `ToolKind::Wasm` accepts `WasmComponent` or
+`WasmFixture`; `ToolKind::Host` accepts `HostHandler`. Anything else is
+`RegisterError::KindMismatch`. A tool id registers exactly once —
+re-registration is `RegisterError::DuplicateTool`, not a silent replace.
+
+Three thin wrappers cover the common cases:
+
+| Wrapper | Executable it builds |
+|---|---|
+| `register(manifest, component_bytes)` | `WasmComponent` |
+| `register_fixture(manifest, component_bytes, entry_export)` | `WasmFixture` |
+| `register_from_manifest(manifest)` | `WasmComponent`, bytes read from `base_dir.join(component_path)` |
+
+```rust
+use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
+use botzr_aegis_core::ToolId;
+use botzr_aegis_runtime::sha256_hex;
+
+let wasm_bytes = std::fs::read("tests/fixtures/echo-tool/echo.wasm")?;
+let manifest = ToolManifest::new(
+    ToolInfo {
+        id: ToolId::new("echo"),
+        version: "0.1.0".into(),
+        kind: ToolKind::Wasm,
+    },
+    "tests/fixtures/echo-tool",
+)
+.with_sha256(sha256_hex(&wasm_bytes));
+
+rt.register(manifest, wasm_bytes)?;
+```
+
+`capabilities()` returns a **read-only** `&CapabilityResolver` for exactly that
+reason: writing a manifest into the resolver without its executable is the
+split-authority state `register_tool` exists to prevent. Introspection only —
+mutation is deliberately not exposed.
+
+## Execution — Model A (WASM)
+
+```rust
+pub fn execute_tool_call(&self, tool_id: ToolId, input: &[u8]) -> Result<Vec<u8>, AegisError>;
+```
+
+```rust
+let output = rt.execute_tool_call(ToolId::new("echo"), b"hello-aegis")?;
+```
+
+Two arguments. **The caller does not supply a digest.** The pipeline computes
+`sha256_hex(input)` internally from the exact bytes the execution step will see,
+and that is what lands in the audit record. No public API accepts a
+caller-supplied `input_digest`, so audit cannot be made to record a digest that
+does not match the payload.
+
+A Model B host tool reaching this entry point fails closed — use
+`execute_host_call`.
+
+## Execution — Model B (host effect)
+
+```rust
+pub fn execute_host_call(&self, req: HostCallRequest<'_>) -> Result<Vec<u8>, AegisError>;
+
+pub struct HostCallRequest<'a> {
+    pub tool_id: ToolId,
+    pub input: &'a [u8],
+    pub policy: PolicyRequest<'a>,
+}
+```
+
+```rust
+use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
+use botzr_aegis_core::ToolId;
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{HostCallRequest, LogLevel, ToolExecutable};
+
+let tool = ToolId::new("append_node");
+let manifest = ToolManifest::new(
+    ToolInfo {
+        id: tool.clone(),
+        version: "0.1.0".into(),
+        kind: ToolKind::Host,
+    },
+    std::env::temp_dir(),
+);
+
+rt.register_tool(
+    manifest,
+    ToolExecutable::HostHandler(Box::new(|ctx, input| {
+        // The context checks the grant before the effect; the handler cannot skip it.
+        ctx.log_emit(LogLevel::Info, "appending")?;
+        Ok(input.to_vec())
+    })),
+)?;
+
+let output = rt.execute_host_call(HostCallRequest::new(
+    tool.clone(),
+    b"{}",
+    PolicyRequest::for_tool(&tool),
+))?;
+```
+
+The handler is the one stored at registration time; it receives a
+`HostEffectContext` built from the minted grant, never a raw grant. Sandbox is
+not invoked (`host_pipeline_stages()` is `policy → capability → audit`). A WASM
+tool reaching this entry point fails closed, as does an unregistered tool.
+`HostCallRequest` has no `input_digest` field for the same reason as Model A.
 
 ## Model B host effects
 
@@ -33,15 +169,20 @@ nothing. Use `HostEffectContext` — it checks the grant before every effect it
 owns (`http_get`, `open_read`, `open_write_append`, `log_emit`) and reaches the
 filesystem only through cap-std `Dir` handles opened from the grant.
 
-`Runtime::execute_host_call`'s raw closure is a **research escape hatch**: the
-runtime checks nothing before it runs, so the closure author owns enforcement.
-Neither path is sandbox isolation — see [`docs/threat-model.md`](../../docs/threat-model.md) §3.
+`Runtime::execute_host_call_with` takes a caller-supplied raw closure instead of
+the registered handler and is a **research escape hatch**: the runtime hands the
+closure a `&CapabilityGrant`, checks nothing before it runs, and applies only the
+output cap after it returns — so the closure author owns enforcement. It is not
+a supported way to ship an effect. Neither path is sandbox isolation — see
+[`docs/threat-model.md`](../../docs/threat-model.md) §3.
 
 ## Guarantees
 
 - **Short-circuit:** a policy denial never reaches capability or sandbox
 - **Ceiling folding:** policy limits are folded into grants but can never raise them
 - **Audit on every exit:** success, denial, trap, and panic all produce records
+- **Runtime-derived digest:** the audited `input_digest` is computed from the call's own input bytes; callers cannot supply one
+- **Atomic registration:** manifest and executable are written together, after all checks — a failed `register_tool` mutates nothing
 - **SHA-256 pinning:** registration rejects component bytes that don't match the manifest digest (G10)
 
 ## Dependencies

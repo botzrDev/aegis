@@ -1,19 +1,21 @@
 //! AEG-20 integration tests — allow + deny paths with audit records.
 
 use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_runtime::{sha256_hex, HostCallRequest, HostEffectContext, Runtime};
+use botzr_aegis_runtime::{HostCallRequest, Runtime};
 use dreamd_poc::{
-    append_node_effect, init_agent_store, policy_engine, register_dreamd_tools,
-    search_nodes_effect, AppendInput, AppendZone, CAP_FS_EPISODIC, CAP_FS_PERSONAL, TOOL_APPEND,
-    TOOL_DREAM, TOOL_SEARCH,
+    init_agent_store, policy_engine, register_dreamd_tools, AppendInput, AppendZone,
+    CAP_FS_EPISODIC, CAP_FS_PERSONAL, TOOL_APPEND, TOOL_DREAM, TOOL_SEARCH,
 };
 use serde_json::json;
 use tempfile::TempDir;
 
+/// A runtime whose three dreamd tools are registered with their handlers
+/// (AEG-44): the effect is no longer supplied per call, so these tests exercise
+/// the same registry path a real embedder would.
 fn setup_runtime(dir: &TempDir) -> Runtime {
     init_agent_store(dir.path());
     let mut rt = Runtime::new().with_policy(policy_engine());
-    register_dreamd_tools(rt.capabilities(), dir.path());
+    register_dreamd_tools(&mut rt, dir.path()).unwrap();
     rt
 }
 
@@ -32,18 +34,11 @@ fn append_episodic_allowed_with_audit_success() {
     let tool = ToolId::new(TOOL_APPEND);
 
     let out = rt
-        .execute_host_call(
-            HostCallRequest::new(
-                tool.clone(),
-                sha256_hex(&bytes),
-                &bytes,
-                botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
-            ),
-            |grant, input| {
-                let ctx = HostEffectContext::new(grant);
-                append_node_effect(&ctx, input)
-            },
-        )
+        .execute_host_call(HostCallRequest::new(
+            tool.clone(),
+            &bytes,
+            botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
+        ))
         .expect("episodic append allowed");
 
     let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -72,18 +67,11 @@ fn append_personal_denied_without_owner_role() {
     let tool = ToolId::new(TOOL_APPEND);
 
     let err = rt
-        .execute_host_call(
-            HostCallRequest::new(
-                tool.clone(),
-                sha256_hex(&bytes),
-                &bytes,
-                botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_PERSONAL),
-            ),
-            |grant, input| {
-                let ctx = HostEffectContext::new(grant);
-                append_node_effect(&ctx, input)
-            },
-        )
+        .execute_host_call(HostCallRequest::new(
+            tool.clone(),
+            &bytes,
+            botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_PERSONAL),
+        ))
         .unwrap_err();
 
     // AEG-42 typed surface: a policy station denial, not a stringly error.
@@ -114,20 +102,13 @@ fn append_personal_allowed_with_owner_role() {
     let bytes = serde_json::to_vec(&input).unwrap();
     let tool = ToolId::new(TOOL_APPEND);
 
-    rt.execute_host_call(
-        HostCallRequest::new(
-            tool.clone(),
-            sha256_hex(&bytes),
-            &bytes,
-            botzr_aegis_policy::PolicyRequest::for_tool(&tool)
-                .with_capability(CAP_FS_PERSONAL)
-                .with_role("owner"),
-        ),
-        |grant, input| {
-            let ctx = HostEffectContext::new(grant);
-            append_node_effect(&ctx, input)
-        },
-    )
+    rt.execute_host_call(HostCallRequest::new(
+        tool.clone(),
+        &bytes,
+        botzr_aegis_policy::PolicyRequest::for_tool(&tool)
+            .with_capability(CAP_FS_PERSONAL)
+            .with_role("owner"),
+    ))
     .expect("owner role allows personal write");
 
     let personal = dir.path().join(".agent/personal/notes.jsonl");
@@ -148,19 +129,11 @@ fn search_nodes_returns_seeded_hit() {
     };
     let seed_bytes = serde_json::to_vec(&seed).unwrap();
     let append_tool = ToolId::new(TOOL_APPEND);
-    rt.execute_host_call(
-        HostCallRequest::new(
-            append_tool.clone(),
-            sha256_hex(&seed_bytes),
-            &seed_bytes,
-            botzr_aegis_policy::PolicyRequest::for_tool(&append_tool)
-                .with_capability(CAP_FS_EPISODIC),
-        ),
-        |grant, input| {
-            let ctx = HostEffectContext::new(grant);
-            append_node_effect(&ctx, input)
-        },
-    )
+    rt.execute_host_call(HostCallRequest::new(
+        append_tool.clone(),
+        &seed_bytes,
+        botzr_aegis_policy::PolicyRequest::for_tool(&append_tool).with_capability(CAP_FS_EPISODIC),
+    ))
     .unwrap();
 
     let query = json!({ "query": "wasmtime", "k": 5 });
@@ -168,18 +141,11 @@ fn search_nodes_returns_seeded_hit() {
     let search_tool = ToolId::new(TOOL_SEARCH);
 
     let out = rt
-        .execute_host_call(
-            HostCallRequest::new(
-                search_tool.clone(),
-                sha256_hex(&query_bytes),
-                &query_bytes,
-                botzr_aegis_policy::PolicyRequest::for_tool(&search_tool),
-            ),
-            |grant, input| {
-                let ctx = HostEffectContext::new(grant);
-                search_nodes_effect(&ctx, input)
-            },
-        )
+        .execute_host_call(HostCallRequest::new(
+            search_tool.clone(),
+            &query_bytes,
+            botzr_aegis_policy::PolicyRequest::for_tool(&search_tool),
+        ))
         .expect("search allowed");
 
     let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -195,22 +161,15 @@ fn dream_consolidation_requires_approval() {
     let tool = ToolId::new(TOOL_DREAM);
     let input = b"{}";
 
+    // `dream` is registered with a fail-closed handler, so this can only be
+    // PendingApproval if station 1 short-circuited: had the call reached the
+    // handler, the error would be HostDenied instead.
     let err = rt
-        .execute_host_call(
-            HostCallRequest::new(
-                tool.clone(),
-                sha256_hex(input),
-                input,
-                botzr_aegis_policy::PolicyRequest::for_tool(&tool),
-            ),
-            |grant, _| {
-                let ctx = HostEffectContext::new(grant);
-                append_node_effect(
-                    &ctx,
-                    br#"{"content":"x","source_harness":"t","skill_action":"d::dream"}"#,
-                )
-            },
-        )
+        .execute_host_call(HostCallRequest::new(
+            tool.clone(),
+            input,
+            botzr_aegis_policy::PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
 
     assert!(

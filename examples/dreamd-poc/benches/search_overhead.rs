@@ -7,11 +7,11 @@ use std::path::PathBuf;
 
 use botzr_aegis_core::ToolId;
 use botzr_aegis_policy::PolicyRequest;
-use botzr_aegis_runtime::{sha256_hex, HostCallRequest, HostEffectContext, Runtime};
+use botzr_aegis_runtime::{HostCallRequest, Runtime};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dreamd_poc::{
-    init_agent_store, policy_engine, register_dreamd_tools, search_nodes_bare, search_nodes_effect,
-    AppendInput, AppendZone, CAP_FS_EPISODIC, TOOL_APPEND, TOOL_SEARCH,
+    init_agent_store, policy_engine, register_dreamd_tools, search_nodes_bare, AppendInput,
+    AppendZone, CAP_FS_EPISODIC, TOOL_APPEND, TOOL_SEARCH,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -19,7 +19,7 @@ use tempfile::TempDir;
 fn seed_store(dir: &TempDir) -> (Runtime, PathBuf, Vec<u8>) {
     init_agent_store(dir.path());
     let mut rt = Runtime::new().with_policy(policy_engine());
-    register_dreamd_tools(rt.capabilities(), dir.path());
+    register_dreamd_tools(&mut rt, dir.path()).expect("register dreamd tools");
     let root = dir.path().to_path_buf();
 
     for i in 0..50 {
@@ -31,18 +31,11 @@ fn seed_store(dir: &TempDir) -> (Runtime, PathBuf, Vec<u8>) {
         };
         let bytes = serde_json::to_vec(&input).unwrap();
         let tool = ToolId::new(TOOL_APPEND);
-        rt.execute_host_call(
-            HostCallRequest::new(
-                tool.clone(),
-                sha256_hex(&bytes),
-                &bytes,
-                PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
-            ),
-            |grant, input| {
-                let ctx = HostEffectContext::new(grant);
-                dreamd_poc::append_node_effect(&ctx, input)
-            },
-        )
+        rt.execute_host_call(HostCallRequest::new(
+            tool.clone(),
+            &bytes,
+            PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
+        ))
         .expect("seed append");
     }
 
@@ -63,21 +56,16 @@ fn bench_search_overhead(c: &mut Criterion) {
         b.iter(|| black_box(search_nodes_bare(&root, black_box(&query_bytes))));
     });
 
+    // Same effect as `bare`, now reached through the registry (AEG-44): the
+    // delta is policy + capability + input digest + handler dispatch + audit.
     group.bench_function("aegis_wrapped", |b| {
         b.iter(|| {
             black_box(
-                rt.execute_host_call(
-                    HostCallRequest::new(
-                        tool.clone(),
-                        sha256_hex(&query_bytes),
-                        black_box(&query_bytes),
-                        PolicyRequest::for_tool(&tool),
-                    ),
-                    |grant, input| {
-                        let ctx = HostEffectContext::new(grant);
-                        search_nodes_effect(&ctx, input)
-                    },
-                )
+                rt.execute_host_call(HostCallRequest::new(
+                    tool.clone(),
+                    black_box(&query_bytes),
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .expect("wrapped search"),
             )
         });
