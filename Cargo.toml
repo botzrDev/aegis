@@ -17,6 +17,7 @@ members = [
     "tests/fixtures/path-detector",
     "tests/adversarial-demo",
     "tests/stage2-demo",
+    "tests/stress",
     "examples/damage-bot-demo",
     "examples/dreamd-poc",
     "examples/sandbox-consumer",
