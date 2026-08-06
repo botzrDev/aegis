@@ -32,6 +32,27 @@ jobs:
     defaults:
       run:
         working-directory: governance
+    services:
+      # Real pgvector — the learning-store tests exercise the vector(16) column
+      # and the `<=>` cosine operator, so there is no SQLite substitute.
+      # Credentials are disposable CI values, never a production database.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aegis_governance_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Only the pgvector integration tests read this. The app's own default
+      # store stays in-process during pytest, so CI and laptop runs match.
+      AEGIS_GOVERNANCE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aegis_governance_test
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +64,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+
+      - name: Migrate learning store
+        # Schema changes are explicit and operator-run; the app never migrates
+        # on import. Scoped to this step only.
+        env:
+          AEGIS_GOVERNANCE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aegis_governance_test
+        run: python -m aegis_governance.learning_postgres migrate
 
       - name: Pytest
         run: python -m pytest -q
