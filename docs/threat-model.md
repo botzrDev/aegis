@@ -278,6 +278,7 @@ containment cases; they do not exhaust all attack classes.
 | [Deny suite](../tests/deny-suite/) | Policy/capability/sandbox denial paths + audit emission |
 | [Audit schema freeze](audit-schema.md) | Field-level Intent/Outcome contract; digests + sinks honesty |
 | [Hot-path benchmarks](../benches/results/hot_path.md) | Policy ≪ 100 µs; combined pipeline ≪ 1 ms (cited hardware) |
+| [Findings report](findings.md) | Measured guarantees vs named gaps; reproducible case studies + evidence bundle script |
 
 A passing demo is evidence, not certification. This threat model is the explicit
 statement of scope.
