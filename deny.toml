@@ -1,0 +1,53 @@
+# cargo-deny configuration for the Aegis Rust workspace.
+#
+# Scope: the Rust workspace only. The `governance/` Python package is out of
+# scope, and `fuzz/` is excluded from the workspace with its own lockfile.
+# Enforced in CI by the `supply-chain` job (full check) and the weekly
+# `advisory.yml` workflow (advisories only).
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # fxhash is unmaintained (no safe upgrade exists); pulled transitively by
+    # wasmtime 36 via fxprof-processed-profile. Cleared only when wasmtime
+    # drops it upstream — not actionable from this workspace.
+    { id = "RUSTSEC-2025-0057", reason = "unmaintained fxhash via wasmtime 36 -> fxprof-processed-profile; no upgrade available" },
+]
+
+[licenses]
+# Only licenses the current dependency tree actually needs; keep MIT-compatible.
+# NO GPL / AGPL / LGPL / MPL entries.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # wasmtime / cranelift / wiggle / wast family (39 crates)
+    "Apache-2.0 WITH LLVM-exception",
+    # unicode-ident and the icu_* / zerovec / yoke family
+    "Unicode-3.0",
+    # encoding_rs is "(Apache-2.0 OR MIT) AND BSD-3-Clause"; ittapi/ittapi-sys
+    # are "GPL-2.0-only OR BSD-3-Clause" — we take the BSD-3-Clause branch.
+    "BSD-3-Clause",
+    # foldhash
+    "Zlib",
+]
+confidence-threshold = 0.8
+# Unpublished workspace crates (tests/, examples/, fixtures) carry no license
+# field on purpose — they never leave this repo.
+private = { ignore = true }
+
+[bans]
+# warn, not deny: wasmtime 36's transitive tree carries duplicate crate
+# versions we don't control (rustix, hashbrown, thiserror, windows-sys, ...);
+# deny would force an undocumented skip list.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path-only deps inside the workspace: private test/example crates depend on
+# the runtime crates by path, and published crates have a versionless
+# `path = "."` self dev-dependency for the test-utils feature. crates.io still
+# rejects wildcard versions at publish time, so this loses nothing.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -116,6 +116,19 @@ These are not Aegis bugs, but common failure modes:
 
 ---
 
+## Verification posture
+
+The workspace forbids `unsafe` (`unsafe_code = forbid` workspace-wide), so Miri
+on Aegis crates is not a v1 verification gate — there is no first-party unsafe
+code for it to check. Upstream dependencies such as wasmtime and cap-std do
+contain their own `unsafe` and own their UB surface; we consume them as pinned
+dependencies and track RUSTSEC advisories via cargo-deny (`deny.toml` + CI
+supply-chain and weekly advisory jobs) rather than re-auditing their unsafe
+code here. See [docs/threat-model.md](docs/threat-model.md) for what isolation
+is and is not claimed.
+
+---
+
 ## Contact
 
 - **Security reports:** [support@botzr.com](mailto:support@botzr.com)
