@@ -1,0 +1,6 @@
+version: 1
+default: allow
+rules:
+  - id: gate
+    action: pending_approval
+    tool: dream

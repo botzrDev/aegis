@@ -1,0 +1,7 @@
+target/
+artifacts/
+coverage/
+# libFuzzer grows the corpus in place with hash-named entries; only the
+# committed seed-* files are tracked.
+corpus/*/*
+!corpus/*/seed-*

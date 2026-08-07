@@ -1,0 +1,10 @@
+version: 1
+default: allow
+rules:
+  - id: allow-search
+    action: allow
+    tool: search
+  - id: deny-search
+    action: deny
+    tool: search
+    reason: "search disabled"

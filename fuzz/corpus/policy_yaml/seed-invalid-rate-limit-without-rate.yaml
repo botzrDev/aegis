@@ -1,0 +1,5 @@
+version: 1
+rules:
+  - id: bad
+    action: rate_limit
+    tool: t

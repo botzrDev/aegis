@@ -1,0 +1,27 @@
+name: Fuzz smoke
+
+on:
+  schedule:
+    # Weekly, Monday 06:00 UTC — bounded smoke, never on the PR critical path.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  policy-yaml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+
+      - name: Fuzz policy_yaml (60s smoke)
+        # cargo-fuzz resolves fuzz/ relative to cwd — run from the repo root.
+        # libFuzzer exits nonzero on crash, which fails the job.
+        run: cargo +nightly fuzz run policy_yaml -- -max_total_time=60

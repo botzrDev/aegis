@@ -1,5 +1,8 @@
 [workspace]
 resolver = "2"
+# Sibling cargo project: libFuzzer needs nightly; the workspace pins 1.86
+# with unsafe_code = forbid. Never promote fuzz to members.
+exclude = ["fuzz"]
 members = [
     "crates/botzr-aegis-core",
     "crates/botzr-aegis-policy",

@@ -1,0 +1,20 @@
+[package]
+name = "aegis-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+botzr-aegis-policy = { path = "../crates/botzr-aegis-policy" }
+botzr-aegis-core = { path = "../crates/botzr-aegis-core" }
+
+[[bin]]
+name = "policy_yaml"
+path = "fuzz_targets/policy_yaml.rs"
+doc = false
+test = false
+bench = false

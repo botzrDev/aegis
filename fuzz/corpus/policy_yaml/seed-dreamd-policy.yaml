@@ -1,0 +1,48 @@
+version: 1
+default: deny
+rules:
+  # Episodic writes under `.agent/` (default append path).
+  - id: allow-episodic-append
+    action: allow
+    tool: append_node
+    capability: fs:episodic
+
+  # Personal writes require owner role (no explicit deny — default deny catches the rest).
+  - id: allow-personal-owner
+    action: allow
+    tool: append_node
+    capability: fs:personal
+    role: owner
+
+  # Read-only recall.
+  - id: allow-search
+    action: allow
+    tool: search_nodes
+
+  # PRD §8 — network denied for dreamd tools (Model B still checks net grant).
+  - id: deny-net
+    action: deny
+    tool: "*"
+    capability: net
+    reason: "network denied for dreamd integration"
+
+  # Rate-limit mutating append paths (D5 — benchmark informs full-wrap vs mutating-only).
+  - id: rate-limit-episodic
+    action: rate_limit
+    tool: append_node
+    capability: fs:episodic
+    rate: { max: 100, per_seconds: 60 }
+    reason: "append_node episodic rate limited"
+
+  - id: rate-limit-personal
+    action: rate_limit
+    tool: append_node
+    capability: fs:personal
+    role: owner
+    rate: { max: 100, per_seconds: 60 }
+    reason: "append_node personal rate limited"
+
+  # Consolidation gate (semantics only — G2 persistence deferred).
+  - id: approve-dream
+    action: pending_approval
+    tool: dream

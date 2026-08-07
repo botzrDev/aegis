@@ -1,0 +1,7 @@
+version: 1
+default: allow
+rules:
+  - id: rl
+    action: rate_limit
+    tool: chatty
+    rate: { max: 2, per_seconds: 60 }
