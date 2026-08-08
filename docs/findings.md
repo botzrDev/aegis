@@ -1,6 +1,6 @@
 # Aegis findings report
 
-> **Status:** v0.2 findings synthesis (AILAB-606) · **Last updated:** 2026-08-07  
+> **Status:** v0.3 findings synthesis (AILAB-606) · **Last updated:** 2026-08-07  
 > **Related:** [Threat model](threat-model.md) · [Audit schema freeze](audit-schema.md) · [SECURITY.md](../SECURITY.md) · [Benchmarks](../benches/results/hot_path.md) · [Fuzz campaign log](../fuzz/README.md)
 
 Aegis is a **research instrument**: the point is not to assert that agent tool
@@ -65,9 +65,16 @@ Explicit gaps, stated so a reviewer does not have to discover them:
   all possible interleavings.
 - **A no-crash fuzz campaign is not exhaustive.** It bounds the surface explored
   in the recorded time on the recorded hardware, nothing stronger.
-- **Deferred fuzz surfaces are not yet fuzzed.** The host `get_string` surface
-  (deferred as AILAB-604) and manifest serde (deferred as AILAB-605) have no
-  campaigns recorded yet.
+- **Two planned fuzz surfaces were dropped, not deferred — because they do not
+  exist.** Early planning named three parse surfaces to fuzz. Host-argument
+  decoding (the `get_string` OOB class) is not one Aegis has: the sandbox is
+  component-model-native, so wasmtime lifts host-import arguments before they
+  reach Aegis and there is no pointer/length decoder in-tree. Capability-manifest
+  deserialization is not one either — `ToolManifest` is a Rust builder with no
+  serde implementation and no on-disk format. Policy YAML is the only one of the
+  three that exists, and it is the one that is fuzzed. Read that as a statement
+  about how small the parse surface is, not as evidence of thorough fuzzing:
+  §4.5's limits still apply.
 - **No Miri on upstream unsafe code.** The workspace forbids `unsafe`, so there
   is no first-party unsafe for Miri to check; wasmtime and cap-std own their own
   unsafe surface. We track RUSTSEC advisories via cargo-deny instead — see the

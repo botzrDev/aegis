@@ -27,7 +27,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/botzrDev/aegis"
@@ -37,14 +37,14 @@ rust-version = "1.86"
 unsafe_code = "forbid"
 
 [workspace.dependencies]
-botzr-aegis-audit = { path = "crates/botzr-aegis-audit", version = "0.1.0" }
-botzr-aegis-capability = { path = "crates/botzr-aegis-capability", version = "0.1.0" }
-botzr-aegis-cli = { path = "crates/botzr-aegis-cli", version = "0.1.0" }
-botzr-aegis-core = { path = "crates/botzr-aegis-core", version = "0.2.0" }
-botzr-aegis-policy = { path = "crates/botzr-aegis-policy", version = "0.1.0" }
-botzr-aegis-runtime = { path = "crates/botzr-aegis-runtime", version = "0.1.0" }
-botzr-aegis-sandbox = { path = "crates/botzr-aegis-sandbox", version = "0.1.1" }
-botzr-aegis-mcp = { path = "crates/botzr-aegis-mcp", version = "0.1.0" }
+botzr-aegis-audit = { path = "crates/botzr-aegis-audit", version = "0.3.0" }
+botzr-aegis-capability = { path = "crates/botzr-aegis-capability", version = "0.3.0" }
+botzr-aegis-cli = { path = "crates/botzr-aegis-cli", version = "0.3.0" }
+botzr-aegis-core = { path = "crates/botzr-aegis-core", version = "0.3.0" }
+botzr-aegis-policy = { path = "crates/botzr-aegis-policy", version = "0.3.0" }
+botzr-aegis-runtime = { path = "crates/botzr-aegis-runtime", version = "0.3.0" }
+botzr-aegis-sandbox = { path = "crates/botzr-aegis-sandbox", version = "0.3.0" }
+botzr-aegis-mcp = { path = "crates/botzr-aegis-mcp", version = "0.3.0" }
 anyhow = "1"
 arc-swap = "1"
 cap-std = "3"

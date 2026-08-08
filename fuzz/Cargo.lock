@@ -28,14 +28,14 @@ dependencies = [
 
 [[package]]
 name = "botzr-aegis-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "botzr-aegis-policy"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "arc-swap",
  "botzr-aegis-core",
