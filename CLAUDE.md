@@ -4,9 +4,9 @@ Guidance for Claude Code when working in the **Aegis** repository.
 
 ## What this project is
 
-**Aegis** is a research instrument for testing and publishing novel discoveries in secure agent tool execution (Rust, wasmtime). It sits *underneath* agent frameworks — not an orchestrator, not a dashboard, not an LLM layer.
+**Aegis** is a research instrument for secure agent tool execution (Rust, wasmtime) and — long horizon — an **execution substrate** for trustworthy autonomous software (working name **REPLAY**: debugger / simulator / security runtime). It sits *underneath* agent frameworks — not an agent framework, not a SaaS dashboard, not an LLM layer.
 
-One-liner: *"A reproducible runtime for testing what agent tool isolation actually guarantees."*
+Near-term one-liner: *"A reproducible runtime for testing what agent tool isolation actually guarantees."*
 
 Every tool call walks the same pipeline, in this order (load-bearing — do not reorder):
 
@@ -14,9 +14,9 @@ Every tool call walks the same pipeline, in this order (load-bearing — do not 
 POLICY → CAPABILITY → SANDBOX → AUDIT (wraps all three)
 ```
 
-**Status (2026-08-09):** M0–M4 complete. Enforcement pipeline, CLI (`aegis run`), MCP stdio gateway, deny/adversarial/stress suites, findings + threat model, and Layer 2 `governance/` (Python) are on `main`. Workspace lockstep at `0.3.0` (unreleased). Open sprint work: **AILAB-610** (cut/publish `v0.3.0`) and **AILAB-611** (MCP live-deny demo). After those, the board is empty — next tranche needs an explicit direction call; do not invent scope.
+**Status (2026-08-09):** M0–M4 complete; **`v0.3.0` cut and published**. Live board is Execution Report **D1–D5** (AILAB-618…636) plus leftover M5 AILAB-611. Long-horizon vision: `aegis-context/REPLAY.prd.md` — do **not** invent sprint scope from REPLAY phases without ticketed R0+ work and an Austin direction call.
 
-**License:** MIT (confirmed 2026-07-05, OQ-1 closed). See `LICENSE`.
+**License:** MIT at published 0.3.0 crates; dual Apache-2.0/MIT going forward (AILAB-634). See `LICENSE`.
 
 ## Private planning context (local only)
 
@@ -26,7 +26,10 @@ Before scope, sequencing, or architecture decisions, read (locally):
 
 | File | Role |
 |---|---|
-| `aegis-context/AEGIS — MASTER PRD.md` | Scope + build order |
+| `aegis-context/REPLAY.prd.md` | Long-horizon north star (does not schedule tickets alone) |
+| `aegis-context/decisions/REPLAY-direction-2026-08-09.md` | Binding direction decisions |
+| `aegis-context/AEGIS — Execution Report.md` | Near-term elevated mission (D1–D5) |
+| `aegis-context/AEGIS — MASTER PRD.md` | Near-term scope + build order |
 | `aegis-context/(CURRENT) Hardened Implementation Design & Anti-Patterns.md` | Crate graph, pipeline, anti-patterns |
 | `aegis-context/BUILD_PLAN.md` | Sprint backlog |
 | `aegis-context/MEMORY.md` | Agent memory index |
