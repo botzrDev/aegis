@@ -149,13 +149,17 @@ containment cases and measured costs — they do not certify the instrument.
 
 ## Status
 
-The enforcement pipeline is wired and tested end-to-end; demos, benchmarks, and the
-threat model are published. The first packaging tag —
-[**`v0.1.0`**](https://github.com/botzrDev/aegis/releases/tag/v0.1.0) — is cut. The
-`aegis` CLI supports `aegis run` for one-shot WASM execution through the pipeline.
-Eight crates are published on [crates.io](https://crates.io/search?q=botzr-aegis) —
-`core`, `policy`, `capability`, `sandbox`, `runtime`, `audit`, `mcp`, `cli` — and the
-dependency graph resolves, so the CLI installs directly:
+The enforcement pipeline is wired and tested end-to-end; demos, benchmarks, the threat
+model, and the [findings report](docs/findings.md) are published. The current release is
+[**`v0.3.0`**](https://github.com/botzrDev/aegis/releases/tag/v0.3.0) — the first
+lockstep release, in which all eight crates carry the same version. It adds a fuzz
+harness over the policy YAML parse surface, a stress suite proving audit exactly-once
+under concurrency, and supply-chain gates. The `aegis` CLI supports `aegis run` for
+one-shot WASM execution through the pipeline.
+
+Eight crates are published on [crates.io](https://crates.io/search?q=botzr-aegis) at
+`0.3.0` — `core`, `policy`, `capability`, `sandbox`, `runtime`, `audit`, `mcp`, `cli` —
+and the dependency graph resolves, so the CLI installs directly:
 
 ```sh
 cargo install botzr-aegis-cli
@@ -164,8 +168,10 @@ cargo install botzr-aegis-cli
 Building from [`main`](https://github.com/botzrDev/aegis) or the tag still works, and is
 what you want for the in-repo demos and benchmark harnesses.
 
-A ninth name, `botzr-aegis-sidecar`, is yanked and retired: the Phase 2 gateway is MCP
-over stdio, so use `botzr-aegis-mcp` instead.
+Earlier releases were a split set — `core` at 0.2.0, `sandbox` at 0.1.1, the other six at
+0.1.0. From 0.3.0 the whole workspace moves as one version; see the versioning note in
+the [CHANGELOG](CHANGELOG.md). A ninth name, `botzr-aegis-sidecar`, is yanked and
+retired: the Phase 2 gateway is MCP over stdio, so use `botzr-aegis-mcp` instead.
 
 ## License
 
