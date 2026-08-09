@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "metric": "lines",
+  "scope": "cargo workspace (--workspace)",
+  "lines_covered": 3980,
+  "lines_total": 4561,
+  "percent": 87.2616,
+  "note": "High-water mark for scripts/coverage.sh check. Raise via `scripts/coverage.sh bump`; lowering requires a hand-edited, reviewed commit."
+}

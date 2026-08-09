@@ -98,6 +98,17 @@ Run the full workspace gate:
 cargo test --workspace
 ```
 
+Coverage is gated by a ratchet: CI fails any change that drops total line
+coverage below the committed high-water mark in
+[`coverage/baseline.json`](coverage/baseline.json). Requires
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov):
+
+```bash
+./scripts/coverage.sh report   # measure and print totals
+./scripts/coverage.sh check    # what CI runs — fail on any drop vs baseline
+./scripts/coverage.sh bump     # raise the baseline after improving coverage
+```
+
 Execute one Model A tool call from the CLI (registers the echo fixture, walks the
 full pipeline, writes audit JSONL):
 

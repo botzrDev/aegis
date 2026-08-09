@@ -27,6 +27,25 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust toolchain
+        run: |
+          rustup target add wasm32-wasip2
+          rustup component add llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        # Built from crates.io at a pinned version rather than pulling a
+        # third-party action — keeps the supply-chain surface to registries
+        # we already trust.
+        run: cargo install cargo-llvm-cov --version 0.6.21 --locked
+
+      - name: Coverage gate (ratchet vs coverage/baseline.json)
+        run: ./scripts/coverage.sh check
+
   governance:
     runs-on: ubuntu-latest
     defaults:
