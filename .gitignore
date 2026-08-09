@@ -17,4 +17,11 @@ governance/.venv/
 **/__pycache__/
 *.egg-info/
 .pytest_cache/
-/.agent/.dreamd/
+
+# Agent scratch / local harness state (not product)
+/.agent/
+**/.claude/
+
+# WSL/Windows ADS junk from file copies
+*:Zone.Identifier
+**/*:Zone.Identifier
