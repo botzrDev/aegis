@@ -12,7 +12,7 @@ support.
 
 ---
 
-## [0.3.0] — unreleased
+## [0.3.0] — 2026-08-09
 
 ### Added
 
@@ -81,4 +81,5 @@ published from a later commit (`196ada6`, 2026-07-17). The tag is left where it
 is — see the standing rules in
 [docs/release-checklist.md](docs/release-checklist.md).
 
+[0.3.0]: https://github.com/botzrDev/aegis/releases/tag/v0.3.0
 [0.1.0]: https://github.com/botzrDev/aegis/releases/tag/v0.1.0
