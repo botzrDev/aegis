@@ -163,4 +163,26 @@ mod tests {
             "expected exfil tool_id, got: {outcome}"
         );
     }
+
+    #[test]
+    fn call_tool_rejects_non_catalog_ids() {
+        let audit = NamedTempFile::new().expect("temp audit");
+        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+        let err = call_tool(&rt, "ghost", "x").unwrap_err();
+        assert!(matches!(err, AegisError::HostDenied { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn build_runtime_accepts_policy_file() {
+        let policy = NamedTempFile::new().expect("temp policy");
+        std::fs::write(policy.path(), DEFAULT_DENY_EXFIL_POLICY).expect("write policy");
+        let audit = NamedTempFile::new().expect("temp audit");
+        let rt = build_runtime(Some(policy.path()), Some(audit.path())).expect("runtime");
+        // Same deny policy as the default: exfil still refused at the policy station.
+        let err = call_tool(&rt, EXFIL_TOOL_ID, "secrets").unwrap_err();
+        assert!(
+            matches!(err, AegisError::PolicyDenied { .. }),
+            "got: {err:?}"
+        );
+    }
 }

@@ -363,4 +363,156 @@ mod tests {
             other => panic!("expected Ready, got {other:?}"),
         }
     }
+
+    fn sv(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_run_all_optional_flags() {
+        let args = sv(&[
+            "aegis",
+            "run",
+            "--wasm",
+            "e.wasm",
+            "--tool-id",
+            "echo",
+            "--input-file",
+            "in.txt",
+            "--base-dir",
+            "/tmp/base",
+            "--sha256",
+            "abc123",
+            "--version",
+            "9.9.9",
+            "--policy",
+            "p.yaml",
+            "--audit",
+            "a.jsonl",
+        ]);
+        match parse_args(&args).unwrap() {
+            Command::Run(r) => {
+                assert_eq!(r.component, PathBuf::from("e.wasm"));
+                assert_eq!(r.id, "echo");
+                assert_eq!(r.input, None);
+                assert_eq!(r.input_file, Some(PathBuf::from("in.txt")));
+                assert_eq!(r.base_dir, Some(PathBuf::from("/tmp/base")));
+                assert_eq!(r.sha256.as_deref(), Some("abc123"));
+                assert_eq!(r.version, "9.9.9");
+                assert_eq!(r.policy, Some(PathBuf::from("p.yaml")));
+                assert_eq!(r.audit, Some(PathBuf::from("a.jsonl")));
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_errors_and_help_paths() {
+        // top-level help forms
+        for args in [
+            sv(&["aegis", "--help"]),
+            sv(&["aegis", "-h"]),
+            sv(&["aegis", "help"]),
+        ] {
+            assert_eq!(parse_args(&args).unwrap(), Command::Help);
+        }
+        // run --help
+        assert_eq!(
+            parse_args(&sv(&["aegis", "run", "--help"])).unwrap(),
+            Command::Help
+        );
+        // no args → ready with defaults
+        assert_eq!(
+            parse_args(&sv(&["aegis"])).unwrap(),
+            Command::Ready {
+                policy: None,
+                audit: None
+            }
+        );
+        // unknown command / unknown flags / missing values
+        assert!(parse_args(&sv(&["aegis", "frobnicate"]))
+            .unwrap_err()
+            .contains("unknown command"));
+        assert!(parse_args(&sv(&["aegis", "--bogus"]))
+            .unwrap_err()
+            .contains("unknown flag"));
+        assert!(parse_args(&sv(&["aegis", "run", "--bogus"]))
+            .unwrap_err()
+            .contains("unknown flag"));
+        assert!(parse_args(&sv(&["aegis", "--policy"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&["aegis", "run", "--input-file"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        // exclusive inputs
+        let err = parse_args(&sv(&[
+            "aegis",
+            "run",
+            "--component",
+            "e.wasm",
+            "--id",
+            "e",
+            "--input",
+            "x",
+            "--input-file",
+            "f",
+        ]))
+        .unwrap_err();
+        assert!(err.contains("only one of"));
+        // missing required flags
+        assert!(parse_args(&sv(&["aegis", "run", "--id", "e"]))
+            .unwrap_err()
+            .contains("--component"));
+        assert!(parse_args(&sv(&["aegis", "run", "--component", "e.wasm"]))
+            .unwrap_err()
+            .contains("--id"));
+    }
+
+    #[test]
+    fn usage_text_names_every_flag() {
+        let usage = usage_text();
+        for flag in [
+            "--component",
+            "--id",
+            "--input",
+            "--input-file",
+            "--policy",
+            "--audit",
+            "--base-dir",
+            "--sha256",
+            "--version",
+        ] {
+            assert!(usage.contains(flag), "usage missing {flag}");
+        }
+    }
+
+    #[test]
+    fn dispatch_help_and_ready_paths() {
+        let success = format!("{:?}", ExitCode::SUCCESS);
+        assert_eq!(format!("{:?}", dispatch(Command::Help)), success);
+        // Default runtime: allow-all policy, temp audit — builds cleanly.
+        assert_eq!(
+            format!(
+                "{:?}",
+                dispatch(Command::Ready {
+                    policy: None,
+                    audit: None
+                })
+            ),
+            success
+        );
+        // Bad policy path → error arm.
+        let failure = format!("{:?}", ExitCode::from(1));
+        assert_eq!(
+            format!(
+                "{:?}",
+                dispatch(Command::Ready {
+                    policy: Some(PathBuf::from("/nonexistent/policy.yaml")),
+                    audit: None,
+                })
+            ),
+            failure
+        );
+    }
 }

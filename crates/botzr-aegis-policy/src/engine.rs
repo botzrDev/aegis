@@ -236,3 +236,75 @@ impl std::fmt::Debug for PolicyEngine {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALLOW_WITH_RULE: &str = r#"
+version: 1
+default: allow
+rules:
+  - id: deny-echo
+    action: deny
+    tool: echo
+    reason: "engine test"
+"#;
+
+    const DENY_DEFAULT: &str = r#"
+version: 1
+default: deny
+rules:
+  - id: deny-echo
+    action: deny
+    tool: echo
+    reason: "engine test"
+"#;
+
+    fn write_policy(yaml: &str) -> tempfile::NamedTempFile {
+        let f = tempfile::NamedTempFile::new().expect("temp policy");
+        std::fs::write(f.path(), yaml).expect("write policy");
+        f
+    }
+
+    #[test]
+    fn load_reads_file_and_remembers_source_path() {
+        let f = write_policy(ALLOW_WITH_RULE);
+        let engine = PolicyEngine::load(f.path()).expect("load");
+        assert_eq!(engine.source_path.as_deref(), Some(f.path()));
+    }
+
+    #[test]
+    fn load_missing_file_is_io_error() {
+        let err = PolicyEngine::load("/nonexistent/aegis-engine-test.yaml").unwrap_err();
+        assert!(matches!(err, PolicyError::Io { .. }));
+    }
+
+    #[test]
+    fn reload_from_file_swaps_active_digest() {
+        let f = write_policy(ALLOW_WITH_RULE);
+        let engine = PolicyEngine::load(f.path()).expect("load");
+        let old = engine.active_digest();
+        std::fs::write(f.path(), DENY_DEFAULT).expect("rewrite policy");
+        let outcome = engine.reload_from_file().expect("reload");
+        assert_eq!(outcome.old_digest, old);
+        assert_ne!(outcome.new_digest, old);
+        assert_eq!(outcome.source, ReloadSource::File);
+        assert_eq!(engine.active_digest(), outcome.new_digest);
+    }
+
+    #[test]
+    fn reload_without_source_path_is_io_error() {
+        let engine = PolicyEngine::allow_all();
+        let err = engine.reload_from_file().unwrap_err();
+        assert!(matches!(err, PolicyError::Io { .. }));
+    }
+
+    #[test]
+    fn default_is_allow_all_and_debug_prints_digest() {
+        let engine = PolicyEngine::default();
+        let dbg = format!("{engine:?}");
+        assert!(dbg.contains("PolicyEngine"), "debug output: {dbg}");
+        assert!(dbg.contains("active_digest"), "debug output: {dbg}");
+    }
+}

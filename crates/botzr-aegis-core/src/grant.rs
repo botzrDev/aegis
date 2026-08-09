@@ -53,3 +53,20 @@ impl CapabilityGrant {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deny_all_grants_nothing() {
+        let g = CapabilityGrant::deny_all(ToolId::new("t"), "grant-0");
+        assert_eq!(g.grant_id, "grant-0");
+        assert_eq!(g.tool_id, ToolId::new("t"));
+        assert!(g.fs.is_none());
+        assert!(g.net.is_none());
+        assert_eq!(g.max_memory_bytes, 0);
+        assert_eq!(g.max_wall_ms, 0);
+        assert_eq!(g.max_output_bytes, 0);
+    }
+}

@@ -256,4 +256,42 @@ mod tests {
             "expected POLICY_DENIED error code, got: {called}"
         );
     }
+
+    #[test]
+    fn handle_line_edges() {
+        let audit = NamedTempFile::new().expect("temp audit");
+        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+
+        // Empty input and notifications (no id / null id): silence.
+        assert_eq!(handle_line(&rt, ""), None);
+        assert_eq!(handle_line(&rt, "   "), None);
+        assert_eq!(handle_line(&rt, r#"{"jsonrpc":"2.0","method":"x"}"#), None);
+        assert_eq!(
+            handle_line(&rt, r#"{"jsonrpc":"2.0","id":null,"method":"x"}"#),
+            None
+        );
+
+        // Parse error → -32700 with null id.
+        let parse = handle_line(&rt, "{not json").expect("parse error response");
+        assert!(parse.contains("-32700"), "parse: {parse}");
+
+        // Unknown method → -32601.
+        let nf = handle_line(&rt, r#"{"jsonrpc":"2.0","id":7,"method":"nope"}"#).expect("resp");
+        assert!(nf.contains("-32601"), "not found: {nf}");
+
+        // Ping → empty result object.
+        let pong = handle_line(&rt, r#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#).expect("resp");
+        assert!(pong.contains("\"result\""), "ping: {pong}");
+
+        // tools/call with unknown tool name → isError content, not a JSON-RPC error.
+        let unk = handle_line(
+            &rt,
+            r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"ghost","arguments":{"text":"x"}}}"#,
+        )
+        .expect("resp");
+        assert!(
+            unk.contains("unknown tool") && unk.contains("isError"),
+            "unknown: {unk}"
+        );
+    }
 }

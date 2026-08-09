@@ -52,3 +52,60 @@ impl fmt::Display for AegisError {
 }
 
 impl std::error::Error for AegisError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_covers_every_variant() {
+        let cases = [
+            (
+                AegisError::PolicyDenied { reason: "r".into() },
+                "policy denied: r",
+            ),
+            (
+                AegisError::RateLimited { reason: "r".into() },
+                "rate limited: r",
+            ),
+            (
+                AegisError::PendingApproval {
+                    approval_id: "apr-1".into(),
+                },
+                "pending approval: apr-1",
+            ),
+            (
+                AegisError::CapabilityDenied {
+                    reason: "r".into(),
+                    denied_capability: Some("fs".into()),
+                },
+                "capability denied: r",
+            ),
+            (
+                AegisError::Trap {
+                    message: "m".into(),
+                },
+                "trap: m",
+            ),
+            (
+                AegisError::ResourceExceeded {
+                    kind: "memory".into(),
+                },
+                "resource exceeded: memory",
+            ),
+            (
+                AegisError::HostDenied { reason: "r".into() },
+                "host denied: r",
+            ),
+            (
+                AegisError::Audit {
+                    message: "m".into(),
+                },
+                "audit error: m",
+            ),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(err.to_string(), expected);
+        }
+    }
+}
