@@ -243,6 +243,22 @@ No raw number in this report originates here; each is a citation:
   alone and <1 ms for the combined policy + capability hot path. Recorded on the
   hardware cited in that file (WSL2 Linux, AMD Ryzen AI 5 340, rustc 1.96.0,
   Criterion 0.5.1, dated 2026-07-09).
+- **Instantiation and audit-emission numbers** come from
+  [`benches/results/cell_and_audit.md`](../benches/results/cell_and_audit.md):
+  `instantiation/warm` 49.339 µs median against a <0.5 ms target, and
+  `instantiation/cold` 39.490 ms against a <5 ms target — **the cold target is
+  missed**, with engine construction only ~1–2% of it and component
+  compile/link ~29.4 ms, so the target is retired pending a
+  precompiled-artifact or compilation-cache mechanism. Warm is an upper bound:
+  it runs through `SandboxEngine::execute`, so a per-call tokio runtime,
+  `build_store`, and a trivial WIT `run` are all inside the median.
+  `audit_emission/begin_complete` is 4.7185 ms and is write+fsync latency, not
+  an Aegis-side overhead figure — a `serialize_only` control measures the serde
+  half of the same cycle at 468.46 ns, ~0.01% of it. The compile-bound groups
+  are noisy on this hardware (`cold` spans 27.8–39.5 ms across four runs); the
+  results file publishes the cross-run table and the verdicts hold in every run.
+  Recorded on the same machine but the repo-pinned rustc 1.86.0, dated
+  2026-08-10.
 - **Fuzz campaign numbers** come from the [`fuzz/README.md`](../fuzz/README.md)
   campaign log, which cites its own hardware and nightly rustc per row.
 

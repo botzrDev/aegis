@@ -41,5 +41,10 @@ tokio = { workspace = true }
 # can reach the `test-utils`-gated fixture API. Dev-dependency cycles on the
 # same package are explicitly legal in cargo.
 botzr-aegis-sandbox = { path = ".", features = ["test-utils"] }
+criterion = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+
+[[bench]]
+name = "instantiation"
+harness = false
