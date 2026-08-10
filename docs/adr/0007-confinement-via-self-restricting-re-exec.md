@@ -1,6 +1,6 @@
 # Confinement applies via a self-restricting re-exec, and needs no `unsafe`
 
-**Status:** accepted (2026-08-09) · lands in AILAB-628 · deletes a clause from Execution Report §5
+**Status:** accepted (2026-08-10) · lands in AILAB-628 · deletes a clause from Execution Report §5
 
 Native MCP servers are confined by re-executing `aegis` as a hidden subcommand (`aegis __confine-exec -- <target>`). That process applies Landlock and seccomp **to itself** using safe wrapper APIs, then replaces its own image with the target. Landlock domains and seccomp filters are preserved across `execve`, so the target runs confined. Nothing in the workspace needs `unsafe`, and `unsafe_code = forbid` stays workspace-wide.
 

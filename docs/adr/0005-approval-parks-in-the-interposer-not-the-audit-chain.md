@@ -1,6 +1,6 @@
 # Approval parks the MCP request, not the audit record
 
-**Status:** accepted (2026-08-09) · lands in AILAB-629, touches AILAB-619 and AILAB-622
+**Status:** accepted (2026-08-10) · lands in AILAB-629, touches AILAB-619 and AILAB-622
 
 A `PendingApproval` policy decision closes its audit record **immediately** — the park is an outcome line carrying `PolicyOutcome::PendingApproval`, exactly as shipped. What parks is the JSON-RPC response inside the interposer. The human verdict is a new `Decision` line, and a resumed call is a **new Call** with its own intent and outcome, cross-referenced by `approval_id`.
 
@@ -25,5 +25,5 @@ Under the decoupled model a client timeout discards a held response and touches 
 - **Three verifier rules follow.** A `PendingApproval` outcome with no `Decision` is legal (informational). A `Decision` for an absent `approval_id` is legal (informational — parked in an earlier file). **Two `Decision` lines for one `approval_id` is a structural violation**, exit 1, same class as a chain break, because a correct emitter cannot produce it.
 - **The `Decision` line records the granted scope, not just the verdict.** 629 requires the approver be shown *"what authority approval would grant"*; that authority belongs in the record. Approval without recorded scope is a blank check in the evidence. The resumed call's grant must then be a subset of the approved scope — §6.6's delegation-only-narrows rule applying to human approvals for free.
 - **Unmatched-intent is a consistency cross-check, not a tamper signal.** Interior deletion is already `Tampered` via `prev_hash`. What the invariant adds is catching a buggy emitter, and catching a rewriting attacker who holds the signing key but drops an outcome sloppily. SPEC.md must not claim more.
-- **AILAB-622 gains a verdict and a field.** `ReplayVerdict::NewlyParked` — replaying against a policy that newly requires approval is not "newly blocked", because a human might have approved. And `approval_ref` is a **decision input**, so under [ADR-0001](./0001-aar-chain-and-envelope.md) it belongs in the Chain; without it, replaying a resumed call cannot reconstruct why it was allowed.
+- **AILAB-622 gains a verdict and a field.** `RecheckVerdict::NewlyParked` (written `ReplayVerdict` when this was decided; the command was renamed hours later by [ADR-0008](./0008-d2-re-evaluation-is-recheck-not-replay.md)) — replaying against a policy that newly requires approval is not "newly blocked", because a human might have approved. And `approval_ref` is a **decision input**, so under [ADR-0001](./0001-aar-chain-and-envelope.md) it belongs in the Chain; without it, replaying a resumed call cannot reconstruct why it was allowed.
 - **A park timeout is required regardless.** 629's AC already demands defined timeout and denial paths. It is a feature of any answer here, not a competing one.

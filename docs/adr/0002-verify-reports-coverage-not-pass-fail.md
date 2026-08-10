@@ -1,6 +1,6 @@
 # `aegis verify` reports coverage, not pass/fail
 
-**Status:** accepted (2026-08-09) · lands in AILAB-619 (format) and AILAB-621 (matrix)
+**Status:** accepted (2026-08-10) · lands in AILAB-619 (format) and AILAB-621 (matrix)
 
 Because only outcome lines carry signatures ([ADR-0001](./0001-aar-chain-and-envelope.md)), content beyond the last signature is unverifiable by construction, and truncating a Chain leaves an internally consistent Chain. **Truncation is therefore not detectable from the Chain alone** — it is detectable only by an *Anchor* that asserts content exists beyond a point. So `aegis verify` returns a three-state verdict computed from Coverage (the highest `seq` covered by a valid signature) plus Anchor presence: `Verified`, `Indeterminate` with a typed reason, or `Tampered`.
 

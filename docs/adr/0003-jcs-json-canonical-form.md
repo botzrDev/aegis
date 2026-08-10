@@ -1,6 +1,6 @@
 # JCS JSON is the canonical form, over a constrained value space
 
-**Status:** accepted (2026-08-09) · lands in AILAB-619
+**Status:** accepted (2026-08-10) · lands in AILAB-619
 
 Records hash under [RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785), and stay JSONL on disk. SPEC.md additionally constrains the value space so that JCS's hard cases are unreachable: no floating-point values anywhere, digests as fixed-length lowercase hex, integers as `u64` below 2^53, and absent fields **omitted rather than null**.
 

@@ -1,6 +1,6 @@
 # macOS confinement fast-follows M4; it does not gate it
 
-**Status:** accepted (2026-08-09) · lands in AILAB-630, conditions AILAB-631
+**Status:** accepted (2026-08-10) · lands in AILAB-630, conditions AILAB-631
 
 M4 launches with Linux-only native confinement. macOS ships everything else.
 

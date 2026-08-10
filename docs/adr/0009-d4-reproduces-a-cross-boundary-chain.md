@@ -1,6 +1,6 @@
 # D4 reproduces a cross-boundary exfiltration chain, not a same-server one
 
-**Status:** accepted (2026-08-09) · lands in AILAB-631
+**Status:** accepted (2026-08-10) · lands in AILAB-631
 
 The wedge demo reproduces an exfiltration chain whose **exfiltration leg leaves the capability envelope** — reading a credential outside the grant, or egress to a host with no `NetGrant`. Not a chain where the exfiltration leg is a legitimate call to an allowlisted server.
 

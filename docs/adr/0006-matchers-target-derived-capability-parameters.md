@@ -1,6 +1,6 @@
 # Argument matchers target derived capability parameters, not raw JSON
 
-**Status:** accepted (2026-08-09) · lands in AILAB-626, changes [ADR-0001](./0001-aar-chain-and-envelope.md)
+**Status:** accepted (2026-08-10) · lands in AILAB-626, changes [ADR-0001](./0001-aar-chain-and-envelope.md)
 
 Report §6.2's "structured matchers over JSON arguments" is implemented as matchers over the **capability parameters the runtime derives from a call** — an `fs` path, a `net` host and port — not over raw JSON argument trees. A rule reads `deny fs.read path_under: ~/.ssh` and covers every tool regardless of whether that tool names its argument `path`, `file_path`, or `params.target.location`.
 
@@ -24,7 +24,7 @@ This scoping is also what makes the AILAB-605 argument honest rather than rhetor
 
 ## Consequences
 
-- **This changes ADR-0001.** The Envelope was made a hard prerequisite for argument-level replay on the assumption that policy matches raw arguments. Derived parameters are decision axes, so they live in the Chain — `aegis replay` therefore works **chain-only even after AILAB-626 lands**, and the Envelope becomes purely forensic. The conditional-Envelope logic in AILAB-622 remains correct but should now almost never fire.
+- **This changes ADR-0001.** The Envelope was made a hard prerequisite for argument-level replay on the assumption that policy matches raw arguments. Derived parameters are decision axes, so they live in the Chain — `aegis recheck` (named `aegis replay` when this was decided; see [ADR-0008](./0008-d2-re-evaluation-is-recheck-not-replay.md)) therefore works **chain-only even after AILAB-626 lands**, and the Envelope becomes purely forensic. The conditional-Envelope logic in AILAB-622 remains correct but should now almost never fire.
 - **Derived parameters are decision axes and join the record**, under the same rule as `capability`/`role`/`session`: if replay needs it, the Chain carries it.
 - **Sensitivity moves, it does not vanish.** A derived `fs_path` of `/home/a/clients/acme/notes.md` is smaller than the full argument tree but is not non-sensitive. The Chain is still the publishable artifact, so SPEC.md must say plainly that derived paths appear in it.
 - **`ToolManifest` does not express Bindings today.** It declares static needs (`FsNeeds`, `NetNeeds` — *which* paths a tool may touch) with no mapping from an argument position to an axis.

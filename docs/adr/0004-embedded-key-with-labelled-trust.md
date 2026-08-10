@@ -1,6 +1,6 @@
 # The signing key is embedded, and `aegis verify` labels its trust level
 
-**Status:** accepted (2026-08-09) · lands in AILAB-620, surfaced by AILAB-621
+**Status:** accepted (2026-08-10) · lands in AILAB-620, surfaced by AILAB-621
 
 A per-host ed25519 keypair signs outcome lines. The Session-`Open` line carries the public key, every signed line carries `key_id` (its fingerprint), and `aegis verify` **always prints the fingerprint** and distinguishes two success states: `Verified (pinned to <fp>)` when a key is supplied via `--key` or a trust store, and `Verified (unpinned)` when not — the latter stated as *internal consistency only*, explicitly not a claim about provenance. A `key_id` that fails to match a supplied trust store is `Tampered`.
 
