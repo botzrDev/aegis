@@ -16,5 +16,11 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
+# Pure computation, not I/O: core's "zero I/O" rule bars side effects, not
+# arithmetic. `serde_json` backs the JCS canonical form (the hash input for
+# every audit line); `sha2` backs the digest newtypes. Core deliberately does
+# *not* depend on ed25519-dalek — it holds signature bytes, never keys.
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]

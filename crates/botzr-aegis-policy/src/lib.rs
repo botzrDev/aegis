@@ -19,7 +19,7 @@ mod set;
 // `Matcher`, `RateSpec`, `RuleKind`, `DefaultAction`), the rate-limiter, and
 // the YAML parser are deliberately crate-internal: they are an implementation
 // of G5 conflict resolution, not an API consumers pin against.
-pub use botzr_aegis_core::ResourceCeiling;
+pub use botzr_aegis_core::{PolicySetHash, ResourceCeiling};
 pub use engine::{PolicyEngine, ReloadOutcome, ReloadSource};
 pub use error::PolicyError;
 pub use eval::{PolicyDecision, PolicyRequest};

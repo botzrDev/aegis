@@ -50,11 +50,11 @@ fn aegis_run_echo_success_and_audit() {
 
     let jsonl = std::fs::read_to_string(audit_path).expect("audit readable");
     assert!(
-        jsonl.contains("\"phase\":\"intent\""),
+        jsonl.contains("\"line_type\":\"intent\""),
         "missing intent: {jsonl}"
     );
     assert!(
-        jsonl.contains("\"phase\":\"outcome\""),
+        jsonl.contains("\"line_type\":\"outcome\""),
         "missing outcome: {jsonl}"
     );
     assert!(
@@ -93,7 +93,7 @@ fn aegis_run_policy_deny_still_audits() {
 
     let jsonl = std::fs::read_to_string(audit.path()).expect("audit readable");
     assert!(
-        jsonl.contains("\"phase\":\"outcome\""),
+        jsonl.contains("\"line_type\":\"outcome\""),
         "missing outcome on deny: {jsonl}"
     );
     assert!(

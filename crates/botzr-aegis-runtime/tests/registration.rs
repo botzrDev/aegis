@@ -7,11 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::{AegisError, AuditIntent, ToolId};
+use botzr_aegis_core::{AegisError, AuditIntent, RequestDigest, ToolId};
 use botzr_aegis_policy::PolicyRequest;
 use botzr_aegis_runtime::{
-    sha256_hex, HostCallRequest, HostEffectError, RegisterError, Runtime, RuntimeBuilder,
-    ToolExecutable,
+    HostCallRequest, HostEffectError, RegisterError, Runtime, RuntimeBuilder, ToolExecutable,
 };
 
 const ECHO_WASM: &[u8] = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
@@ -118,8 +117,8 @@ fn host_manifest_with_wasm_bytes_is_kind_mismatch_at_register_time() {
 
 #[test]
 fn audit_intent_digest_is_derived_from_the_input_bytes() {
-    // No public API accepts a digest any more; the intent line must carry
-    // sha256_hex of the exact bytes that were executed.
+    // No public API accepts a digest any more; the intent line must carry the
+    // SHA-256 of the exact bytes that were executed, unmodified.
     let dir = tempfile::tempdir().unwrap();
     let audit_path = dir.path().join("audit.jsonl");
     let mut rt = RuntimeBuilder::new()
@@ -143,18 +142,18 @@ fn audit_intent_digest_is_derived_from_the_input_bytes() {
     let text = std::fs::read_to_string(&audit_path).expect("audit file");
     let intent_line = text
         .lines()
-        .find(|line| line.contains("\"phase\":\"intent\""))
+        .find(|line| line.contains("\"line_type\":\"intent\""))
         .expect("intent line present");
     let intent: AuditIntent = serde_json::from_str(intent_line).expect("intent parses");
 
     assert_eq!(intent.tool_id, ToolId::new("echo"));
     assert_eq!(
-        intent.input_digest,
-        sha256_hex(input),
-        "audited digest must be the runtime-computed hash of the input"
+        intent.request_digest,
+        RequestDigest::of_request_bytes(input),
+        "audited digest must be the runtime-computed hash of the raw input"
     );
     // Sanity: the digest is a real hash, not a placeholder.
-    assert_eq!(intent.input_digest.len(), 64);
+    assert_eq!(intent.request_digest.to_hex().len(), 64);
 }
 
 #[test]

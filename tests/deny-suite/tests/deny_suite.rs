@@ -17,14 +17,13 @@
 //!   * guest fs write + path containment (`..`, symlink)
 //!   * guest http import through `Runtime::execute_tool_call` (Model B)
 
-use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{
     mint_grant, narrow_grant, CapabilityError, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo,
     ToolKind, ToolLimits, ToolManifest,
 };
 use botzr_aegis_core::{
-    AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ResourceCeiling,
-    ToolId,
+    to_canonical_json, AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome,
+    ResourceCeiling, ToolId,
 };
 use botzr_aegis_policy::PolicyEngine;
 use botzr_aegis_runtime::Runtime;
@@ -72,31 +71,56 @@ fn info(id: &str) -> ToolInfo {
     }
 }
 
-/// Read the audit JSONL, assert the two-phase shape, and return the outcome.
+/// Read the audit JSONL, assert the Session shape, and return the outcome.
+///
+/// Schema v2 puts the Session `Open` line first, so a call's intent and outcome
+/// are lines 1 and 2, not 0 and 1. The `Close` line is not here: the writer is
+/// still alive inside the `Runtime`.
 fn outcome(rt: &Runtime) -> AuditRecord {
     let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
         .expect("audit readable")
         .lines()
         .map(str::to_owned)
         .collect();
-    assert_eq!(lines.len(), 2, "each call writes exactly intent + outcome");
+    assert_eq!(
+        lines.len(),
+        3,
+        "each call writes exactly open + intent + outcome"
+    );
     assert!(
-        lines[0].contains("\"phase\":\"intent\""),
-        "first line is the intent: {}",
+        lines[0].contains("\"line_type\":\"open\""),
+        "first line is the Session open: {}",
         lines[0]
     );
     assert!(
-        lines[1].contains("\"phase\":\"outcome\""),
-        "second line is the outcome: {}",
+        lines[1].contains("\"line_type\":\"intent\""),
+        "second line is the intent: {}",
         lines[1]
     );
-    serde_json::from_str(&lines[1]).expect("outcome parses")
+    assert!(
+        lines[2].contains("\"line_type\":\"outcome\""),
+        "third line is the outcome: {}",
+        lines[2]
+    );
+    serde_json::from_str(&lines[2]).expect("outcome parses")
 }
 
 /// Compare a (normalized) record to a checked-in golden line — locks the frozen
-/// audit schema v1 shape (supports the OQ-6 freeze, AEG-21).
+/// audit schema v2 record shape (supports the OQ-6 freeze, AEG-21).
+///
+/// `seq`, `prev_hash`, `signature` and `key_id` are removed first. The audit
+/// crate's own goldens pin those over a real Session, where they mean something;
+/// here they would be noise — and since these cases normalize `call_id` for
+/// stability, a retained `signature` would no longer match the bytes beside it.
+/// A golden carrying a signature that does not verify is worse evidence than one
+/// carrying none.
 fn assert_golden(record: &AuditRecord, golden: &str) {
-    let actual = to_json_line(record).expect("serialize outcome");
+    let mut value = serde_json::to_value(record).expect("record serializes");
+    let object = value.as_object_mut().expect("a record is a JSON object");
+    for chain_field in ["seq", "prev_hash", "signature", "key_id"] {
+        object.remove(chain_field);
+    }
+    let actual = to_canonical_json(&value).expect("canonical form");
     assert_eq!(actual.trim(), golden.trim());
 }
 

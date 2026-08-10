@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use botzr_aegis_audit::{AuditError, AuditWriter};
+use botzr_aegis_audit::{insecure_dev_key, AuditError, AuditWriter};
 use botzr_aegis_policy::PolicyEngine;
 use thiserror::Error;
 
@@ -69,10 +69,18 @@ impl RuntimeBuilder {
     }
 
     /// Append audit records to `path` instead of the default temp sink.
+    ///
+    /// Signed with [`insecure_dev_key`] — a fixed seed compiled into the audit
+    /// crate, so a line it signs proves that *some* Aegis build wrote it, never
+    /// which one. AILAB-620 replaces it with a persisted per-host key; until
+    /// then there is deliberately no config flag, key file, or search path that
+    /// reaches this call, so nobody can mistake a dev key for a provisioned one.
     pub fn audit_file(mut self, path: &Path) -> Result<Self, BuildError> {
-        let writer = AuditWriter::open(path).map_err(|source| BuildError::OpenAudit {
-            path: path.to_path_buf(),
-            source,
+        let writer = AuditWriter::open(path, insecure_dev_key()).map_err(|source| {
+            BuildError::OpenAudit {
+                path: path.to_path_buf(),
+                source,
+            }
         })?;
         self.audit = Some(writer);
         Ok(self)
@@ -177,6 +185,10 @@ rules:
 
         let _ = rt.execute_tool_call(ToolId::new("unregistered"), b"{}");
         let text = std::fs::read_to_string(&path).expect("audit file written");
-        assert!(text.contains("\"phase\":\"intent\""), "{text}");
+        // The writer is the Session owner, so the file opens with an `open`
+        // line carrying the public key; the Call's intent follows it.
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].contains("\"line_type\":\"open\""), "{text}");
+        assert!(lines[1].contains("\"line_type\":\"intent\""), "{text}");
     }
 }

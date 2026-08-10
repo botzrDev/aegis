@@ -12,8 +12,8 @@
 
 use botzr_aegis_audit::CallSession;
 use botzr_aegis_core::{
-    AegisError, CallMetrics, CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyAction,
-    PolicyOutcome, ToolId,
+    AegisError, CallMetrics, CapabilityGrant, CapabilityOutcome, DecisionAxes, ExecutionOutcome,
+    FsAxis, GrantId, NetAxis, PolicyAction, PolicyOutcome, RequestDigest, ResponseDigest, ToolId,
 };
 use botzr_aegis_policy::PolicyRequest;
 
@@ -49,8 +49,8 @@ impl Runtime {
     /// `PolicyDenied`, capability deny → `CapabilityDenied`, execution trap →
     /// `Trap`, and so on.
     ///
-    /// The audited `input_digest` is computed here from the exact `input` bytes
-    /// the execution step will see (AEG-44 §3.C) — no public API accepts a
+    /// The audited `request_digest` is computed here from the exact `input`
+    /// bytes the execution step will see (AEG-44 §3.C) — no public API accepts a
     /// caller-supplied digest, so audit cannot be made to lie about the payload.
     pub(crate) fn drive_pipeline<E>(
         &self,
@@ -62,20 +62,46 @@ impl Runtime {
     where
         E: FnOnce(&CapabilityGrant) -> ExecutionStep,
     {
-        let input_digest = crate::sha256_hex(input);
+        // SHA-256 over the **raw** input bytes, never a canonicalized or
+        // re-encoded copy of them: this digest is what content-addresses the
+        // Envelope, so reformatting the payload before hashing silently breaks
+        // the link — and the break is invisible until someone runs a formatter
+        // (ADR-0001).
+        let request_digest = RequestDigest::of_request_bytes(input);
 
-        let mut session =
-            CallSession::begin(&self.audit, tool_id.clone(), input_digest).map_err(|e| {
-                AegisError::Audit {
-                    message: format!("{e}"),
-                }
-            })?;
+        // Read once, up front: the record names the Policy Set that governed the
+        // call from the moment the intent line exists, so a verdict can never be
+        // written without the ruleset it was decided under.
+        let policy_set_hash = self.policy.active_content_hash();
+
+        let mut session = CallSession::begin(
+            &self.audit,
+            tool_id.clone(),
+            request_digest,
+            policy_set_hash,
+        )
+        .map_err(|e| AegisError::Audit {
+            message: format!("{e}"),
+        })?;
 
         // Station 1 — POLICY. Grab the decision once; a denied, rate-limited, or
         // pending-approval call is rejected here and never mints a grant or
         // reaches the execution adapter.
         let decision = self.policy.evaluate(policy_request);
         let policy_outcome = PolicyOutcome::from(&decision.action);
+
+        // Record what the verdict actually turned on, *before* the deny
+        // short-circuit: a role-gated deny that persists only `tool_id` can
+        // neither replay nor explain itself, and the denied call is exactly the
+        // record someone comes back to read (ADR-0001).
+        let mut axes = DecisionAxes {
+            capability: policy_request.capability.map(str::to_owned),
+            role: policy_request.role.map(str::to_owned),
+            session: policy_request.session.map(str::to_owned),
+            matched_rule: decision.matched_rule.clone(),
+            ..DecisionAxes::default()
+        };
+        session.set_decision_axes(axes.clone());
 
         if !matches!(policy_outcome, PolicyOutcome::Allowed) {
             session.set_policy(policy_outcome);
@@ -114,26 +140,44 @@ impl Runtime {
         session.set_capability(capability_outcome.clone());
 
         let (execution, output) = match &capability_outcome {
-            CapabilityOutcome::Granted { grant } => match execute_step(grant) {
-                ExecutionStep::Produced { bytes, metrics } => {
-                    if let Some(metrics) = metrics {
-                        session.set_metrics(metrics);
+            CapabilityOutcome::Granted { grant } => {
+                session.set_grant_id(GrantId::new(grant.grant_id.clone()));
+                // Derived capability parameters (ADR-0006): the resources this
+                // call resolved to, recorded only when the grant names exactly
+                // one. Reading them off the minted grant is not a matcher and
+                // not a new resolution step — matcher shapes are AILAB-626.
+                axes.fs = fs_axis(grant);
+                axes.net = net_axis(grant);
+                session.set_decision_axes(axes.clone());
+
+                match execute_step(grant) {
+                    ExecutionStep::Produced { bytes, metrics } => {
+                        if let Some(metrics) = metrics {
+                            session.set_metrics(metrics);
+                        }
+                        // Output cap (G8): oversize output fails closed; bytes are
+                        // never truncated and returned as success. Applied identically
+                        // after Model A sandbox output and Model B host effect.
+                        match enforce_output_cap(grant, bytes) {
+                            Ok(bytes) => {
+                                // Only on the success path: bytes the cap
+                                // rejected were never returned, so digesting
+                                // them would record a response that never left.
+                                session
+                                    .set_response_digest(ResponseDigest::of_response_bytes(&bytes));
+                                (ExecutionOutcome::Success, Some(bytes))
+                            }
+                            Err(outcome) => (outcome, None),
+                        }
                     }
-                    // Output cap (G8): oversize output fails closed; bytes are
-                    // never truncated and returned as success. Applied identically
-                    // after Model A sandbox output and Model B host effect.
-                    match enforce_output_cap(grant, bytes) {
-                        Ok(bytes) => (ExecutionOutcome::Success, Some(bytes)),
-                        Err(outcome) => (outcome, None),
+                    ExecutionStep::Failed { outcome, metrics } => {
+                        if let Some(metrics) = metrics {
+                            session.set_metrics(metrics);
+                        }
+                        (outcome, None)
                     }
                 }
-                ExecutionStep::Failed { outcome, metrics } => {
-                    if let Some(metrics) = metrics {
-                        session.set_metrics(metrics);
-                    }
-                    (outcome, None)
-                }
-            },
+            }
             CapabilityOutcome::Denied { .. } => (
                 ExecutionOutcome::HostDenied {
                     reason: "capability denied".into(),
@@ -174,6 +218,44 @@ impl Runtime {
             ExecutionOutcome::Success => unreachable!("no output on Err path"),
         })
     }
+}
+
+/// The filesystem resource this call resolved to, when the grant names exactly
+/// one (ADR-0006).
+///
+/// A grant carrying several roots has not resolved the call to *a* path — which
+/// of them the call touched is what AILAB-626's bindings decide — so the axis is
+/// **omitted entirely rather than guessed**. Recording an arbitrary one of N
+/// roots would be evidence that reads as fact and is not.
+///
+/// Both spellings carry the same string today: the capability resolver
+/// canonicalizes at mint time (`botzr-aegis-capability`'s `mint.rs`), so a grant
+/// only ever holds the canonical form. The pair exists because AILAB-626
+/// resolves a caller-supplied path *against* this root, and that is where raw
+/// and canonical diverge; recording one field now would make the shape a
+/// breaking change then.
+fn fs_axis(grant: &CapabilityGrant) -> Option<FsAxis> {
+    let fs = grant.fs.as_ref()?;
+    let mut roots: Vec<&String> = fs.read_paths.iter().chain(fs.write_paths.iter()).collect();
+    roots.sort_unstable();
+    roots.dedup();
+    let [root] = roots[..] else { return None };
+    Some(FsAxis {
+        path_raw: root.clone(),
+        path_canonical: root.clone(),
+    })
+}
+
+/// The network resource this call resolved to, under the same
+/// exactly-one-or-omit rule as [`fs_axis`].
+fn net_axis(grant: &CapabilityGrant) -> Option<NetAxis> {
+    let net = grant.net.as_ref()?;
+    let [http] = &net.http[..] else { return None };
+    let [port] = http.ports[..] else { return None };
+    Some(NetAxis {
+        host: http.host.clone(),
+        port,
+    })
 }
 
 #[cfg(test)]

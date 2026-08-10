@@ -115,10 +115,10 @@ let output = rt.execute_tool_call(ToolId::new("echo"), b"hello-aegis")?;
 ```
 
 Two arguments. **The caller does not supply a digest.** The pipeline computes
-`sha256_hex(input)` internally from the exact bytes the execution step will see,
-and that is what lands in the audit record. No public API accepts a
-caller-supplied `input_digest`, so audit cannot be made to record a digest that
-does not match the payload.
+`RequestDigest::of_request_bytes(input)` internally from the exact — raw,
+unreformatted — bytes the execution step will see, and that is what lands in the
+audit record. No public API accepts a caller-supplied `request_digest`, so audit
+cannot be made to record a digest that does not match the payload.
 
 A Model B host tool reaching this entry point fails closed — use
 `execute_host_call`.
@@ -172,7 +172,7 @@ The handler is the one stored at registration time; it receives a
 not invoked (`botzr_aegis_core::HOST_PIPELINE_STAGES` is
 `policy → capability → audit`). A WASM
 tool reaching this entry point fails closed, as does an unregistered tool.
-`HostCallRequest` has no `input_digest` field for the same reason as Model A.
+`HostCallRequest` has no `request_digest` field for the same reason as Model A.
 
 ## Model B host effects
 
@@ -193,7 +193,7 @@ a supported way to ship an effect. Neither path is sandbox isolation — see
 - **Short-circuit:** a policy denial never reaches capability or sandbox
 - **Ceiling folding:** policy limits are folded into grants but can never raise them
 - **Audit on every exit:** success, denial, trap, and panic all produce records
-- **Runtime-derived digest:** the audited `input_digest` is computed from the call's own input bytes; callers cannot supply one
+- **Runtime-derived digest:** the audited `request_digest` is computed from the call's own raw input bytes; callers cannot supply one
 - **Atomic registration:** manifest and executable are written together, after all checks — a failed `register_tool` mutates nothing
 - **SHA-256 pinning:** registration rejects component bytes that don't match the manifest digest (G10)
 

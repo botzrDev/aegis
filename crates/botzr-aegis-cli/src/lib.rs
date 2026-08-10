@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_runtime::{sha256_hex, Runtime, RuntimeBuilder};
+use botzr_aegis_core::{AegisError, RequestDigest, ToolId};
+use botzr_aegis_runtime::{Runtime, RuntimeBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -262,10 +262,13 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
     );
     eprintln!("Audit: {}", rt.audit().path().display());
     // Diagnostic only — the digest is no longer an execute argument. The runtime
-    // derives it internally for the audit record; we recompute the *same*
-    // function here purely so the operator can eyeball-match this line against
-    // the `input_digest` field in the emitted JSONL.
-    eprintln!("input_digest: {}", sha256_hex(&input));
+    // derives it internally for the audit record; we call the *same* constructor
+    // here purely so the operator can eyeball-match this line against the
+    // `request_digest` field in the emitted JSONL.
+    eprintln!(
+        "request_digest: {}",
+        RequestDigest::of_request_bytes(&input)
+    );
 
     rt.execute_tool_call(ToolId::new(args.id.clone()), &input)
 }

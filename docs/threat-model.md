@@ -34,7 +34,7 @@ record on **every** exit path — allow, deny, trap, resource cap, or panic.
 | **Policy** | Role gate, approval gate, rate limits (sync; parsed-once `Arc<PolicySet>`) |
 | **Capability** | Default-deny manifest resolution → minted grant (denial never reaches sandbox) |
 | **Sandbox** | Configure wasmtime `Store` **from the grant**, then run (per-call store; epoch + memory limits) |
-| **Audit** | Schema-versioned JSONL records (`schema_version: 1`); no raw secrets — shipped digest field is `input_digest` only ([audit schema](audit-schema.md)) |
+| **Audit** | Schema-versioned JSONL records (`schema_version: 2`), hash-chained and ed25519-signed; no raw secrets — the shipped payload digests are `request_digest` / `response_digest` ([record format](../spec/SPEC.md)) |
 
 ### Out of scope (v1)
 
@@ -155,7 +155,7 @@ When correctly configured and integrated, Aegis v1 aims to ensure:
 6. **Audit on every exit.** Denials, traps, resource caps, and panics produce
    schema-versioned JSONL records without raw secret payloads. v0.1 persists via
    `AuditWriter` (per-line fsync) only — OpenTelemetry / OTLP export is
-   **deferred** (not shipped). Wire contract: [audit-schema.md](audit-schema.md).
+   **deferred** (not shipped). Wire contract: [`spec/SPEC.md`](../spec/SPEC.md).
 
 Operational meaning of "foolproof" in this project: **no single mistake — a forgotten
 host check, a malformed policy, a panicking host function — escalates into ambient
@@ -276,7 +276,7 @@ containment cases; they do not exhaust all attack classes.
 |---|---|
 | [DamageBot demo](../examples/damage-bot-demo/README.md) | Six adversarial cases through `Runtime::execute_tool_call` |
 | [Deny suite](../tests/deny-suite/) | Policy/capability/sandbox denial paths + audit emission |
-| [Audit schema freeze](audit-schema.md) | Field-level Intent/Outcome contract; digests + sinks honesty |
+| [Record format spec](../spec/SPEC.md) | Field-level line contract, chain rule, verdict model, and the non-guarantees stated plainly |
 | [Hot-path benchmarks](../benches/results/hot_path.md) | Policy ≪ 100 µs; combined pipeline ≪ 1 ms (cited hardware) |
 | [Findings report](findings.md) | Measured guarantees vs named gaps; reproducible case studies + evidence bundle script |
 

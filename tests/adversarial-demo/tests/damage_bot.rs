@@ -42,9 +42,12 @@ fn outcome(rt: &Runtime) -> AuditRecord {
         .lines()
         .map(str::to_owned)
         .collect();
-    assert_eq!(lines.len(), 2, "intent + outcome");
-    assert!(lines[0].contains("\"phase\":\"intent\""));
-    serde_json::from_str(&lines[1]).expect("outcome parses")
+    // Schema v2: the Session `Open` line is the file's first line, so the call's
+    // intent and outcome sit at 1 and 2.
+    assert_eq!(lines.len(), 3, "open + intent + outcome");
+    assert!(lines[0].contains("\"line_type\":\"open\""));
+    assert!(lines[1].contains("\"line_type\":\"intent\""));
+    serde_json::from_str(&lines[2]).expect("outcome parses")
 }
 
 fn assert_refused_with_trap(record: &AuditRecord, needle: &str) {

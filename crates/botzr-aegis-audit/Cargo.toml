@@ -16,6 +16,10 @@ workspace = true
 
 [dependencies]
 botzr-aegis-core = { workspace = true }
+# The private key lives here, not in core: core holds signature *bytes* and
+# cannot verify anything, which keeps the crypto dependency off every crate
+# that only reads records.
+ed25519-dalek = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

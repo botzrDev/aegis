@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use botzr_aegis_core::{PolicyAction, ResourceCeiling};
+use botzr_aegis_core::{PolicyAction, PolicySetHash, ResourceCeiling};
 
 use crate::error::PolicyError;
 use crate::eval::{select, PolicyDecision, PolicyRequest, Selection};
@@ -91,8 +91,22 @@ impl PolicyEngine {
     }
 
     /// Digest of the currently-active set.
+    ///
+    /// FNV-1a over YAML text — the `old → new` reload trail (G5), not a
+    /// security digest. The value an audit record carries is
+    /// [`PolicyEngine::active_content_hash`].
     pub fn active_digest(&self) -> String {
         self.active.load().digest().to_string()
+    }
+
+    /// Content hash of the currently-active set — what an audit record names as
+    /// the Policy Set that governed a call, so the verdict can be rechecked
+    /// against the rules that produced it.
+    ///
+    /// Computed once per set at parse time; this is a 32-byte copy, cheap
+    /// enough to read on the per-call path.
+    pub fn active_content_hash(&self) -> PolicySetHash {
+        self.active.load().content_hash()
     }
 
     /// Evaluate a request synchronously. Never parses YAML; the only lock taken
@@ -298,6 +312,21 @@ rules:
         let engine = PolicyEngine::allow_all();
         let err = engine.reload_from_file().unwrap_err();
         assert!(matches!(err, PolicyError::Io { .. }));
+    }
+
+    #[test]
+    fn active_content_hash_follows_the_swap_and_is_not_the_fnv_digest() {
+        let engine = PolicyEngine::from_yaml(ALLOW_WITH_RULE).expect("parse");
+        let before = engine.active_content_hash();
+        // The two hashes are different things: one is FNV-1a over text, the
+        // other SHA-256 over the canonical parsed form.
+        assert_ne!(engine.active_digest(), before.to_hex());
+        assert_eq!(before.to_hex().len(), 64);
+
+        engine
+            .reload_from_yaml(DENY_DEFAULT, ReloadSource::Cli)
+            .expect("reload");
+        assert_ne!(engine.active_content_hash(), before);
     }
 
     #[test]

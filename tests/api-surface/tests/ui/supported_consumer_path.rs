@@ -4,7 +4,7 @@
 //! `t.pass()` compiles *and runs* the case, so `main` stays trivial and the
 //! API exercise lives in never-called functions.
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::{AegisError, AuditIntent, ToolId};
+use botzr_aegis_core::{AegisError, AuditIntent, PrevHash, RequestDigest, ToolId};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest, SUPPORTED_POLICY_VERSION};
 use botzr_aegis_runtime::{HostCallRequest, Runtime, RuntimeBuilder, ToolExecutable};
 
@@ -52,9 +52,16 @@ fn model_b(rt: &mut Runtime, manifest: ToolManifest) -> Result<Vec<u8>, AegisErr
 fn policy_and_audit() {
     let _engine = PolicyEngine::allow_all();
     let _v = SUPPORTED_POLICY_VERSION;
-    let intent = AuditIntent::new("call-1", ToolId::new("smoke"), "abc");
-    // Sealed for writes, still readable through the getter.
+    let intent = AuditIntent::new(
+        "call-1",
+        ToolId::new("smoke"),
+        RequestDigest::of_request_bytes(b"abc"),
+    );
+    // Sealed for writes, still readable through the getters — a consumer reads
+    // the whole chain position, it just never chooses one.
     assert_eq!(intent.schema_version(), botzr_aegis_core::AUDIT_SCHEMA_VERSION);
+    assert_eq!(intent.seq(), 0);
+    assert_eq!(*intent.prev_hash(), PrevHash::GENESIS);
 }
 
 fn main() {}

@@ -1,5 +1,7 @@
 //! Host-minted capability grants (unforgeable; default-deny).
 
+use std::fmt;
+
 use crate::tool::ToolId;
 
 /// Default per-call output ceiling when a manifest omits `max_output_bytes`
@@ -7,12 +9,47 @@ use crate::tool::ToolId;
 /// returns — it is not a wasmtime store limit (guest output is host-side).
 pub const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1 << 20;
 
+/// Newtype for the identifier of a minted grant, as referenced from an audit
+/// record. Distinct from [`crate::policy::ApprovalId`] so the two cannot be
+/// cross-referenced to the wrong thing.
+///
+/// `CapabilityGrant::grant_id` is still a `String`: migrating it reaches into
+/// the capability crate, the runtime, and every fixture, which is outside the
+/// schema bump.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct GrantId(pub String);
+
+impl GrantId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for GrantId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Resolved grant passed to sandbox configuration and host-function enforcement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CapabilityGrant {
     pub grant_id: String,
     pub tool_id: ToolId,
+    /// Omitted when the grant carries no filesystem authority — never null. A
+    /// grant is nested inside `CapabilityOutcome::Granted` on the audit record,
+    /// so it lives under the record's own omit-never-null rule: the JCS
+    /// canonicalizer refuses a `null` rather than pick a spelling for "absent"
+    /// (ADR-0003).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fs: Option<FsGrant>,
+    /// Omitted when the grant carries no network authority — see [`Self::fs`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetGrant>,
     pub max_memory_bytes: u64,
     pub max_wall_ms: u64,

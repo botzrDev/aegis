@@ -3,22 +3,30 @@
 //! Dependency direction: all runtime crates depend inward on this crate only.
 
 mod audit;
+mod digest;
 mod error;
 mod grant;
 mod http_check;
+pub mod jcs;
 mod limits;
 mod policy;
 mod tool;
 
 pub use audit::{
-    AuditIntent, AuditPhase, AuditRecord, AuditSchemaVersion, CallMetrics, CapabilityOutcome,
-    ExecutionOutcome, PolicyOutcome, AUDIT_SCHEMA_VERSION,
+    ApprovalVerdict, ApprovedScope, AuditClose, AuditDecision, AuditIntent, AuditLineType,
+    AuditOpen, AuditRecord, AuditSchemaVersion, CallMetrics, CapabilityOutcome, DecisionAxes,
+    ExecutionOutcome, FsAxis, NetAxis, PolicyOutcome, AUDIT_SCHEMA_VERSION,
+};
+pub use digest::{
+    Digest, DigestParseError, KeyId, PolicySetHash, PrevHash, PublicKey, RequestDigest,
+    ResponseDigest, Signature,
 };
 pub use error::AegisError;
-pub use grant::{CapabilityGrant, FsGrant, HttpGrant, NetGrant, DEFAULT_MAX_OUTPUT_BYTES};
+pub use grant::{CapabilityGrant, FsGrant, GrantId, HttpGrant, NetGrant, DEFAULT_MAX_OUTPUT_BYTES};
 pub use http_check::{http_get_allowed, parse_http_host};
+pub use jcs::{canonical_digest, to_canonical_json, JcsError};
 pub use limits::ResourceCeiling;
-pub use policy::PolicyAction;
+pub use policy::{ApprovalId, PolicyAction};
 pub use tool::{ToolId, ToolKind};
 
 /// Load-bearing pipeline order (do not reorder).

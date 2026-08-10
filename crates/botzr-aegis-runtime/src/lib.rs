@@ -282,8 +282,8 @@ impl Runtime {
     /// Model A adapter: the shared [`Runtime::drive_pipeline`] owns policy,
     /// capability, output-cap, and audit; this method only supplies the wasmtime
     /// execution step and Model A's caller error string. The audited
-    /// `input_digest` is derived from `input` inside the pipeline — callers
-    /// cannot supply one.
+    /// `request_digest` is derived from the raw `input` bytes inside the
+    /// pipeline — callers cannot supply one.
     ///
     /// A Model B host tool reaching this entry point fails closed: use
     /// [`Runtime::execute_host_call`].
@@ -460,9 +460,10 @@ rules:
             .lines()
             .map(str::to_owned)
             .collect();
-        assert_eq!(lines.len(), 2, "intent + outcome lines");
-        assert!(lines[0].contains("\"phase\":\"intent\""));
-        assert!(lines[1].contains("\"status\":\"denied\""));
+        // Line 0 is the Session `Open` the writer emits on construction.
+        assert_eq!(lines.len(), 3, "open + intent + outcome lines");
+        assert!(lines[1].contains("\"line_type\":\"intent\""));
+        assert!(lines[2].contains("\"status\":\"denied\""));
     }
 
     #[test]
@@ -514,9 +515,9 @@ rules:
             .lines()
             .map(str::to_owned)
             .collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("\"phase\":\"intent\""));
-        assert!(lines[1].contains("\"status\":\"success\""));
+        assert_eq!(lines.len(), 3, "open + intent + outcome lines");
+        assert!(lines[1].contains("\"line_type\":\"intent\""));
+        assert!(lines[2].contains("\"status\":\"success\""));
     }
 
     #[test]

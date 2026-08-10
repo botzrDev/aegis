@@ -74,12 +74,16 @@ fn audit_lines(rt: &Runtime) -> Vec<String> {
         .collect()
 }
 
-/// Read the two-line audit trail and return the parsed outcome record.
+/// Read the audit trail and return the parsed outcome record.
+///
+/// Schema v2 opens the file with the Session `Open` line, so a single call is
+/// three lines, not two.
 fn outcome(rt: &Runtime) -> AuditRecord {
     let lines = audit_lines(rt);
-    assert_eq!(lines.len(), 2, "intent + outcome");
-    assert!(lines[0].contains("\"phase\":\"intent\""));
-    serde_json::from_str(&lines[1]).expect("outcome parses")
+    assert_eq!(lines.len(), 3, "open + intent + outcome");
+    assert!(lines[0].contains("\"line_type\":\"open\""));
+    assert!(lines[1].contains("\"line_type\":\"intent\""));
+    serde_json::from_str(&lines[2]).expect("outcome parses")
 }
 
 fn run_detector(rt: &Runtime, input: &[u8]) -> Result<Vec<u8>, AegisError> {
@@ -117,10 +121,10 @@ fn equivalence_native_matches_wasm() {
 
 // --- Happy path audit --------------------------------------------------------
 
-/// §10: a successful pipeline run emits exactly an intent + outcome line, and the
-/// outcome records execution success.
+/// §10: a successful pipeline run emits exactly an intent + outcome line under
+/// the Session `Open`, and the outcome records execution success.
 #[test]
-fn happy_path_audit_two_lines() {
+fn happy_path_audit_one_call_per_session() {
     let dir = tempfile::tempdir().unwrap();
     seed_fixture_tree(dir.path());
 
@@ -130,10 +134,11 @@ fn happy_path_audit_two_lines() {
     assert_eq!(json["findings"].as_array().unwrap().len(), 3);
 
     let lines = audit_lines(&rt);
-    assert_eq!(lines.len(), 2, "intent + outcome");
-    assert!(lines[0].contains("\"phase\":\"intent\""));
-    assert!(lines[1].contains("\"phase\":\"outcome\""));
-    assert!(lines[1].contains("\"status\":\"success\""));
+    assert_eq!(lines.len(), 3, "open + intent + outcome");
+    assert!(lines[0].contains("\"line_type\":\"open\""));
+    assert!(lines[1].contains("\"line_type\":\"intent\""));
+    assert!(lines[2].contains("\"line_type\":\"outcome\""));
+    assert!(lines[2].contains("\"status\":\"success\""));
 }
 
 // --- Guest-level deny cases --------------------------------------------------

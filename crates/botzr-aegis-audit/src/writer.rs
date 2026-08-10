@@ -1,46 +1,120 @@
-//! Synchronous JSONL append + fsync (G3 durability default).
+//! The Session owner: synchronous JSONL append + fsync (G3 durability
+//! default), with the hash chain behind the same lock as the file handle.
+//!
+//! One `AuditWriter` is one Session — `Open` on construction, `Close` on
+//! `Drop`. Chain state (`seq`, tail hash) lives *inside* the file mutex rather
+//! than in a sibling object: two threads that read the chain head outside the
+//! lock get the same `prev_hash` and fork the chain, and splitting ordering
+//! authority across two objects is how that race gets reintroduced. A file may
+//! hold many Sessions; `prev_session_tail` on the `Open` line is what links
+//! them.
+//!
+//! **`Drop` does not run on SIGKILL.** Close-on-drop covers clean exit and
+//! unwind only. That gap is documented rather than engineered around: a Session
+//! with no `Close` and no later `Open` beyond it is exactly what makes a tail
+//! undecidable, and a verifier reports it as `Indeterminate` (ADR-0002).
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
-use botzr_aegis_core::{AuditIntent, AuditRecord, AUDIT_SCHEMA_VERSION};
+use botzr_aegis_core::{
+    to_canonical_json, AuditClose, AuditDecision, AuditIntent, AuditOpen, AuditRecord, KeyId,
+    PrevHash, PublicKey, AUDIT_SCHEMA_VERSION,
+};
 
 use crate::error::AuditError;
+use crate::line::{ChainLine, SignedChainLine};
+use crate::signing::{insecure_dev_key, SigningKey};
 
-/// Append-only audit sink. Fail-closed: callers must treat write errors as fatal.
+/// Everything the chain rule needs, under one lock.
+///
+/// Bundled deliberately: `seq`, the tail hash, and the file handle have to move
+/// together or the append order and the chain order can disagree.
+struct ChainState {
+    file: BufWriter<File>,
+    /// Next position to hand out. Per appended **line**, per Session — not per
+    /// Call, because concurrent Calls interleave and a Call's intent and
+    /// outcome lines are not adjacent.
+    next_seq: u64,
+    /// Hash of the last line written; the next line's `prev_hash`.
+    tail: PrevHash,
+}
+
+impl ChainState {
+    /// Consume the next chain position. Only ever called with the lock held.
+    ///
+    /// The counter advances even when the write that follows fails: a gap says
+    /// a line was meant to exist and does not, which is the honest reading.
+    /// Handing the same number out twice after a partial write would forge a
+    /// position instead.
+    fn take_seq(&mut self) -> u64 {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        seq
+    }
+}
+
+/// Append-only audit sink and Session owner. Fail-closed: callers must treat
+/// write errors as fatal.
 pub struct AuditWriter {
     path: PathBuf,
-    file: Mutex<BufWriter<File>>,
+    chain: Mutex<ChainState>,
+    signing_key: SigningKey,
+    /// Names Calls; it does **not** order the chain, so it stays outside the
+    /// chain lock. Chain position is `seq`, and only `seq` — a call id is a
+    /// label two threads may take in either order without consequence.
     call_seq: AtomicU64,
+    /// Whether the `Open` line made it to disk. `Drop` writes `Close` only if
+    /// it did, so a writer whose construction failed does not leave a Session
+    /// that closes without ever having opened.
+    open_emitted: AtomicBool,
     _temp: Option<tempfile::TempDir>,
 }
 
 impl AuditWriter {
-    /// Open (or create) a JSONL file for append-only writes with per-line fsync.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, AuditError> {
+    /// Open (or create) a Chain file and begin a Session.
+    ///
+    /// Appending to a non-empty file recovers the previous Session's final line
+    /// hash into this Session's `Open` line as `prev_session_tail`. The `Open`
+    /// line's own `prev_hash` stays genesis — a verifier already special-cases
+    /// `Open`, since that is where the public key is, and duplicating the tail
+    /// into `prev_hash` would give one fact two spellings.
+    pub fn open(path: impl AsRef<Path>, signing_key: SigningKey) -> Result<Self, AuditError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)?;
             }
         }
+        let prev_session_tail = recover_tail(&path)?;
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        Ok(Self {
+        let writer = Self {
             path,
-            file: Mutex::new(BufWriter::new(file)),
+            chain: Mutex::new(ChainState {
+                file: BufWriter::new(file),
+                next_seq: 0,
+                tail: PrevHash::GENESIS,
+            }),
+            signing_key,
             call_seq: AtomicU64::new(1),
+            open_emitted: AtomicBool::new(false),
             _temp: None,
-        })
+        };
+        let mut open = AuditOpen::new(writer.signing_key.public_key(), prev_session_tail);
+        writer.append_signed(&mut open)?;
+        writer.open_emitted.store(true, Ordering::Relaxed);
+        Ok(writer)
     }
 
-    /// Ephemeral sink for tests and dev defaults — writes to a temp JSONL file.
+    /// Ephemeral sink for tests and dev defaults — a temp JSONL file signed by
+    /// [`insecure_dev_key`]. Not a production sink, and not a production key.
     pub fn open_temp() -> Result<Self, AuditError> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("audit.jsonl");
-        let mut writer = Self::open(path)?;
+        let mut writer = Self::open(path, insecure_dev_key())?;
         writer._temp = Some(dir);
         Ok(writer)
     }
@@ -49,30 +123,151 @@ impl AuditWriter {
         &self.path
     }
 
+    /// The public key this Session's `Open` line published — what a verifier
+    /// checks every signed line in the file against.
+    pub fn public_key(&self) -> PublicKey {
+        self.signing_key.public_key()
+    }
+
+    /// Fingerprint of the signing key, stamped on every signed line.
+    pub fn key_id(&self) -> KeyId {
+        self.signing_key.key_id()
+    }
+
     pub fn next_call_id(&self) -> String {
         format!("call-{}", self.call_seq.fetch_add(1, Ordering::Relaxed))
     }
 
-    pub fn emit_intent(&self, intent: &AuditIntent) -> Result<(), AuditError> {
-        validate_schema(intent.schema_version())?;
-        self.append_line(intent)
+    /// Append the pre-execution intent line. Hashed into the chain and
+    /// deliberately not signable — [`AuditIntent`] does not implement
+    /// [`SignedChainLine`], because this line is fsynced ahead of execution and
+    /// signing must stay off the pre-execution critical path.
+    pub fn emit_intent(&self, intent: &mut AuditIntent) -> Result<(), AuditError> {
+        self.append_unsigned(intent)
     }
 
-    pub fn emit_outcome(&self, record: &AuditRecord) -> Result<(), AuditError> {
-        validate_schema(record.schema_version())?;
-        self.append_line(record)
+    pub fn emit_outcome(&self, record: &mut AuditRecord) -> Result<(), AuditError> {
+        self.append_signed(record)
     }
 
-    fn append_line<T: serde::Serialize>(&self, value: &T) -> Result<(), AuditError> {
-        let mut guard = self
-            .file
+    /// Append a human approval verdict (ADR-0005). A resumed call is a *new*
+    /// Call with its own intent and outcome, linked by `approval_id` — this
+    /// line has no intent and no execution of its own.
+    pub fn emit_decision(&self, decision: &mut AuditDecision) -> Result<(), AuditError> {
+        self.append_signed(decision)
+    }
+
+    // There is deliberately no `emit_checkpoint`. `AuditLineType::Checkpoint`
+    // is reserved so that adding it later is not a breaking change for every
+    // downstream `match`; no emitter in this repo produces one.
+
+    fn lock_chain(&self) -> MutexGuard<'_, ChainState> {
+        // A poisoned lock means a previous append panicked mid-write. The chain
+        // is append-only and the tail is only advanced after a successful
+        // write, so recovering the guard resumes from the last durable line
+        // rather than abandoning the sink — an audit writer that stops writing
+        // is the failure mode this crate exists to prevent.
+        self.chain
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        serde_json::to_writer(&mut *guard, value)?;
-        guard.write_all(b"\n")?;
-        guard.flush()?;
-        guard.get_ref().sync_all()?;
-        Ok(())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn append_unsigned<L: ChainLine>(&self, line: &mut L) -> Result<(), AuditError> {
+        validate_schema(line.schema_version())?;
+        let mut state = self.lock_chain();
+        // Chain position is chosen *here*, holding the same lock that performs
+        // the write. Reading the head outside this lock is what forks a chain.
+        let seq = state.take_seq();
+        line.stamp_chain(seq, state.tail);
+        write_line(&mut state, line)
+    }
+
+    fn append_signed<L: SignedChainLine>(&self, line: &mut L) -> Result<(), AuditError> {
+        validate_schema(line.schema_version())?;
+        let key_id = self.signing_key.key_id();
+        let mut state = self.lock_chain();
+        // Same lock, same order as `append_unsigned`: stamp position, sign what
+        // that produced, hash the signed result, write.
+        let seq = state.take_seq();
+        line.stamp_chain(seq, state.tail);
+        let signature = self
+            .signing_key
+            .sign(line.signing_input(&key_id)?.as_bytes());
+        line.stamp_signature(signature, key_id);
+        write_line(&mut state, line)
+    }
+}
+
+/// Steps 4–6 of the chain rule: hash the complete line, write it, then advance
+/// the tail.
+///
+/// The `line_hash` covers the signature. Stripping a signature therefore
+/// changes the hash and breaks the *next* line's `prev_hash`; hashing the
+/// pre-signature form instead would let signature-stripping leave a clean
+/// chain.
+fn write_line<L: serde::Serialize>(state: &mut ChainState, line: &L) -> Result<(), AuditError> {
+    // The row on disk is the canonical form, so the bytes a verifier reads are
+    // the bytes that were hashed — no re-canonicalization step where the two
+    // implementations can disagree, and one serialization instead of two on the
+    // fsync path.
+    let canonical = to_canonical_json(line)?;
+    let line_hash = PrevHash::of_line(canonical.as_bytes());
+    state.file.write_all(canonical.as_bytes())?;
+    state.file.write_all(b"\n")?;
+    state.file.flush()?;
+    state.file.get_ref().sync_all()?;
+    // Only after the line is durable: a failed write leaves the next line
+    // chained to the last one that actually landed.
+    state.tail = line_hash;
+    Ok(())
+}
+
+/// The hash of the last line already in `path`, or `None` for a fresh or empty
+/// file.
+///
+/// Canonicalizes what it reads rather than hashing the raw bytes, because that
+/// is what a verifier does; we write canonical rows, so the round trip is an
+/// identity and a divergence would be a bug worth failing on.
+fn recover_tail(path: &Path) -> Result<Option<PrevHash>, AuditError> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut last: Option<(usize, String)> = None;
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let line = line?;
+        if !line.trim().is_empty() {
+            last = Some((index + 1, line));
+        }
+    }
+    let Some((number, line)) = last else {
+        return Ok(None);
+    };
+    // A tail that does not parse is a torn write. Refusing to open is the
+    // fail-closed answer: continuing would chain a new Session onto bytes
+    // nobody can hash the same way twice, turning a recoverable
+    // `Indeterminate` into a permanent chain break.
+    let value: serde_json::Value =
+        serde_json::from_str(&line).map_err(|_| AuditError::TornTail { line: number })?;
+    let canonical = to_canonical_json(&value).map_err(|_| AuditError::TornTail { line: number })?;
+    Ok(Some(PrevHash::of_line(canonical.as_bytes())))
+}
+
+impl Drop for AuditWriter {
+    fn drop(&mut self) {
+        // Nothing to close if the `Open` line never landed.
+        if !self.open_emitted.load(Ordering::Relaxed) {
+            return;
+        }
+        // `CallSession<'a>` borrows `&'a AuditWriter`, so the borrow checker
+        // already guarantees no Call is in flight here — the `Close` line
+        // structurally cannot be written mid-Call.
+        //
+        // Best-effort: a write failure at drop has nowhere left to go. A
+        // Session with no `Close` reads as `Indeterminate`, which is the
+        // truthful verdict.
+        let _ = self.append_signed(&mut AuditClose::new());
     }
 }
 
@@ -80,6 +275,7 @@ impl std::fmt::Debug for AuditWriter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuditWriter")
             .field("path", &self.path)
+            .field("key_id", &self.signing_key.key_id())
             .finish_non_exhaustive()
     }
 }
@@ -94,16 +290,271 @@ fn validate_schema(version: u32) -> Result<(), AuditError> {
     Ok(())
 }
 
-/// Serialize a value to a canonical JSON line (no trailing newline).
+/// Serialize a value to a JSON line (no trailing newline).
 pub fn to_json_line<T: serde::Serialize>(value: &T) -> Result<String, AuditError> {
     Ok(serde_json::to_string(value)?)
 }
 
+/// SHA-256 over a line's canonical form — what the *next* line carries as its
+/// `prev_hash`, and what a verifier recomputes to walk the chain.
+pub fn line_hash<T: serde::Serialize>(line: &T) -> Result<PrevHash, AuditError> {
+    Ok(PrevHash::of_line(to_canonical_json(line)?.as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
-    use botzr_aegis_core::AuditIntent;
+    use botzr_aegis_core::{
+        AuditLineType, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, PolicySetHash,
+        RequestDigest, ToolId,
+    };
+    use serde_json::Value;
 
     use super::*;
+    use crate::signing::{verify_line, VerifyError};
+
+    fn outcome(call_id: &str) -> AuditRecord {
+        AuditRecord::new(
+            call_id,
+            ToolId::new("echo"),
+            RequestDigest::of_request_bytes(b"{}"),
+            PolicySetHash::of_canonical_bytes(b"policy"),
+            PolicyOutcome::Allowed,
+            CapabilityOutcome::Denied {
+                reason: "not evaluated".into(),
+                denied_capability: None,
+            },
+            ExecutionOutcome::Success,
+        )
+    }
+
+    fn lines(path: &Path) -> Vec<Value> {
+        std::fs::read_to_string(path)
+            .expect("audit file readable")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("every row is JSON"))
+            .collect()
+    }
+
+    fn raw_lines(path: &Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .expect("audit file readable")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn each_line_chains_to_the_hash_of_the_one_before_it() {
+        let writer = AuditWriter::open_temp().unwrap();
+        let mut intent = AuditIntent::new(
+            "call-1",
+            ToolId::new("echo"),
+            RequestDigest::of_request_bytes(b"{}"),
+        );
+        writer.emit_intent(&mut intent).unwrap();
+        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+
+        let rows = raw_lines(writer.path());
+        assert_eq!(rows.len(), 3, "open + intent + outcome");
+        // The Open line anchors on genesis; the back-reference to a previous
+        // Session lives in `prev_session_tail`, not here.
+        let parsed = lines(writer.path());
+        assert_eq!(parsed[0]["prev_hash"], Value::from("0".repeat(64)));
+        for index in 1..rows.len() {
+            let expected = PrevHash::of_line(rows[index - 1].as_bytes());
+            assert_eq!(
+                parsed[index]["prev_hash"],
+                Value::from(expected.to_hex()),
+                "line {index} must chain to line {}",
+                index - 1
+            );
+        }
+        // `seq` is per line, per Session, starting at the Open line.
+        for (index, row) in parsed.iter().enumerate() {
+            assert_eq!(row["seq"], Value::from(index as u64));
+        }
+    }
+
+    #[test]
+    fn a_signed_line_verifies_against_the_public_key_in_the_open_line() {
+        let writer = AuditWriter::open_temp().unwrap();
+        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+
+        let rows = raw_lines(writer.path());
+        let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
+        let record: AuditRecord = serde_json::from_str(&rows[1]).unwrap();
+        assert_eq!(*open.line_type(), AuditLineType::Open);
+        assert_eq!(verify_line(&open, &open.public_key), Ok(()));
+        assert_eq!(verify_line(&record, &open.public_key), Ok(()));
+        assert_eq!(record.key_id(), Some(&writer.key_id()));
+    }
+
+    #[test]
+    fn tampering_with_any_field_makes_the_signature_fail() {
+        let writer = AuditWriter::open_temp().unwrap();
+        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        let rows = raw_lines(writer.path());
+        let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
+
+        for (field, replacement) in [
+            ("call_id", Value::from("call-2")),
+            ("tool_id", Value::from("rm")),
+            ("seq", Value::from(99u64)),
+            ("prev_hash", Value::from("f".repeat(64))),
+            (
+                "policy",
+                serde_json::json!({ "status": "denied", "reason": "after the fact" }),
+            ),
+            ("decision_axes", serde_json::json!({ "role": "admin" })),
+        ] {
+            let mut value: Value = serde_json::from_str(&rows[1]).unwrap();
+            let previous = value[field].clone();
+            value[field] = replacement;
+            assert_ne!(value[field], previous, "{field} must actually change");
+            let tampered: AuditRecord = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                verify_line(&tampered, &open.public_key),
+                Err(VerifyError::BadSignature),
+                "editing {field} must break the signature"
+            );
+        }
+    }
+
+    #[test]
+    fn stripping_a_signature_changes_the_line_hash() {
+        let writer = AuditWriter::open_temp().unwrap();
+        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        let rows = raw_lines(writer.path());
+        let signed = PrevHash::of_line(rows[1].as_bytes());
+
+        let mut value: Value = serde_json::from_str(&rows[1]).unwrap();
+        assert!(value.as_object_mut().unwrap().remove("signature").is_some());
+        let stripped = PrevHash::of_line(to_canonical_json(&value).unwrap().as_bytes());
+        // The chain, not just the signature check, is what catches this: the
+        // next line's `prev_hash` no longer matches.
+        assert_ne!(signed, stripped);
+    }
+
+    #[test]
+    fn a_fresh_file_opens_without_a_back_reference_and_a_reopen_chains_to_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+
+        {
+            let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+            let first = &lines(&path)[0];
+            assert!(
+                first.get("prev_session_tail").is_none(),
+                "a fresh file has no previous Session: {first}"
+            );
+            writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        }
+
+        let first_session = raw_lines(&path);
+        let tail = PrevHash::of_line(first_session.last().unwrap().as_bytes());
+
+        let _second = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+        let rows = lines(&path);
+        let reopened = &rows[first_session.len()];
+        assert_eq!(reopened["line_type"], Value::from("open"));
+        assert_eq!(
+            reopened["prev_session_tail"],
+            Value::from(tail.to_hex()),
+            "the new Open must back-reference the previous Session's final line"
+        );
+        // Genesis, not the tail — the tail is not duplicated into `prev_hash`.
+        assert_eq!(reopened["prev_hash"], Value::from("0".repeat(64)));
+        assert_eq!(
+            reopened["seq"],
+            Value::from(0u64),
+            "seq restarts per Session"
+        );
+    }
+
+    #[test]
+    fn close_is_written_on_drop_for_clean_exit_and_for_unwind() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let clean = dir.path().join("clean.jsonl");
+        {
+            let _writer = AuditWriter::open(&clean, insecure_dev_key()).unwrap();
+        }
+        let rows = lines(&clean);
+        assert_eq!(rows.last().unwrap()["line_type"], Value::from("close"));
+
+        let unwound = dir.path().join("unwound.jsonl");
+        let result = std::panic::catch_unwind({
+            let unwound = unwound.clone();
+            move || {
+                let _writer = AuditWriter::open(&unwound, insecure_dev_key()).unwrap();
+                panic!("simulated host panic");
+            }
+        });
+        assert!(result.is_err());
+        let rows = lines(&unwound);
+        assert_eq!(
+            rows.last().unwrap()["line_type"],
+            Value::from("close"),
+            "unwinding still closes the Session"
+        );
+        // Documented gap, asserted nowhere: SIGKILL skips `Drop` entirely, and
+        // the missing Close is what a verifier reports as `Indeterminate`.
+    }
+
+    #[test]
+    fn intent_lines_carry_no_signature() {
+        let writer = AuditWriter::open_temp().unwrap();
+        let mut intent = AuditIntent::new(
+            "call-1",
+            ToolId::new("echo"),
+            RequestDigest::of_request_bytes(b"{}"),
+        );
+        writer.emit_intent(&mut intent).unwrap();
+        let row = &lines(writer.path())[1];
+        assert_eq!(row["line_type"], Value::from("intent"));
+        assert!(row.get("signature").is_none(), "{row}");
+        assert!(row.get("key_id").is_none(), "{row}");
+        // Still hashed into the chain: the next line points at it.
+        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        let rows = raw_lines(writer.path());
+        let next: AuditRecord = serde_json::from_str(&rows[2]).unwrap();
+        assert_eq!(*next.prev_hash(), PrevHash::of_line(rows[1].as_bytes()));
+    }
+
+    #[test]
+    fn concurrent_appends_produce_one_unforked_chain() {
+        let writer = AuditWriter::open_temp().unwrap();
+        std::thread::scope(|scope| {
+            for thread in 0..8 {
+                scope.spawn({
+                    let writer = &writer;
+                    move || {
+                        for call in 0..4 {
+                            writer
+                                .emit_outcome(&mut outcome(&format!("call-{thread}-{call}")))
+                                .unwrap();
+                        }
+                    }
+                });
+            }
+        });
+
+        let rows = raw_lines(writer.path());
+        assert_eq!(rows.len(), 1 + 8 * 4);
+        let parsed = lines(writer.path());
+        for (index, row) in parsed.iter().enumerate() {
+            assert_eq!(row["seq"], Value::from(index as u64), "seq must not repeat");
+            if index > 0 {
+                assert_eq!(
+                    row["prev_hash"],
+                    Value::from(PrevHash::of_line(rows[index - 1].as_bytes()).to_hex()),
+                    "line {index} forked off the chain"
+                );
+            }
+        }
+    }
 
     #[test]
     fn rejects_unsupported_schema() {
@@ -111,12 +562,25 @@ mod tests {
         // an unsupported version reaches the writer is a foreign/tampered record
         // deserialized from the wire — exactly what this guard is for.
         let writer = AuditWriter::open_temp().unwrap();
-        let intent: AuditIntent = serde_json::from_str(
-            r#"{"schema_version":999,"phase":"intent","call_id":"call-1","tool_id":"smoke","input_digest":"abc"}"#,
+        let mut intent: AuditIntent = serde_json::from_str(
+            r#"{"schema_version":999,"line_type":"intent","seq":0,"prev_hash":"0000000000000000000000000000000000000000000000000000000000000000","call_id":"call-1","tool_id":"smoke","request_digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}"#,
         )
         .expect("intent with a foreign schema version still deserializes");
         assert_eq!(intent.schema_version(), 999);
-        let err = writer.emit_intent(&intent).unwrap_err();
+        let err = writer.emit_intent(&mut intent).unwrap_err();
         assert!(matches!(err, AuditError::UnsupportedSchema { .. }));
+    }
+
+    #[test]
+    fn a_torn_tail_refuses_to_open_rather_than_chaining_onto_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("torn.jsonl");
+        drop(AuditWriter::open(&path, insecure_dev_key()).unwrap());
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"line_type\":\"outcome\",\"seq\"");
+        std::fs::write(&path, text).unwrap();
+
+        let err = AuditWriter::open(&path, insecure_dev_key()).unwrap_err();
+        assert!(matches!(err, AuditError::TornTail { .. }), "{err:?}");
     }
 }

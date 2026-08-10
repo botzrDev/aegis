@@ -109,7 +109,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn echo_tools_call_emits_schema_v1_audit_outcome() {
+    fn echo_tools_call_emits_schema_v2_audit_outcome() {
         let audit = NamedTempFile::new().expect("temp audit");
         let audit_path = audit.path().to_path_buf();
 
@@ -120,11 +120,11 @@ mod tests {
         let jsonl = std::fs::read_to_string(&audit_path).expect("audit readable");
         let outcome = jsonl
             .lines()
-            .find(|l| l.contains("\"phase\":\"outcome\""))
+            .find(|l| l.contains("\"line_type\":\"outcome\""))
             .expect("outcome line");
         assert!(
-            outcome.contains("\"schema_version\":1"),
-            "expected schema_version 1, got: {outcome}"
+            outcome.contains("\"schema_version\":2"),
+            "expected schema_version 2, got: {outcome}"
         );
         assert!(
             outcome.contains("\"status\":\"success\""),
@@ -147,11 +147,11 @@ mod tests {
         let jsonl = std::fs::read_to_string(audit.path()).expect("audit readable");
         let outcome = jsonl
             .lines()
-            .find(|l| l.contains("\"phase\":\"outcome\""))
+            .find(|l| l.contains("\"line_type\":\"outcome\""))
             .expect("outcome line");
         assert!(
-            outcome.contains("\"schema_version\":1"),
-            "expected schema_version 1, got: {outcome}"
+            outcome.contains("\"schema_version\":2"),
+            "expected schema_version 2, got: {outcome}"
         );
         assert!(
             outcome.contains("\"status\":\"denied\"")

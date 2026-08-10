@@ -1,0 +1,35 @@
+error[E0616]: field `seq` of struct `AuditRecord` is private
+  --> tests/ui/audit_chain_fields_are_sealed.rs:27:12
+   |
+27 |     record.seq = 99;
+   |            ^^^ private field
+
+error[E0616]: field `prev_hash` of struct `AuditRecord` is private
+  --> tests/ui/audit_chain_fields_are_sealed.rs:28:12
+   |
+28 |     record.prev_hash = PrevHash::GENESIS;
+   |            ^^^^^^^^^ private field
+
+error[E0616]: field `signature` of struct `AuditRecord` is private
+  --> tests/ui/audit_chain_fields_are_sealed.rs:29:12
+   |
+29 |     record.signature = Some(Signature::from_bytes([0u8; 64]));
+   |            ^^^^^^^^^ private field
+
+error[E0616]: field `key_id` of struct `AuditRecord` is private
+  --> tests/ui/audit_chain_fields_are_sealed.rs:30:12
+   |
+30 |     record.key_id = Some(KeyId::of_public_key(&PublicKey::from_bytes([0u8; 32])));
+   |            ^^^^^^ private field
+
+error[E0616]: field `seq` of struct `AuditIntent` is private
+  --> tests/ui/audit_chain_fields_are_sealed.rs:37:12
+   |
+37 |     intent.seq = 99;
+   |            ^^^ private field
+
+error[E0616]: field `prev_hash` of struct `AuditIntent` is private
+  --> tests/ui/audit_chain_fields_are_sealed.rs:38:12
+   |
+38 |     intent.prev_hash = PrevHash::GENESIS;
+   |            ^^^^^^^^^ private field

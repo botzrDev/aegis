@@ -4,7 +4,10 @@ use std::path::Path;
 
 use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-use botzr_aegis_core::{AegisError, AuditRecord, ExecutionOutcome, ToolId};
+use botzr_aegis_core::{
+    AegisError, AuditRecord, ExecutionOutcome, GrantId, KeyId, PrevHash, PublicKey, RequestDigest,
+    Signature, ToolId,
+};
 use botzr_aegis_runtime::Runtime;
 
 const SPIN: &str = r#"
@@ -49,9 +52,10 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
         .lines()
         .map(str::to_owned)
         .collect();
-    assert_eq!(lines.len(), 2, "intent + outcome");
+    // Line 0 is the Session `Open` the writer emits on construction.
+    assert_eq!(lines.len(), 3, "open + intent + outcome");
 
-    let record: AuditRecord = serde_json::from_str(&lines[1]).expect("outcome parses");
+    let record: AuditRecord = serde_json::from_str(&lines[2]).expect("outcome parses");
     assert!(matches!(
         record.execution,
         ExecutionOutcome::ResourceExceeded { ref kind } if kind == "wall_clock"
@@ -91,19 +95,34 @@ fn golden_resource_exceeded_orchestrator_shape() {
         .lines()
         .map(str::to_owned)
         .collect();
-    let mut record: AuditRecord = serde_json::from_str(&lines[1]).expect("outcome parses");
+    let mut record: AuditRecord = serde_json::from_str(&lines[2]).expect("outcome parses");
 
     // The digest is *not* normalized: since AEG-44 it is derived inside the
-    // runtime from the input bytes, so the golden pins sha256_hex(b"{}").
-    assert_eq!(record.input_digest, botzr_aegis_runtime::sha256_hex(b"{}"));
+    // runtime from the raw input bytes, so the golden pins the SHA-256 of
+    // exactly `b"{}"`.
+    assert_eq!(
+        record.request_digest,
+        RequestDigest::of_request_bytes(b"{}")
+    );
+    // Nor is `policy_set_hash`: this runtime uses the zero-config allow-all set,
+    // whose content hash is fixed, so the golden pins the real ruleset identity.
 
-    // Normalize volatile / sequential fields for the schema golden (R5 contract).
+    // Normalize volatile / sequential fields for the schema golden (R5
+    // contract). This golden pins the record's *shape*; the chain and signature
+    // are owned by the audit crate's own goldens, and the signature here covers
+    // measured metrics that move run to run.
     record.call_id = "call-golden-orchestrator".into();
     if let botzr_aegis_core::CapabilityOutcome::Granted { ref mut grant } = record.capability {
         grant.grant_id = "spin-1".into();
     }
+    record.grant_id = Some(GrantId::new("spin-1"));
     record.wall_ms = Some(50);
     record.peak_memory_bytes = Some(65536);
+    record.stamp_chain(2, PrevHash::GENESIS);
+    record.stamp_signature(
+        Signature::from_bytes([0u8; 64]),
+        KeyId::of_public_key(&PublicKey::from_bytes([0u8; 32])),
+    );
 
     let actual = to_json_line(&record).expect("serialize");
     let expected = include_str!("golden/resource_exceeded_orchestrator.json");

@@ -1,5 +1,33 @@
 # Aegis governance (Layer 2) — slices 1–4
 
+> # ⛔ BREAK: INGEST IS BROKEN AGAINST THE CURRENT RUNTIME
+>
+> **The Rust runtime now emits audit schema version 2 (AILAB-619). This service
+> hard-rejects `schema_version != 1`, so every line the runtime writes today is
+> refused by `/v1/ingest`. Nothing in `governance/` has been migrated.**
+>
+> **Migration owner: AILAB-624.** Do not patch around this here — the models,
+> the validation and the feature extractor all move together in that ticket.
+>
+> What changed in schema 2, all of it breaking for this service:
+>
+> | v1 | v2 |
+> |---|---|
+> | `phase` (`intent` \| `outcome`) | `line_type` — **six** types: `open`, `intent`, `outcome`, `decision`, `close`, `checkpoint` (reserved) |
+> | `input_digest` | `request_digest` |
+> | — | `seq`, `prev_hash` — every line is a link in a hash chain |
+> | — | `signature`, `key_id` — ed25519 over the line's canonical form |
+> | — | `policy_set_hash`, `grant_id`, `response_digest` |
+> | — | `decision_axes` — always present, possibly `{}`; carries `capability`, `role`, `session`, `matched_rule`, `approval_ref`, derived `fs` / `net` |
+> | — | lines hash under RFC 8785 (JCS); rows on disk are in canonical form |
+>
+> Two consequences this service's *design* has to answer, not just its parsers:
+> `AuditPhase` no longer describes the wire (six line types, not two phases), and
+> `FEATURE_SCHEMA_VERSION`'s "schema-v1 outcome" input is now a v2 outcome — a
+> vector layout pinned to one audit schema cannot silently accept the other.
+>
+> Format reference: [`spec/SPEC.md`](../spec/SPEC.md).
+
 Python FastAPI service for audit ingest, policy-floor checks, **narrow-only**
 policy proposals, **rule-based drift findings**, **versioned policy packs**, and
 a **pgvector learning fabric**. Not a Cargo workspace member; does not write
@@ -10,7 +38,7 @@ into the Rust runtime.
 1. **Policy floor never relaxable** — `check_floor` rejects widen past `floor.default.yaml`.
 2. **Never blind-load policy** — current/proposed YAML are validated before compare.
 3. **Auto-apply only narrows** — widen → `pending_human` / HTTP 409; proposals never auto-apply to Rust.
-4. **Audit ingest is untrusted** — reject `schema_version != 1`; fail closed on missing required outcome fields.
+4. **Audit ingest is untrusted** — reject `schema_version != 1`; fail closed on missing required outcome fields. **This is the break above: the runtime now emits `2`. Owner AILAB-624.**
 
 Detectors (slice 2) emit `pending_human` findings only — never policy YAML, never auto-widen.
 

@@ -75,7 +75,10 @@ fn stdio_session_initialize_list_call_and_deny() {
     assert!(status.success(), "gateway exit: {status:?}");
 
     let jsonl = std::fs::read_to_string(audit.path()).expect("audit readable");
-    assert!(jsonl.contains("\"phase\":\"outcome\""), "audit: {jsonl}");
+    assert!(
+        jsonl.contains("\"line_type\":\"outcome\""),
+        "audit: {jsonl}"
+    );
 }
 
 #[test]

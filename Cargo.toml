@@ -49,6 +49,11 @@ anyhow = "1"
 arc-swap = "1"
 cap-std = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
+# AILAB-619: ed25519 signatures over the canonical (JCS) form of signed audit
+# lines. BSD-3-Clause, already in deny.toml's allow list; MSRV 1.85 <= 1.86.
+# Key *lifecycle* (location, permissions, first-run generation) is AILAB-620 —
+# this pin only buys the signing primitive.
+ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"

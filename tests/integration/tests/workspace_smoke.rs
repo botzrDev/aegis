@@ -38,7 +38,9 @@ fn echo_tool_e2e_through_pipeline() {
     assert_eq!(out, input);
 
     let audit = std::fs::read_to_string(rt.audit().path()).expect("audit readable");
-    assert!(audit.contains("\"phase\":\"intent\""));
-    assert!(audit.contains("\"phase\":\"outcome\""));
+    // Schema v2: the Session `Open` line comes first, then the call's two lines.
+    assert!(audit.contains("\"line_type\":\"open\""));
+    assert!(audit.contains("\"line_type\":\"intent\""));
+    assert!(audit.contains("\"line_type\":\"outcome\""));
     assert!(audit.contains("\"status\":\"success\""));
 }

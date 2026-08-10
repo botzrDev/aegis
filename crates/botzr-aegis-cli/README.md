@@ -26,7 +26,7 @@ aegis run --component <wasm> --id <tool-id> [OPTIONS]
 
 Registers a `wasm32-wasip2` component and executes one call through
 **POLICY → CAPABILITY → SANDBOX → AUDIT**. Tool output goes to stdout; progress
-and `input_digest` go to stderr. Deny/trap paths still emit audit JSONL.
+and `request_digest` go to stderr. Deny/trap paths still emit audit JSONL.
 
 | Flag | Description |
 |------|-------------|

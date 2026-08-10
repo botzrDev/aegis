@@ -1,18 +1,31 @@
-//! AILAB-602 stress suite — audit exactly-once under concurrency.
+//! AILAB-602 stress suite — audit exactly-once **and an unforked chain** under
+//! concurrency.
 //!
 //! One shared `Runtime`, ≥1,000 calls issued concurrently across every outcome
-//! class, then the exactly-once audit contract asserted by set equality on the
-//! JSONL sink: per call exactly one intent and one outcome, call-id sets
-//! identical and gap-free (`call-1..call-N`), every outcome parses as frozen
-//! schema v1, and each class lands its expected `execution.status` for its own
-//! tool id. No timing assertions — statuses and set equality only.
+//! class, then the audit contract asserted on the JSONL sink: per call exactly
+//! one intent and one outcome, call-id sets identical and gap-free
+//! (`call-1..call-N`), every outcome parses as frozen schema v2, and each class
+//! lands its expected `execution.status` for its own tool id.
+//!
+//! AILAB-619 adds the chain half. `seq` and `prev_hash` are assigned inside the
+//! writer lock; if that ever regresses to reading the chain head outside it, two
+//! threads take the same position and the chain forks. Under the same ≥1,000
+//! concurrent calls this suite therefore also asserts that the Session's `seq`
+//! values are unique and gap-free, that every line chains to the one before it,
+//! that every signed line verifies against the key the `Open` line published,
+//! and that the file opens with `Open` and ends with `Close`.
+//!
+//! No timing assertions — statuses, set equality, and hashes only.
 
 use std::collections::{HashMap, HashSet};
 
-use botzr_aegis_audit::AuditWriter;
+use botzr_aegis_audit::{
+    insecure_dev_key, verify_chain, verify_line, AuditWriter, Verdict, VerifyError,
+};
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{
-    AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId,
+    AegisError, AuditClose, AuditIntent, AuditLineType, AuditOpen, AuditRecord, CapabilityOutcome,
+    ExecutionOutcome, PolicyOutcome, PrevHash, ToolId, AUDIT_SCHEMA_VERSION,
 };
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
 use botzr_aegis_runtime::{HostCallRequest, HostHandler, Runtime, ToolExecutable};
@@ -342,9 +355,11 @@ fn audit_is_exactly_once_under_concurrency() {
         .max(1);
 
     // One Runtime, one dedicated JSONL sink in a tempdir — LOAD-BEARING: a
-    // fresh writer means call ids are exactly call-1..call-N for this test.
+    // fresh writer means call ids are exactly call-1..call-N for this test, and
+    // one writer means one Session, so `seq` runs 0..=N with no restart.
     let dir = tempfile::tempdir().unwrap();
-    let audit = AuditWriter::open(dir.path().join("stress.jsonl")).unwrap();
+    let audit_path = dir.path().join("stress.jsonl");
+    let audit = AuditWriter::open(&audit_path, insecure_dev_key()).unwrap();
     let mut rt = Runtime::new()
         .with_policy(PolicyEngine::from_yaml(POLICY_YAML).unwrap())
         .with_audit(audit);
@@ -406,7 +421,8 @@ fn audit_is_exactly_once_under_concurrency() {
         .into_iter()
         .partition(|class| *class == Class::HostPanic);
 
-    let rt = &rt;
+    let runtime = rt;
+    let rt = &runtime;
     std::thread::scope(|s| {
         // Fixed worker pool over the non-panic calls; worker w takes every
         // WORKERS-th entry, preserving the class interleave per worker.
@@ -444,40 +460,185 @@ fn audit_is_exactly_once_under_concurrency() {
 
     // ---- assertions, all on the JSONL sink after the scope joined ----------
 
-    let text = std::fs::read_to_string(rt.audit().path()).expect("audit sink readable");
+    // LOAD-BEARING: drop the Runtime before reading. The writer *is* the
+    // Session, and the `Close` line is written on its `Drop` — reading a live
+    // file would legitimately show an unanchored tail and the last-line
+    // assertion below would be testing the wrong thing.
+    drop(runtime);
+    let text = std::fs::read_to_string(&audit_path).expect("audit sink readable");
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
     let mut intent_lines = 0usize;
     let mut intent_ids: HashSet<String> = HashSet::new();
     let mut outcome_ids: HashSet<String> = HashSet::new();
     let mut outcomes: Vec<AuditRecord> = Vec::new();
-    for line in text.lines() {
-        // 1 — every line parses as JSON with phase exactly intent | outcome.
+    let mut seqs: Vec<u64> = Vec::with_capacity(rows.len());
+    let mut public_key = None;
+    for (index, line) in rows.iter().enumerate() {
+        // 1 — every line parses as JSON with a line_type this build knows.
         let value: serde_json::Value =
             serde_json::from_str(line).unwrap_or_else(|e| panic!("unparseable line ({e}): {line}"));
-        match value["phase"].as_str() {
-            Some("intent") => {
-                intent_lines += 1;
-                intent_ids.insert(
-                    value["call_id"]
-                        .as_str()
-                        .unwrap_or_else(|| panic!("intent without call_id: {line}"))
-                        .to_owned(),
+        assert_eq!(
+            value["schema_version"], AUDIT_SCHEMA_VERSION,
+            "every line is schema v{AUDIT_SCHEMA_VERSION}: {line}"
+        );
+        seqs.push(
+            value["seq"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("line without seq: {line}")),
+        );
+        match AuditLineType::from_wire(
+            value["line_type"]
+                .as_str()
+                .unwrap_or_else(|| panic!("line without line_type: {line}")),
+        ) {
+            AuditLineType::Open => {
+                // 1a — the Session opens the file and nowhere else.
+                assert_eq!(index, 0, "an Open line may only be the first line: {line}");
+                let open: AuditOpen = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("open is not schema v2 ({e}): {line}"));
+                assert_eq!(verify_line(&open, &open.public_key), Ok(()));
+                public_key = Some(open.public_key);
+            }
+            AuditLineType::Close => {
+                assert_eq!(
+                    index,
+                    rows.len() - 1,
+                    "a Close line may only be the last line: {line}"
+                );
+                let close: AuditClose = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("close is not schema v2 ({e}): {line}"));
+                assert_eq!(
+                    verify_line(&close, &public_key.expect("Open came first")),
+                    Ok(())
                 );
             }
-            Some("outcome") => {
-                // 4 — LOAD-BEARING: frozen schema v1 straight from core; no
+            AuditLineType::Intent => {
+                intent_lines += 1;
+                let intent: AuditIntent = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("intent is not schema v2 ({e}): {line}"));
+                // LOAD-BEARING: the intent line is fsynced ahead of execution,
+                // so signing must stay off the pre-execution critical path. It
+                // is hashed into the chain and never signed — if a signature
+                // appears here, that guarantee silently moved.
+                assert!(value.get("signature").is_none(), "signed intent: {line}");
+                assert!(value.get("key_id").is_none(), "keyed intent: {line}");
+                intent_ids.insert(intent.call_id);
+            }
+            AuditLineType::Outcome => {
+                // 4 — LOAD-BEARING: frozen schema v2 straight from core; no
                 // hand-rolled record type.
                 let record: AuditRecord = serde_json::from_str(line)
-                    .unwrap_or_else(|e| panic!("outcome is not schema v1 ({e}): {line}"));
+                    .unwrap_or_else(|e| panic!("outcome is not schema v2 ({e}): {line}"));
+                // Every outcome is signed by the key the Open line published.
+                assert_eq!(
+                    verify_line(&record, &public_key.expect("Open came first")),
+                    Ok(()),
+                    "outcome does not verify: {line}"
+                );
                 outcome_ids.insert(record.call_id.clone());
                 outcomes.push(record);
             }
-            other => panic!("unexpected phase {other:?}: {line}"),
+            other => panic!("unexpected line_type {other}: {line}"),
         }
     }
+
+    // 1b — one Session: Open first, Close last, nothing else at the ends.
+    assert!(
+        public_key.is_some(),
+        "the sink must begin with an Open line"
+    );
+    assert_eq!(
+        rows.len(),
+        2 * total + 2,
+        "open + (intent, outcome) per call + close"
+    );
 
     // 2 — one intent and one outcome per call issued.
     assert_eq!(intent_lines, total, "exactly one intent per call");
     assert_eq!(outcomes.len(), total, "exactly one outcome per call");
+
+    // 2a — LOAD-BEARING (AILAB-619 §1 fact 7): `seq` and `prev_hash` are taken
+    // inside the writer lock. If either is ever read outside it, two threads get
+    // the same chain head and the chain forks — and a fork shows up here as two
+    // lines claiming one `seq`, or as a `prev_hash` that points at a line other
+    // than its predecessor. Both are asserted, because either alone can be
+    // satisfied by a half-broken writer.
+    let unique: HashSet<u64> = seqs.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        rows.len(),
+        "two lines took the same seq — the chain forked"
+    );
+    assert_eq!(
+        unique,
+        (0..rows.len() as u64).collect::<HashSet<u64>>(),
+        "seq must be gap-free 0..={}",
+        rows.len() - 1
+    );
+    assert_eq!(
+        seqs,
+        (0..rows.len() as u64).collect::<Vec<u64>>(),
+        "append order and chain order must be the same order"
+    );
+
+    // 2b — one chain, no branch: walked start to finish, each line's
+    // `prev_hash` against the *computed* hash of the line before it. The Open
+    // line anchors on genesis; its back-reference to a previous Session, if any,
+    // lives in `prev_session_tail` instead.
+    let mut expected = PrevHash::GENESIS;
+    for (index, line) in rows.iter().enumerate() {
+        let value: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            value["prev_hash"],
+            serde_json::Value::from(expected.to_hex()),
+            "line {index} forked off the chain"
+        );
+        expected = PrevHash::of_line(line.as_bytes());
+    }
+
+    // 2c — and the same file read by the library verifier, which walks the
+    // chain, checks every signature and requires an anchor at the end.
+    let verification = verify_chain(&text);
+    assert_eq!(
+        verification.verdict,
+        Verdict::Verified,
+        "the sink must verify end to end"
+    );
+    assert_eq!(
+        verification.coverage.map(|position| position.seq),
+        Some(rows.len() as u64 - 1),
+        "coverage must reach the Close line"
+    );
+
+    // 2d — the premise of 2b: a stripped signature really does break the walk,
+    // so the chain assertions above are not vacuous.
+    {
+        let mut tampered: Vec<String> = rows.iter().map(|line| line.to_string()).collect();
+        let outcome_index = tampered
+            .iter()
+            .position(|line| line.contains("\"line_type\":\"outcome\""))
+            .expect("the sink has outcome lines");
+        let mut value: serde_json::Value = serde_json::from_str(&tampered[outcome_index]).unwrap();
+        assert!(value.as_object_mut().unwrap().remove("signature").is_some());
+        tampered[outcome_index] =
+            botzr_aegis_core::to_canonical_json(&value).expect("canonical form");
+        let mut text = tampered.join("\n");
+        text.push('\n');
+        match verify_chain(&text).verdict {
+            Verdict::Tampered { .. } => {}
+            other => panic!("stripping a signature must be detectable, got {other:?}"),
+        }
+        // And the same edit fails the typed signature check, not only the walk.
+        let record: AuditRecord = serde_json::from_str(&tampered[outcome_index]).unwrap();
+        assert_eq!(
+            verify_line(&record, &public_key.unwrap()),
+            Err(VerifyError::Unsigned)
+        );
+    }
 
     // 3 — call-id sets identical and gap-free: set equality, not counting, so
     // a duplicate-plus-gap fails even though the line counts match.

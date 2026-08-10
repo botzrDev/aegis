@@ -2,10 +2,15 @@
 //! real `AuditWriter`.
 //!
 //! One cycle ships **two** JSONL lines — `intent` from `CallSession::begin`
-//! (`src/session.rs:33`) and `outcome` from `complete` (`src/session.rs:91`) —
-//! so the measured cycle includes two `sync_all` calls (`src/writer.rs:74`).
-//! That fsync-per-line is the shipped G3 durability shape and is deliberately
-//! not stripped for the bench.
+//! and `outcome` from `complete` — so the measured cycle includes two
+//! `sync_all` calls. That fsync-per-line is the shipped G3 durability shape and
+//! is deliberately not stripped for the bench.
+//!
+//! **Schema v2 caveat (AILAB-619):** each line now also carries JCS
+//! canonicalization plus a chain hash, and the outcome line an ed25519
+//! signature, all inside the writer lock. The published median in
+//! `benches/results/cell_and_audit.md` predates that work and has not been
+//! re-measured here.
 //!
 //! One writer is reused across iterations so `TempDir` creation is not timed;
 //! the JSONL file grows for the length of the run, which is what a real
@@ -16,7 +21,7 @@ use std::hint::black_box;
 use botzr_aegis_audit::{to_json_line, AuditWriter, CallSession};
 use botzr_aegis_core::{
     AuditIntent, AuditRecord, CallMetrics, CapabilityGrant, CapabilityOutcome, ExecutionOutcome,
-    PolicyOutcome, ToolId,
+    PolicyOutcome, PolicySetHash, RequestDigest, ToolId,
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -37,8 +42,13 @@ fn grant() -> CapabilityGrant {
 /// Mirrors the allowed-and-executed path in `runtime/src/pipeline.rs:105-149`:
 /// policy allowed → capability granted → execution success with metrics.
 fn emit_cycle(writer: &AuditWriter, grant: &CapabilityGrant) {
-    let mut session = CallSession::begin(writer, ToolId::new("echo"), "abc123")
-        .expect("begin must succeed on a temp sink");
+    let mut session = CallSession::begin(
+        writer,
+        ToolId::new("echo"),
+        RequestDigest::of_request_bytes(b"abc123"),
+        PolicySetHash::of_canonical_bytes(b"policy"),
+    )
+    .expect("begin must succeed on a temp sink");
     session.set_policy(PolicyOutcome::Allowed);
     session.set_capability(CapabilityOutcome::Granted {
         grant: grant.clone(),
@@ -58,12 +68,13 @@ fn serialize_cycle(grant: &CapabilityGrant) {
     let intent = AuditIntent::new(
         "call-1".to_string(),
         ToolId::new("echo"),
-        "abc123".to_string(),
+        RequestDigest::of_request_bytes(b"abc123"),
     );
     let record = AuditRecord::new(
         "call-1".to_string(),
         ToolId::new("echo"),
-        "abc123".to_string(),
+        RequestDigest::of_request_bytes(b"abc123"),
+        PolicySetHash::of_canonical_bytes(b"policy"),
         PolicyOutcome::Allowed,
         CapabilityOutcome::Granted {
             grant: grant.clone(),

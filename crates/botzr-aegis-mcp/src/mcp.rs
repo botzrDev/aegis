@@ -203,9 +203,9 @@ mod tests {
         let jsonl = std::fs::read_to_string(audit.path()).expect("audit");
         let outcome = jsonl
             .lines()
-            .find(|l| l.contains("\"phase\":\"outcome\""))
+            .find(|l| l.contains("\"line_type\":\"outcome\""))
             .expect("outcome");
-        assert!(outcome.contains("\"schema_version\":1"));
+        assert!(outcome.contains("\"schema_version\":2"));
         assert!(outcome.contains("\"status\":\"success\""));
     }
 
@@ -227,9 +227,9 @@ mod tests {
         let jsonl = std::fs::read_to_string(audit.path()).expect("audit");
         let outcome = jsonl
             .lines()
-            .find(|l| l.contains("\"phase\":\"outcome\""))
+            .find(|l| l.contains("\"line_type\":\"outcome\""))
             .expect("outcome");
-        assert!(outcome.contains("\"schema_version\":1"));
+        assert!(outcome.contains("\"schema_version\":2"));
         assert!(
             outcome.contains("\"status\":\"denied\"")
                 || outcome.contains("MCP deny-smoke: exfil blocked"),

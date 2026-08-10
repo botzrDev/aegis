@@ -151,7 +151,8 @@ containment cases and measured costs — they do not certify the instrument.
 | [Threat model](docs/threat-model.md) | Scope, trust boundaries, named non-goals, residual risks |
 | [Findings report](docs/findings.md) | What isolation is measured to guarantee — and not; five reproducible case studies, bundled via [`scripts/evidence-bundle.sh`](scripts/evidence-bundle.sh) |
 | [OQ-15 Part B review](https://github.com/botzrDev/aegis/issues/19) | Structured packaging peer review (solo-maintainer exception logged) |
-| [Audit schema freeze](docs/audit-schema.md) | `schema_version: 1` wire contract (Intent/Outcome); digests + sinks honesty |
+| [Record format spec](spec/SPEC.md) | `schema_version: 2` wire contract — line types, hash chain, JCS canonical form, signatures, verdicts, Envelope boundary, non-guarantees |
+| [Audit schema freeze](docs/audit-schema.md) | Superseded: the `schema_version: 1` wire contract, kept as a record |
 | [`SECURITY.md`](SECURITY.md) | Private disclosure process and in-scope crates |
 | [DamageBot demo](examples/damage-bot-demo/README.md) | Six adversarial cases refused through `Runtime::execute_tool_call` (Model A + Model B) |
 | [Stage 2 demo](tests/stage2-demo/README.md) | A minimal `wasip2` path detector through the full pipeline; native-vs-wasm equivalence scorecard |

@@ -21,9 +21,9 @@ fn wasm_via_host_entry() -> ExecutionStep {
 
 /// Policy axes + payload for a Model B host tool call.
 ///
-/// There is deliberately no `input_digest` field: the runtime derives it from
-/// `input` inside the pipeline so audit cannot record a digest the caller made
-/// up (AEG-44 §3.C).
+/// There is deliberately no `request_digest` field: the runtime derives it
+/// from the raw `input` bytes inside the pipeline so audit cannot record a
+/// digest the caller made up (AEG-44 §3.C).
 #[derive(Debug, Clone)]
 pub struct HostCallRequest<'a> {
     pub tool_id: ToolId,
@@ -282,8 +282,9 @@ rules:
             .lines()
             .map(str::to_owned)
             .collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[1].contains("\"status\":\"success\""));
+        // Line 0 is the Session `Open` the writer emits on construction.
+        assert_eq!(lines.len(), 3, "open + intent + outcome lines");
+        assert!(lines[2].contains("\"status\":\"success\""));
     }
 
     #[test]
