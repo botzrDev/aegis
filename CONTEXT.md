@@ -1,0 +1,89 @@
+# Aegis
+
+A runtime that executes untrusted agent tool calls under deterministic containment and emits a verifiable record of every call. It sits underneath agent frameworks; it is not one.
+
+## Language
+
+### The pipeline
+
+**Call**:
+One tool invocation travelling the full `POLICY → CAPABILITY → SANDBOX → AUDIT` pipeline.
+_Avoid_: request, invocation, execution
+
+**Policy Set**:
+The parsed, immutable rule collection a Call is evaluated against, held as `Arc<PolicySet>`.
+_Avoid_: policy file, ruleset, config
+
+**Grant**:
+The minted authority a Call executes under, derived by narrowing a parent grant; never ambient.
+_Avoid_: permission, capability (the axis), scope
+
+**Decision Axes**:
+The inputs a policy verdict is a function of — `tool_id`, `capability`, `role`, `session`, `approval_ref`, and the **derived capability parameters** (the `fs` path, `net` host/port the runtime resolved the call to). Never the raw argument tree. Every Decision Axis lives in the Chain, because replay needs it.
+_Avoid_: policy inputs, request context, arguments
+
+**Binding**:
+A per-tool declaration of which argument position supplies which capability axis — `read_file{path}` and `slurp{file_path}` both bind to `fs.read`. What lets one rule cover every tool. New manifest surface; `ToolManifest` declares static needs today, not bindings.
+
+**Model A**:
+A tool whose logic runs inside wasmtime. Strong isolation.
+
+**Model B**:
+A tool whose effect runs in host Rust. Capability check and audit only — **not** sandbox isolation, and docs must say so plainly.
+
+### The evidence
+
+**Agent Action Record (AAR)**:
+The signed, hash-chained record of one Call's decision and outcome. The artifact third parties emit and verify.
+_Avoid_: audit log, log line, event (see Flagged ambiguities)
+
+**Chain**:
+The ordered, signed sequence of AARs whose integrity `aegis verify` checks. Publishable by construction — it carries verdicts and Decision Axes, never raw payloads.
+_Avoid_: audit trail, ledger
+
+**Envelope**:
+The optional, local, content-addressed store of verbatim request bytes, keyed by `request_digest`. Never signed; authenticated transitively by the digest inside the signed Chain. **Purely forensic** — replay does not need it, because matchers target Decision Axes rather than raw arguments.
+_Avoid_: payload store, blob store, sidecar
+
+**Session**:
+One writer lifetime over one Chain file — opened when the `AuditWriter` is constructed, closed on its `Drop`. Owns the chain state (`seq`, tail hash) behind the same lock as the file handle. A file may hold many Sessions.
+_Avoid_: run, connection, process
+
+**Anchor**:
+Any signed line that proves content exists beyond a given point — a close record, a later Session's `prev_session_tail` back-reference, or a Checkpoint. Absence of an Anchor is what makes a tail undecidable.
+
+**Coverage**:
+The highest `seq` covered by a valid signature. Every verify verdict is computed from Coverage plus Anchor presence, never from "is there a close record".
+
+**Recheck**:
+Re-evaluating a recorded session's decisions against a different Policy Set and reporting the delta. Offline, deterministic, and **executes nothing** — which is why it is not called replay.
+_Avoid_: replay, simulate, re-run
+
+**Indeterminate**:
+A verdict meaning the question could not be decided from the evidence — an unverified tail, a torn write, an unknown line type, a missing Envelope, a digest mismatch. A first-class outcome with a distinct typed reason per case, never folded into "unchanged" or "verified".
+
+## Relationships
+
+- A **Call** produces exactly one **AAR**, on every exit path including deny, trap, and panic
+- An **AAR** links to at most one **Envelope** entry, by `request_digest`
+- A **Session** contains many **Calls**; a Chain file contains many **Sessions**
+- A **Chain** verifies *and replays* without any **Envelope**
+- A **Binding** turns a tool's arguments into **Decision Axes**; without one, a call cannot be resolved to a capability
+- A **Policy Set** governs a **Call**; its hash is recorded in the **AAR** so the verdict is reproducible
+- **Model A** and **Model B** both emit **AARs**; only Model A is contained by the sandbox
+- Every outcome line is signed, therefore an unverified tail can contain **only intent lines** plus at most one torn final line — an unsigned outcome line in the tail is tampering, not a crash
+
+## Example dialogue
+
+> **Dev:** "If the **Chain** carries no arguments, how does `aegis replay` re-run a path-prefix rule?"
+> **Austin:** "It doesn't need the arguments. A rule matches the **Decision Axes**, and the resolved path is one of them — so `deny fs.read under ~/.ssh` is one rule that covers every tool, whether it calls the argument `path` or `file_path`. The **Envelope** is for a human reading the raw call afterwards, not for replay."
+> **Dev:** "So what's ever **Indeterminate**?"
+> **Austin:** "A tail we can't verify, a torn line, a line type we don't know, a policy set hash we can't account for. Never folded into 'unchanged' — a forensic tool that reports a clean diff on a session it couldn't evaluate is worse than one that refuses."
+
+## Flagged ambiguities
+
+- ~~**"replay" means two different operations.**~~ **Resolved:** D2's operation is **Recheck** (`aegis recheck`) — re-evaluate recorded decisions against a new Policy Set, executing nothing. Bare `replay` is reserved for REPLAY's re-execution (R2 / AILAB-677), which genuinely re-runs effects. The verb was the overclaim, not the namespace.
+- **`.aar` is not available as a file extension.** It is the Android Archive format — editors and `file` will misidentify records as zip archives. The prose name "Agent Action Record" is unaffected; the extension is a separate, still-open choice (`.aarl` proposed). "AAR" also softly collides with *after-action report* in audit usage.
+- **"digest" means two different things.** `PolicySet.digest` is FNV-1a over YAML text, self-documented at `policy/src/parse.rs:213` as "not a security digest"; `input_digest` is SHA-256 over raw bytes. The `policy_set_hash` field in the AAR cannot reuse the former. Partly resolved by the proposed newtypes (`PrevHash`, `PolicySetHash`, `RequestDigest`).
+- **"record" is ambiguous between line and decision.** Resolved: the **Chain** covers every appended line (intent, outcome, open, close, and the reserved checkpoint); **AAR** names the signed outcome line. `seq` is per line, not per Call.
+- **"event" belongs to REPLAY, not to Aegis today.** The REPLAY event journal (`RunStarted`, `ToolRequested`, …) is a different, larger model. Do not call an AAR an event.
