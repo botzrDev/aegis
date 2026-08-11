@@ -22,7 +22,7 @@ pub use line::{ChainLine, SignedChainLine};
 pub use session::CallSession;
 pub use signing::{insecure_dev_key, verify_line, SigningKey, VerifyError};
 pub use verdict::{
-    verify_chain, verify_chain_file, IndeterminateReason, Position, TamperedReason, Verdict,
-    Verification,
+    verify_chain, verify_chain_file, verify_chain_file_with_trust, verify_chain_with_trust,
+    IndeterminateReason, Position, TamperedReason, TrustLabel, Verdict, Verification,
 };
 pub use writer::{line_hash, to_json_line, AuditWriter};

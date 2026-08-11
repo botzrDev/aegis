@@ -1,10 +1,12 @@
 //! `aegis` CLI library — argument parsing and `run` pipeline wiring.
 
+mod verify;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::{AegisError, RequestDigest, ToolId};
+use botzr_aegis_core::{AegisError, PublicKey, RequestDigest, ToolId};
 use botzr_aegis_runtime::{Runtime, RuntimeBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +18,19 @@ pub enum Command {
     },
     /// Register a WASM component and execute one call through the pipeline.
     Run(RunArgs),
+    /// Verify a Chain file and report its verdict (ADR-0002 / ADR-0004).
+    ///
+    /// `keys` are `--key` values; `trust_store` is a file of the same. Their
+    /// union is the trust slice, and supplying *neither* is an *unpinned* walk —
+    /// a store that yields no keys is still a pin, and fails. The store is
+    /// deliberately not read here — parsing arguments must not touch the
+    /// filesystem, and an unreadable store is exit 2 while a bad `--key` is
+    /// exit 1.
+    Verify {
+        path: PathBuf,
+        keys: Vec<PublicKey>,
+        trust_store: Option<PathBuf>,
+    },
     Help,
 }
 
@@ -45,6 +60,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         "run" => match parse_run(&args[2..]) {
             Ok(run) => Ok(Command::Run(run)),
             Err(e) if e == "__help_run__" => Ok(Command::Help),
+            Err(e) => Err(e),
+        },
+        "verify" => match parse_verify(&args[2..]) {
+            Ok(cmd) => Ok(cmd),
+            Err(e) if e == "__help_verify__" => Ok(Command::Help),
             Err(e) => Err(e),
         },
         other if other.starts_with('-') => {
@@ -165,6 +185,65 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     })
 }
 
+/// Parse `aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>`.
+///
+/// Every error here is a usage error, which `main.rs` already maps to exit 1.
+/// That includes bad hex: a key the operator mistyped is not evidence about the
+/// file, so it must not be reported as a verdict about it.
+fn parse_verify(args: &[String]) -> Result<Command, String> {
+    let mut keys = Vec::new();
+    let mut trust_store = None;
+    let mut path: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--key" => {
+                i += 1;
+                let v = args.get(i).ok_or("--key needs a value")?;
+                // LOAD-BEARING: `--key` takes the `public_key` an `open` line
+                // publishes — 64 lowercase hex — and *not* the `key_id`
+                // fingerprint the report prints. Pinning compares published
+                // keys; accepting a fingerprint here would silently compare two
+                // different things and pin nothing.
+                let key = PublicKey::from_hex(v)
+                    .map_err(|e| format!("--key needs a 64-hex public key: {e}"))?;
+                keys.push(key);
+            }
+            "--trust-store" => {
+                i += 1;
+                let v = args.get(i).ok_or("--trust-store needs a value")?;
+                trust_store = Some(PathBuf::from(v));
+            }
+            "--help" | "-h" => return Err("__help_verify__".into()),
+            other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
+            other => {
+                // One Chain file per invocation. Two positionals is more likely
+                // a forgotten flag value than a request to verify both, and
+                // guessing would fold two verdicts into one exit code.
+                if let Some(first) = &path {
+                    return Err(format!(
+                        "verify takes one PATH, got `{}` and `{other}`",
+                        first.display()
+                    ));
+                }
+                path = Some(PathBuf::from(other));
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Verify {
+        // The record file's name and extension are unresolved (SPEC.md, "Not
+        // specified by this version", AILAB-623), so any path is accepted
+        // as-is. Do not start validating an extension here — that would invent
+        // the format's spelling by accident.
+        path: path.ok_or("verify requires <PATH>")?,
+        keys,
+        trust_store,
+    })
+}
+
 pub fn usage_text() -> String {
     format!(
         "aegis {} — research runtime for secure agent tool execution\n\
@@ -172,6 +251,7 @@ pub fn usage_text() -> String {
          Usage:\n\
            aegis [--policy <PATH>] [--audit <PATH>]\n\
            aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]\n\
+           aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>\n\
          \n\
          Run options:\n\
            --component, --wasm <PATH>  WASM component to register\n\
@@ -183,7 +263,16 @@ pub fn usage_text() -> String {
            --base-dir <PATH>           Manifest base dir (default: component parent)\n\
            --sha256 <HEX>              Optional component digest pin (G10)\n\
            --version <VER>             Tool version in manifest (default: 0.1.0)\n\
-           --help, -h                  Print this help\n",
+           --help, -h                  Print this help\n\
+         \n\
+         Verify options:\n\
+           --key <HEX>                 Trusted public key, 64 lowercase hex (repeatable)\n\
+           --trust-store <PATH>        File of trusted public keys, one hex per line\n\
+           --help, -h                  Print this help\n\
+         \n\
+         Verify exit codes:\n\
+           0  verified        2  could not read the record or the trust store\n\
+           1  tampered, or a usage error                 3  indeterminate\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -306,6 +395,11 @@ pub fn dispatch(cmd: Command) -> ExitCode {
                 }
             }
         }
+        Command::Verify {
+            path,
+            keys,
+            trust_store,
+        } => verify::run(&path, &keys, trust_store.as_deref()),
         Command::Run(args) => match execute_run(&args) {
             Ok(out) => {
                 if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), &out) {
@@ -485,8 +579,131 @@ mod tests {
             "--base-dir",
             "--sha256",
             "--version",
+            "--key",
+            "--trust-store",
         ] {
             assert!(usage.contains(flag), "usage missing {flag}");
+        }
+        assert!(usage.contains("verify"), "usage missing the verify command");
+    }
+
+    /// The four exit codes are API (ADR-0002), so `--help` has to name them.
+    #[test]
+    fn usage_text_names_the_verify_exit_codes() {
+        let usage = usage_text();
+        for code in [
+            "0  verified",
+            "1  tampered",
+            "2  could not read",
+            "3  indeterminate",
+        ] {
+            assert!(usage.contains(code), "usage missing exit code line {code}");
+        }
+    }
+
+    /// `--key` is the `public_key` wire form, so a real 64-hex key parses and a
+    /// `key_id`-shaped typo does not silently become a pin.
+    #[test]
+    fn parse_verify_collects_keys_and_store() {
+        let key_a = "0".repeat(64);
+        let key_b = "a".repeat(64);
+        let args = sv(&[
+            "aegis",
+            "verify",
+            "--key",
+            &key_a,
+            "--key",
+            &key_b,
+            "--trust-store",
+            "keys.txt",
+            "session.log",
+        ]);
+        match parse_args(&args).unwrap() {
+            Command::Verify {
+                path,
+                keys,
+                trust_store,
+            } => {
+                assert_eq!(path, PathBuf::from("session.log"));
+                assert_eq!(
+                    keys,
+                    vec![
+                        PublicKey::from_hex(&key_a).unwrap(),
+                        PublicKey::from_hex(&key_b).unwrap()
+                    ]
+                );
+                assert_eq!(trust_store, Some(PathBuf::from("keys.txt")));
+            }
+            other => panic!("expected Verify, got {other:?}"),
+        }
+    }
+
+    /// No `--key` and no store is the unpinned walk, not an error.
+    #[test]
+    fn parse_verify_bare_path_is_unpinned() {
+        match parse_args(&sv(&["aegis", "verify", "session.log"])).unwrap() {
+            Command::Verify {
+                path,
+                keys,
+                trust_store,
+            } => {
+                assert_eq!(path, PathBuf::from("session.log"));
+                assert!(keys.is_empty());
+                assert_eq!(trust_store, None);
+            }
+            other => panic!("expected Verify, got {other:?}"),
+        }
+    }
+
+    /// Any extension, including none: the record file's name is unresolved
+    /// (AILAB-623) and the CLI must not invent one by validating here.
+    #[test]
+    fn parse_verify_accepts_any_extension() {
+        for path in ["session.log", "session", "session.jsonl", "/var/log/a.b.c"] {
+            match parse_args(&sv(&["aegis", "verify", path])).unwrap() {
+                Command::Verify { path: parsed, .. } => assert_eq!(parsed, PathBuf::from(path)),
+                other => panic!("expected Verify, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_verify_usage_errors() {
+        // `verify --help` behaves like `run --help`.
+        assert_eq!(
+            parse_args(&sv(&["aegis", "verify", "--help"])).unwrap(),
+            Command::Help
+        );
+        assert_eq!(
+            parse_args(&sv(&["aegis", "verify", "-h"])).unwrap(),
+            Command::Help
+        );
+        // Missing PATH.
+        assert!(parse_args(&sv(&["aegis", "verify"]))
+            .unwrap_err()
+            .contains("requires <PATH>"));
+        // A second positional is a forgotten flag value, not two files.
+        assert!(parse_args(&sv(&["aegis", "verify", "a.log", "b.log"]))
+            .unwrap_err()
+            .contains("one PATH"));
+        // Missing values and unknown flags.
+        assert!(parse_args(&sv(&["aegis", "verify", "--key"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&["aegis", "verify", "--trust-store"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&["aegis", "verify", "--bogus", "a.log"]))
+            .unwrap_err()
+            .contains("unknown flag"));
+        // Bad hex is a usage error (exit 1), never a verdict about the file.
+        for bad in ["deadbeef", &"A".repeat(64), &"z".repeat(64)] {
+            assert!(
+                parse_args(&sv(&["aegis", "verify", "--key", bad, "a.log"]))
+                    .unwrap_err()
+                    .contains("64-hex public key"),
+                "expected a hex usage error for {bad}"
+            );
         }
     }
 

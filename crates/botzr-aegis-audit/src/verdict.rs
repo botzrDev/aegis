@@ -26,10 +26,17 @@
 //!   auditor. `Checkpoint` is reserved and unemitted by v0, so a v0 verifier
 //!   meeting one treats it the same way — it is a signed line, so it extends
 //!   Coverage, but it still caps the verdict.
+//!
+//! The walk also takes an optional **trust slice** of `PublicKey`s the caller
+//! anchored out of band (ADR-0004). Pinning is *identity checking, not a second
+//! signature path*: signatures always verify against the key the Session `Open`
+//! line publishes, and the slice only answers "is that key one of mine?". With
+//! no slice the answer is `Unpinned` — some Aegis build wrote this file, and
+//! nothing in the file says whose build.
 
 use std::path::Path;
 
-use botzr_aegis_core::{to_canonical_json, AuditLineType, PrevHash, PublicKey};
+use botzr_aegis_core::{to_canonical_json, AuditLineType, KeyId, PrevHash, PublicKey};
 use serde_json::Value;
 
 use crate::error::AuditError;
@@ -179,6 +186,17 @@ pub enum TamperedReason {
     /// outside the JCS value space so it has no reproducible hash. Not
     /// `Indeterminate`: the file is decidably not a valid Chain.
     MalformedLine { line: usize, detail: String },
+    /// A Session published a key the caller's trust slice does not contain.
+    ///
+    /// Not `Unpinned`: the caller said which keys it accepts, and this file
+    /// answers with another one. Rotation is legal — every `Open` in the file
+    /// must be in the store, not one of them — so several distinct keys pass
+    /// and one unknown key fails.
+    UntrustedKey { at: Position, key_id: KeyId },
+    /// A second `Decision` line for an `approval_id` already decided in this
+    /// file. One park, one verdict: a re-decision would let a denial be
+    /// overwritten by an approval with both lines validly signed.
+    DuplicateDecision { at: Position, approval_id: String },
 }
 
 impl std::fmt::Display for TamperedReason {
@@ -216,6 +234,18 @@ impl std::fmt::Display for TamperedReason {
                 ),
             },
             Self::MalformedLine { line, detail } => write!(f, "line {line}: {detail}"),
+            // The printed value is the *fingerprint*, and it has to say so:
+            // `key_id` and `PublicKey` are both 64 lowercase hex, so an
+            // operator who pastes this value into `--key` would otherwise be
+            // told the file publishes exactly the string they just supplied.
+            Self::UntrustedKey { at, key_id } => write!(
+                f,
+                "session opened at {at} publishes a key with fingerprint {key_id}, which is not in the supplied trust store (--key takes the 64-hex public key, not this fingerprint)"
+            ),
+            Self::DuplicateDecision { at, approval_id } => write!(
+                f,
+                "line at {at} decides approval {approval_id} a second time"
+            ),
         }
     }
 }
@@ -228,6 +258,17 @@ pub enum Verdict {
     Tampered { reason: TamperedReason },
 }
 
+/// Whether a verdict's key was anchored out of band (ADR-0004).
+///
+/// `Unpinned` is the honest default and not a soft failure: a valid signature
+/// proves *some* Aegis build wrote the file, and only a key the caller supplied
+/// from outside the file can say whose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustLabel {
+    Unpinned,
+    Pinned,
+}
+
 /// A verdict plus how far a valid signature reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verification {
@@ -235,6 +276,13 @@ pub struct Verification {
     /// Coverage: the highest position covered by a valid signature, or `None`
     /// when nothing was. See [`Position`] for why this is a pair.
     pub coverage: Option<Position>,
+    /// Every key a Session `Open` published, in first-seen order, de-duplicated.
+    /// More than one is legal rotation, not a finding.
+    pub key_ids: Vec<KeyId>,
+    /// `Pinned` only when a trust slice was supplied **and** the verdict is
+    /// `Verified`. Pinning a file that does not verify would name a key for a
+    /// chain nobody should be reading in the first place.
+    pub trust: TrustLabel,
 }
 
 impl Verification {
@@ -249,20 +297,54 @@ impl Verification {
 /// different answer from any of the three, and ADR-0002 gives it its own exit
 /// code.
 pub fn verify_chain_file(path: impl AsRef<Path>) -> Result<Verification, AuditError> {
-    Ok(verify_chain(&std::fs::read_to_string(path)?))
+    verify_chain_file_with_trust(path, None)
 }
 
 /// Compute the verdict for a Chain file's contents.
 ///
 /// Deterministic: same bytes, same verdict, always.
 pub fn verify_chain(text: &str) -> Verification {
-    Walk::default().run(text)
+    verify_chain_with_trust(text, None)
+}
+
+/// [`verify_chain_file`], against keys the caller anchored out of band.
+///
+/// See [`verify_chain_with_trust`] for what supplying a slice does and does not
+/// mean.
+pub fn verify_chain_file_with_trust(
+    path: impl AsRef<Path>,
+    trust: Option<&[PublicKey]>,
+) -> Result<Verification, AuditError> {
+    Ok(verify_chain_with_trust(
+        &std::fs::read_to_string(path)?,
+        trust,
+    ))
+}
+
+/// [`verify_chain`], against keys the caller anchored out of band (ADR-0004).
+///
+/// **Pinning is identity, not a second crypto path.** Signatures are checked
+/// against the key each Session `Open` publishes either way; the slice only
+/// decides whether that key is one the caller accepts. So `Some(keys)` cannot
+/// make a broken chain verify, and it cannot make a sound one verify "more
+/// strongly" — it upgrades the *label* from `Unpinned` to `Pinned`.
+///
+/// A supplied slice that is missing an `Open` key is `Tampered`, never
+/// `Unpinned`: the caller stated which keys it accepts and the file answered
+/// with another one. Every `Open` must be in the slice, so rotation across
+/// Sessions stays legal while an unknown key does not.
+pub fn verify_chain_with_trust(text: &str, trust: Option<&[PublicKey]>) -> Verification {
+    Walk {
+        trust,
+        ..Default::default()
+    }
+    .run(text)
 }
 
 /// Chain state while walking. Mirrors what the writer holds under its lock —
 /// position and tail — plus the Session's published key.
 #[derive(Default)]
-struct Walk {
+struct Walk<'a> {
     session_index: Option<usize>,
     expected_seq: u64,
     tail: Option<PrevHash>,
@@ -273,9 +355,16 @@ struct Walk {
     cap: Option<IndeterminateReason>,
     in_flight_calls: Vec<String>,
     ends_with_verified_close: bool,
+    /// Keys the caller anchored out of band, or `None` for an unpinned walk.
+    trust: Option<&'a [PublicKey]>,
+    /// Observed `Open` keys, first-seen order — a `Vec` and not a set because
+    /// the order is reported.
+    key_ids: Vec<KeyId>,
+    /// Every `approval_id` this file has already decided.
+    seen_approvals: std::collections::HashSet<String>,
 }
 
-impl Walk {
+impl Walk<'_> {
     fn run(mut self, text: &str) -> Verification {
         let rows: Vec<&str> = text
             .lines()
@@ -316,9 +405,15 @@ impl Walk {
     }
 
     fn finish(self, verdict: Verdict) -> Verification {
+        let trust = match (self.trust, &verdict) {
+            (Some(_), Verdict::Verified) => TrustLabel::Pinned,
+            _ => TrustLabel::Unpinned,
+        };
         Verification {
             verdict,
             coverage: self.coverage,
+            key_ids: self.key_ids,
+            trust,
         }
     }
 
@@ -381,8 +476,24 @@ impl Walk {
             // against its own key is what "Verified (unpinned)" means: some
             // Aegis build wrote this, and the file says which key, but nothing
             // in the file says that key is yours (ADR-0004).
-            AuditLineType::Open | AuditLineType::Outcome | AuditLineType::Decision => {
+            AuditLineType::Open | AuditLineType::Outcome => {
                 self.require_signature(&value, at)?;
+            }
+            AuditLineType::Decision => {
+                self.require_signature(&value, at)?;
+                // One park, one verdict. `approval_id` is a bare JSON string on
+                // the wire (`ApprovalId` is `#[serde(transparent)]`). A second
+                // Decision for the same park would let a denial be overwritten
+                // by an approval with both lines validly signed, so the chain
+                // being intact is not enough to accept it.
+                if let Some(approval_id) = value.get("approval_id").and_then(Value::as_str) {
+                    if !self.seen_approvals.insert(approval_id.to_owned()) {
+                        return Err(Stop::Tampered(TamperedReason::DuplicateDecision {
+                            at,
+                            approval_id: approval_id.to_owned(),
+                        }));
+                    }
+                }
             }
             AuditLineType::Close => {
                 self.require_signature(&value, at)?;
@@ -397,9 +508,11 @@ impl Walk {
                 }
             }
             AuditLineType::Checkpoint => {
-                // Signed, so it extends Coverage — and still caps the verdict,
-                // because v0 does not know what it asserts.
-                let _ = self.try_signature(&value, at);
+                // Signed, so it is in the signed set and its signature has to
+                // hold — discarding the result here would let a forged
+                // Checkpoint hide behind the cap (SPEC.md §8.4). It still caps
+                // the verdict, because v0 does not know what it asserts.
+                self.require_signature(&value, at)?;
                 self.cap
                     .get_or_insert(IndeterminateReason::ReservedCheckpoint { at });
             }
@@ -408,7 +521,27 @@ impl Walk {
                 // verdict does not: reporting `Verified` over content this
                 // build cannot read is how a newer emitter smuggles a line past
                 // an old auditor.
-                let _ = self.try_signature(&value, at);
+                //
+                // Whether an unknown type *must* be signed is unknowable here,
+                // so an unsigned one only caps. A signature that is present and
+                // does not verify is a different claim: forgery is decidable
+                // without understanding the line, and it outranks the cap.
+                //
+                // LOAD-BEARING: "present" is read off the JSON, not inferred
+                // from the error. `verify_json_line` reports `Unsigned` when
+                // *either* `signature` or `key_id` is missing, so keying the
+                // benign arm on the error variant would let a forger delete
+                // `key_id` and turn a decidable forgery back into "we could not
+                // read it" — capping at `Indeterminate` over a line that
+                // carries a signature which does not authenticate.
+                let carries_signature = value.get("signature").is_some();
+                match self.try_signature(&value, at) {
+                    Ok(()) => {}
+                    Err(VerifyError::Unsigned) if !carries_signature => {}
+                    Err(source) => {
+                        return Err(Stop::Tampered(TamperedReason::BadSignature { at, source }))
+                    }
+                }
                 self.cap
                     .get_or_insert(IndeterminateReason::UnknownLineType {
                         at,
@@ -479,6 +612,23 @@ impl Walk {
             .and_then(|hex| PublicKey::from_hex(hex).ok())
             .ok_or_else(|| malformed_reason(line_number, "open line carries no public key"))
             .map_err(Stop::Tampered)?;
+        let key_id = KeyId::of_public_key(&public_key);
+        if !self.key_ids.contains(&key_id) {
+            self.key_ids.push(key_id);
+        }
+        // LOAD-BEARING: *every* Open must be in the store, not merely one of
+        // them. Rotation is legal and an unknown key is not, so a file that
+        // rotates into a key the caller never anchored has to fail here — the
+        // remaining Sessions' signatures would otherwise verify happily against
+        // a key the file supplied to itself.
+        if let Some(keys) = self.trust {
+            if !keys.contains(&public_key) {
+                return Err(Stop::Tampered(TamperedReason::UntrustedKey {
+                    at: Position { session_index, seq },
+                    key_id,
+                }));
+            }
+        }
         self.session_index = Some(session_index);
         self.public_key = Some(public_key);
         self.in_flight_calls.clear();

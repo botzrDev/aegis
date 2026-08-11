@@ -24,12 +24,52 @@ document implements.
   `session.<ext>`. Do not infer an extension from anything here.
 - Key lifecycle — where a private key lives, its permissions, whether it is
   generated on first run (AILAB-620).
-- The `aegis verify` / `aegis recheck` command surfaces and their exit codes
-  (AILAB-621 / AILAB-622). The verdict *model* is specified here because it is a
-  property of the format; the CLI that prints it is not.
+- The `aegis recheck` command surface and its exit codes (AILAB-622).
 - Envelope reader/writer behaviour beyond the boundary in §9. No Envelope code
   ships in this version.
 - Argument matchers and the Bindings that produce them (AILAB-626).
+
+## The `aegis verify` command surface
+
+Deliberately unnumbered: this is the one command surface the format document
+pins, and it sits ahead of §1 so it cannot be mistaken for a property of the
+format. Sections 1–12 keep the numbers they have always had.
+
+**`aegis verify` is specified, as of AILAB-621.** The verdict *model* stays in
+§8, because it is a property of the format. The command that prints it now
+ships, and its surface is fixed here because CI gates script it:
+
+```
+aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>
+```
+
+`<PATH>` is the record file; any path is accepted, since its name and extension
+are the first open question above. `--key` is repeatable and takes a **public
+key** in the same 64-lowercase-hex wire form the `open` Line publishes — not a
+`key_id` fingerprint. `--trust-store` names a file of those keys, one per line,
+with blank lines and `#` comment lines skipped. The union of the two is the trust
+slice. Supplying **neither** flag is an unpinned walk (§8.4); supplying either
+one is a pin, and a `--trust-store` that yields no keys is a pin that nothing can
+satisfy — the first `open` Line is `Tampered` with an untrusted-key reason. A
+store that has been truncated or mis-mounted MUST NOT read as "unpinned", or the
+CI gate it anchors keeps passing with its anchor gone.
+
+Exit codes are API and there are exactly four:
+
+| Exit | Meaning |
+|------|---------|
+| `0` | `Verified` |
+| `1` | `Tampered`, or a usage error — an unknown flag, a `--key` that is not 64 hex, a missing `<PATH>` |
+| `2` | The record file or the trust store could not be read |
+| `3` | `Indeterminate`, with the typed reason printed |
+
+stdout is deterministic — same bytes, same report, with no timestamp and no path
+in it. The first line is the verdict and, on success, its trust label; then one
+`key_id` line per observed key, one `coverage` line naming the Session and `seq`
+of the highest position a valid signature reached (§8), and one `in_flight` line
+per in-progress Call when the reason is an unanchored tail. Empty sections are
+omitted. A file that cannot be read produces empty stdout, `error: …` on stderr,
+and exit 2.
 
 ---
 
@@ -250,6 +290,15 @@ recognise. Such a Line:
 - **caps the verdict at `Indeterminate`**, with a reason naming the unrecognised
   token — "unknown line type `foo` at session 0 seq 12, newer emitter".
 
+The cap is the answer for an unknown Line that carries **no `signature` field**.
+Whether a future Line type must be signed is unknowable to this build, so an
+unsigned one is only unreadable. A `signature` that *is* present and does not
+authenticate the Line is `Tampered` instead (§8.1, §8.4): forgery is decidable
+without understanding the Line, and it outranks the cap. Presence is read off
+the Line's own fields — an unknown Line whose `signature` is present while
+`key_id` was stripped is still a present-and-invalid signature, not an unsigned
+Line.
+
 A verifier MUST NOT report `Verified` over content it does not understand. If it
 did, a future emitter could smuggle anything past an old auditor. This is the
 format's entire extensibility story and it is fixed at this version.
@@ -456,11 +505,21 @@ for a truncated file reproduces the very critique it exists to answer.
 - A Line outside the format: not JSON and not the final Line; not an object;
   missing or ill-typed `line_type` / `seq` / `prev_hash`; or outside the §3.2
   value space, so it has no reproducible hash.
+- An `open` Line publishes a public key that is **not in a trust slice the
+  caller supplied** (§8.4). Not `Verified (unpinned)`: the caller stated which
+  keys it accepts and the file answered with another one.
+- A **second `decision` Line for an `approval_id`** already decided in the file.
+  One park, one verdict — without this rule a recorded denial can be followed by
+  an approval for the same park with both Lines validly signed (ADR-0005).
 
 ### 8.2 `Indeterminate`
 
-- **Unknown line type**, with the emitter's token (§5.2).
+- **Unknown line type**, with the emitter's token (§5.2) — capped only when it
+  carries no signature; a signature present and invalid is `Tampered` (§8.1).
 - **Reserved `checkpoint`** — signed, so it extends Coverage, and still capped.
+  The cap does not excuse the signature: a `checkpoint` that is unsigned or
+  whose signature does not verify is `Tampered` (§8.4), because it is in the
+  signed set and a forgery must not hide behind the cap.
 - **Torn final line** — the file's last Line does not parse. Distinct from "no
   close record": it is a torn write, and only the *last* Line can be one, because
   a correct writer refuses to append onto a torn tail.
@@ -525,21 +584,37 @@ stated as internal consistency only. A `key_id` that fails to match a supplied
 trust store is `Tampered`. The labels are specified here because they are a
 property of what the format can prove; the CLI that prints them is AILAB-621.
 
-**Known gaps in the shipped walker**, stated rather than papered over:
+**What the shipped walker enforces, and the one gap that remains** — stated
+rather than papered over:
 
-1. The rotation rule is enforced for the signed set — a foreign `key_id` on an
-   `open`, `outcome`, `decision` or `close` Line is `Tampered` with a key-mismatch
-   reason, and a Session-opening rotation is accepted, both under test. It is
-   **not** enforced on `checkpoint` and unknown-type Lines: their signature check
-   is attempted but its failure is discarded, because the verdict is already
-   capped at `Indeterminate` for those Lines. A verifier that later reports
-   `Verified` over them would have to close this gap first. AILAB-621.
-2. Nothing in the shipped library pins a key across Sessions, so `Verified
-   (pinned)` has no implementation yet — only `Verified (unpinned)` is reachable.
-   Trust-store handling is AILAB-620/621.
-3. A signature on an `intent` Line is ignored rather than rejected. It is still
-   covered by `line_hash`, so it cannot be altered undetected, but an emitter that
-   signs intent Lines is out of spec and the shipped walker does not say so.
+1. The rotation rule is enforced across the **whole** signed set. A foreign
+   `key_id` on an `open`, `outcome`, `decision` or `close` Line is `Tampered`
+   with a key-mismatch reason, and a Session-opening rotation is accepted, both
+   under test. `checkpoint` is in the signed set and is held to it: a
+   `checkpoint` whose signature does not verify is `Tampered`, not capped —
+   discarding that result would let a forged Checkpoint hide behind the
+   `Indeterminate` cap. An unknown-type Line is judged on what it carries: a
+   signature that is *present and does not verify* is `Tampered`, because forgery
+   is decidable without understanding the Line, while an unsigned one only caps,
+   because whether a future Line type must be signed is unknowable to this build.
+   Neither is ever reported as `Verified`.
+2. Pinning ships. The walker takes an optional slice of public keys the caller
+   anchored out of band, and `aegis verify` fills it from `--key` and
+   `--trust-store` (see *The `aegis verify` command surface*, above), so both
+   success labels are reachable. **Every** `open`
+   Line's key must be in a supplied slice, not merely one of them — rotation
+   across Sessions stays legal, while rotating into a key the caller never
+   anchored is `Tampered` with an untrusted-key reason. Pinning is identity
+   checking, not a second signature path: signatures verify against the key each
+   Session published either way, and the slice only decides whether that key is
+   one the caller accepts. A supplied slice therefore cannot make a broken chain
+   verify; it upgrades the label from `Verified (unpinned)` to `Verified (pinned
+   to <fp>)`, or to `Verified (pinned)` when the file legally rotates across
+   several anchored keys.
+3. **Remaining gap:** a signature on an `intent` Line is ignored rather than
+   rejected. It is still covered by `line_hash`, so it cannot be altered
+   undetected, but an emitter that signs intent Lines is out of spec and the
+   shipped walker does not say so.
 
 ---
 

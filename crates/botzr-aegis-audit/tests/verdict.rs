@@ -8,12 +8,12 @@
 //! repo that writes those bytes. No code path may emit a `Checkpoint`.
 
 use botzr_aegis_audit::{
-    insecure_dev_key, verify_chain, verify_chain_file, AuditWriter, IndeterminateReason, Position,
-    SigningKey, TamperedReason, Verdict, VerifyError,
+    insecure_dev_key, verify_chain, verify_chain_file, verify_chain_with_trust, AuditWriter,
+    IndeterminateReason, Position, SigningKey, TamperedReason, TrustLabel, Verdict, VerifyError,
 };
 use botzr_aegis_core::{
-    to_canonical_json, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome,
-    PolicySetHash, PrevHash, PublicKey, RequestDigest, ToolId,
+    to_canonical_json, ApprovalId, ApprovalVerdict, AuditDecision, AuditRecord, CapabilityOutcome,
+    ExecutionOutcome, PolicyOutcome, PolicySetHash, PrevHash, PublicKey, RequestDigest, ToolId,
 };
 use serde_json::{json, Map, Value};
 
@@ -546,6 +546,226 @@ fn a_line_signed_by_another_key_is_tampering() {
     ));
     // Sanity: the Session did publish the other key.
     assert_ne!(chain.public_key(), foreign.public_key());
+}
+
+// ---- trust: pinned, unpinned, and untrusted ------------------------------
+
+#[test]
+fn the_same_bytes_are_unpinned_without_a_trust_slice_and_pinned_with_the_open_key() {
+    // The pair is the point: pinning changes the *label*, not the walk. Nothing
+    // about the file differs between these two calls, so a difference in verdict
+    // would mean the trust slice had become a second crypto path (ADR-0004).
+    let text = written_session(1);
+
+    let unpinned = verify_chain(&text);
+    assert_eq!(unpinned.verdict, Verdict::Verified);
+    assert_eq!(unpinned.trust, TrustLabel::Unpinned);
+
+    let pinned = verify_chain_with_trust(&text, Some(&[insecure_dev_key().public_key()]));
+    assert_eq!(pinned.verdict, Verdict::Verified);
+    assert_eq!(pinned.trust, TrustLabel::Pinned);
+    assert_eq!(pinned.coverage, unpinned.coverage);
+    // Observed once, though every signed line carries the same fingerprint.
+    assert_eq!(
+        pinned.key_ids,
+        vec![insecure_dev_key().key_id()],
+        "key_ids records Open keys, not signatures"
+    );
+}
+
+#[test]
+fn a_session_key_outside_the_trust_slice_is_tampering_not_merely_unpinned() {
+    // The caller stated which keys it accepts and the file answered with
+    // another one. Downgrading that to `Unpinned` would let any well-formed
+    // chain pass a `--key` gate by ignoring the key it was gated on.
+    let text = written_session(1);
+    let foreign = SigningKey::from_seed([9u8; 32]);
+    assert_ne!(foreign.public_key(), insecure_dev_key().public_key());
+
+    let result = verify_chain_with_trust(&text, Some(&[foreign.public_key()]));
+    assert_eq!(
+        result.verdict,
+        Verdict::Tampered {
+            reason: TamperedReason::UntrustedKey {
+                at: Position {
+                    session_index: 0,
+                    seq: 0
+                },
+                key_id: insecure_dev_key().key_id(),
+            }
+        },
+        "the reason names the key the file published, not the one that was expected"
+    );
+    // Failing the pin is never `Pinned`, and the observed key is still reported
+    // so an operator can compare fingerprints without re-reading the file.
+    assert_eq!(result.trust, TrustLabel::Unpinned);
+    assert_eq!(result.key_ids, vec![insecure_dev_key().key_id()]);
+}
+
+// ---- structural rules the chain alone cannot enforce ----------------------
+
+#[test]
+fn a_second_decision_for_one_approval_id_is_tampering() {
+    // Both lines are validly signed and the chain is intact — this is a rule
+    // about the record, not about the crypto. Without it a recorded denial can
+    // be followed by an approval for the same park and the file still verifies.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    {
+        let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+        for _ in 0..2 {
+            let mut decision = AuditDecision::new(
+                ApprovalId::new("apr-1"),
+                ApprovalVerdict::Denied {
+                    reason: "operator said no".into(),
+                },
+            );
+            writer.emit_decision(&mut decision).unwrap();
+        }
+    }
+
+    let result = verify_chain_file(&path).unwrap();
+    assert_eq!(
+        result.verdict,
+        Verdict::Tampered {
+            reason: TamperedReason::DuplicateDecision {
+                at: Position {
+                    session_index: 0,
+                    seq: 2
+                },
+                approval_id: "apr-1".into(),
+            }
+        }
+    );
+}
+
+#[test]
+fn a_checkpoint_with_a_bad_signature_is_tampering_not_a_capped_verdict() {
+    // SPEC.md §8.4: a Checkpoint is in the signed set. Discarding its signature
+    // result — as this walk once did — let a forged Checkpoint hide behind the
+    // `ReservedCheckpoint` cap, reporting "we could not read it" over a line
+    // that was decidably forged.
+    let mut chain = FixtureChain::new(None);
+    chain.line("checkpoint", Signed::Yes);
+    let mut rows = rows(&chain.text());
+    let mut checkpoint: Value = serde_json::from_str(&rows[1]).unwrap();
+    let signature = checkpoint["signature"].as_str().unwrap().to_owned();
+    let flipped = if signature.starts_with('0') { '1' } else { '0' };
+    checkpoint["signature"] = json!(format!("{flipped}{}", &signature[1..]));
+    rows[1] = to_canonical_json(&checkpoint).unwrap();
+
+    assert_eq!(
+        verify_chain(&rejoin(&rows)).verdict,
+        Verdict::Tampered {
+            reason: TamperedReason::BadSignature {
+                at: Position {
+                    session_index: 0,
+                    seq: 1
+                },
+                source: VerifyError::BadSignature,
+            }
+        }
+    );
+}
+
+#[test]
+fn an_unsigned_unknown_line_type_only_caps_the_verdict() {
+    // The benign half of the unknown-line rule. Whether a future line type must
+    // be signed is unknowable to this build, so a line that carries no
+    // signature at all is unreadable, not forged — `Indeterminate`, and the cap
+    // still holds over an otherwise intact chain.
+    let mut chain = FixtureChain::new(None);
+    chain.line("something-from-2027", Signed::No);
+    chain.close();
+
+    let result = verify_chain(&chain.text());
+    assert_eq!(
+        result.verdict,
+        Verdict::Indeterminate {
+            reason: IndeterminateReason::UnknownLineType {
+                at: Position {
+                    session_index: 0,
+                    seq: 1
+                },
+                line_type: "something-from-2027".into(),
+            }
+        }
+    );
+    // Unsigned, so it moves nothing: Coverage is the Close that follows it.
+    assert_eq!(
+        result.coverage,
+        Some(Position {
+            session_index: 0,
+            seq: 2
+        })
+    );
+}
+
+#[test]
+fn an_unknown_line_type_with_an_invalid_signature_is_tampering_not_a_capped_verdict() {
+    // The other half: forgery is decidable without understanding the line, so a
+    // signature that is present and does not authenticate outranks the cap.
+    // Reporting `Indeterminate` here would let a newer emitter's forged line be
+    // filed as "we could not read it".
+    let mut chain = FixtureChain::new(None);
+    chain.line("something-from-2027", Signed::Yes);
+    let mut rows = rows(&chain.text());
+    let mut unknown: Value = serde_json::from_str(&rows[1]).unwrap();
+    let signature = unknown["signature"].as_str().unwrap().to_owned();
+    let flipped = if signature.starts_with('0') { '1' } else { '0' };
+    unknown["signature"] = json!(format!("{flipped}{}", &signature[1..]));
+    rows[1] = to_canonical_json(&unknown).unwrap();
+
+    assert_eq!(
+        verify_chain(&rejoin(&rows)).verdict,
+        Verdict::Tampered {
+            reason: TamperedReason::BadSignature {
+                at: Position {
+                    session_index: 0,
+                    seq: 1
+                },
+                source: VerifyError::BadSignature,
+            }
+        }
+    );
+}
+
+#[test]
+fn an_unknown_line_type_that_kept_its_signature_and_lost_its_key_id_is_still_tampering() {
+    // LOAD-BEARING: "present" is a property of the line, not of the error the
+    // verifier came back with. `verify_json_line` answers `Unsigned` when
+    // *either* `signature` or `key_id` is missing, so a rule keyed on that
+    // variant would let one field deletion convert a decidable forgery into a
+    // capped "we could not read it" — the line still carries a signature that
+    // does not authenticate it.
+    let mut chain = FixtureChain::new(None);
+    chain.line("something-from-2027", Signed::Yes);
+    let mut rows = rows(&chain.text());
+    let mut unknown: Value = serde_json::from_str(&rows[1]).unwrap();
+    unknown.as_object_mut().unwrap().remove("key_id");
+    assert!(
+        unknown.get("signature").is_some(),
+        "the fixture must keep the signature it is being judged on"
+    );
+    rows[1] = to_canonical_json(&unknown).unwrap();
+
+    let verdict = verify_chain(&rejoin(&rows)).verdict;
+    assert_eq!(
+        verdict,
+        Verdict::Tampered {
+            reason: TamperedReason::BadSignature {
+                at: Position {
+                    session_index: 0,
+                    seq: 1
+                },
+                source: VerifyError::Unsigned,
+            }
+        }
+    );
+    assert!(
+        !matches!(verdict, Verdict::Indeterminate { .. }),
+        "a stripped key_id must not downgrade a forgery to a cap"
+    );
 }
 
 #[test]
