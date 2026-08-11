@@ -154,6 +154,12 @@ def create_app(
         return {
             "intents": len(batch.intents),
             "outcomes": len(batch.outcomes),
+            # Line types this service does not consume — open/close/decision,
+            # and anything a newer emitter added. Reported rather than dropped
+            # silently: "0 outcomes" and "0 outcomes, 12 lines skipped" are
+            # very different answers to "did my audit trail land?".
+            "skipped": len(batch.skipped),
+            "skipped_by_type": batch.skipped_by_type(),
             "patterns_persisted": persisted,
             "buffer_outcomes": len(gov.buffer.outcomes),
         }

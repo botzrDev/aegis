@@ -1,46 +1,32 @@
-"""Pydantic mirrors of Aegis audit schema v1 (intent + outcome).
+"""Pydantic mirrors of the Agent Action Record, schema version 2.
 
 Audit ingest is untrusted: validate strictly on required fields; ignore unknown
-keys for forward-compat; reject schema_version != 1.
+*members* for forward-compat (SPEC §12); reject `schema_version != 2`.
 
-============================================================================
-BREAK — THESE MODELS NO LONGER MATCH THE RUNTIME.  MIGRATION OWNER: AILAB-624
-============================================================================
+Schema version 1 is **not** accepted. `spec/SPEC.md` §12 states v1 is not
+compatible, and a v1 line carries no `seq`, no `prev_hash` and no signature —
+admitting one would put a record with no integrity evidence into a store whose
+purpose is verifiable audit. `audit_ingest.SUPPORTED_SCHEMA_VERSION` is the
+single pin; see `governance/DECISIONS.md` D25.
 
-AILAB-619 bumped the Rust audit schema to version 2.  Because this module
-rejects ``schema_version != 1`` (see ``AuditIntent`` / ``AuditRecord`` below and
-the ingest path in ``app.py``), **every line the runtime writes today is refused
-by /v1/ingest**.  Nothing here has been migrated, deliberately: the models, the
-validation and the feature extractor move together under AILAB-624.  Do not
-patch a single field to make one test pass.
+What these models do and do not claim
+-------------------------------------
+They parse. They do **not** verify. `signature` and `key_id` are validated as
+present and well-formed on the **outcome** line — the only signed line type
+this service consumes — because a missing one is a missing required field and
+ingest fails closed on those. `open`, `decision` and `close` are signed too and
+are skipped without any field check at all. No ed25519 check, no `prev_hash`
+chain walk, and no `line_hash` recomputation happens here: a line with a
+present-but-forged signature parses cleanly. Verification is `aegis verify`
+(AILAB-621); until it lands, nothing downstream of this module may be described
+as verified.
 
-What changed, all of it breaking for this module:
+Unknown line types are the format's extensibility story (SPEC §5.2) and are
+handled in `audit_ingest`, not here: an unrecognised `line_type` is skipped with
+its token preserved verbatim, never coerced into a known type and never treated
+as corruption.
 
-* ``phase`` -> ``line_type``, and two phases became **six** line types:
-  ``open``, ``intent``, ``outcome``, ``decision``, ``close``, ``checkpoint``
-  (reserved, never emitted by v0).  ``AuditPhase`` below no longer describes the
-  wire at all; an unknown line type must not be silently dropped, because a
-  newer emitter's line is exactly what a consumer must not claim to understand.
-* ``input_digest`` -> ``request_digest`` (SHA-256 over the verbatim request
-  bytes).
-* New chain fields on every line: ``seq`` (per line, per Session, restarting at
-  0 each Session) and ``prev_hash``.
-* New signature fields on every signed line: ``signature`` and ``key_id``
-  (ed25519 over the line's canonical form with ``signature`` omitted).
-* New outcome fields: ``policy_set_hash`` (a real SHA-256 content hash, not the
-  FNV YAML digest), ``grant_id``, ``response_digest``.
-* New ``decision_axes`` object, **always present and possibly ``{}``**, carrying
-  ``capability``, ``role``, ``session``, ``matched_rule``, ``approval_ref`` and
-  the derived ``fs`` / ``net`` parameters.  Its members are omitted, never null.
-* Lines hash under RFC 8785 (JCS) and rows on disk are already in canonical
-  (key-sorted, whitespace-free) form.
-
-Also note for the migration: ``FEATURE_SCHEMA_VERSION`` in the learning fabric
-is documented as vectorising a "validated schema-v1 outcome".  A v2 outcome is a
-different input; a vector layout pinned to one audit schema cannot silently
-accept the other.
-
-Format reference: ``spec/SPEC.md`` at the repo root.
+Format reference: `spec/SPEC.md` at the repo root.
 """
 
 from __future__ import annotations
@@ -48,17 +34,69 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+#: SPEC §2 — 64 lowercase hex characters (SHA-256). Uppercase is *rejected, not
+#: normalized*: one digest must have exactly one spelling, or two canonical
+#: forms of the same line hash differently and a verifier disagrees with the
+#: emitter for no visible reason.
+#:
+#: The spec's SHOULD — make transposing `prev_hash` / `policy_set_hash` /
+#: `request_digest` / `response_digest` / `key_id` a *type* error — is met in
+#: the Rust newtypes, not here: this alias constrains the wire form they share,
+#: so a swap between two of them still parses. Treat these as validated
+#: strings, not as distinct types.
+Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+#: SPEC §2 — 128 lowercase hex characters (64-byte ed25519 signature).
+#: Well-formed, not verified; see the module docstring.
+Signature = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{128}$")]
+
+#: An identifier that is present. Empty-string-as-absent is the same mistake as
+#: null-as-absent, and the chain gate already rejects it for `line_type`.
+Identifier = Annotated[str, StringConstraints(min_length=1)]
 
 
-class AuditPhase(str, Enum):
-    # BREAK (AILAB-619, migration owner AILAB-624): schema 2 replaced `phase`
-    # with `line_type` and these two values with six —  open / intent / outcome
-    # / decision / close / checkpoint. Left unchanged on purpose; renaming this
-    # enum without migrating ingest, validation and the feature extractor would
-    # give the service a v2 vocabulary and v1 behaviour.
+class AuditLineType(str, Enum):
+    """The six line types schema 2 defines (SPEC §5.1).
+
+    This enum is *not* the parser's vocabulary check. A `line_type` outside it
+    is a newer emitter's line, not a bad line, and `audit_ingest` preserves the
+    unrecognised token rather than mapping it onto a member here.
+    """
+
+    OPEN = "open"
     INTENT = "intent"
     OUTCOME = "outcome"
+    DECISION = "decision"
+    CLOSE = "close"
+    CHECKPOINT = "checkpoint"  # reserved by the spec; no emitter produces one
+
+
+#: Line types this service turns into typed records. Everything else — the rest
+#: of `AuditLineType` plus anything a newer emitter invents — is skipped and
+#: counted (SPEC §5.2). Downstream (`detect`, `propose`, `learning`) is
+#: outcome-centric, so widening this set is a behaviour change, not a parser
+#: detail.
+INGESTED_LINE_TYPES: frozenset[str] = frozenset(
+    {AuditLineType.INTENT.value, AuditLineType.OUTCOME.value}
+)
+
+
+class ChainLine(BaseModel):
+    """The four fields every line of every type MUST carry (SPEC §5).
+
+    A line missing or mistyping one of these is a format violation, **not** an
+    unknown extension — that distinction is what bounds the extension story, so
+    `audit_ingest` checks it before it looks at `line_type` at all.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int
+    line_type: str
+    seq: int
+    prev_hash: Digest
 
 
 class HttpGrant(BaseModel):
@@ -186,41 +224,102 @@ ExecutionOutcome = Annotated[
 ]
 
 
-class AuditIntent(BaseModel):
-    # BREAK (AILAB-619, migration owner AILAB-624): a schema-2 intent line
-    # carries `line_type: "intent"` instead of `phase`, `request_digest` instead
-    # of `input_digest`, and the chain fields `seq` + `prev_hash`. It is never
-    # signed. This model matches none of that and will reject every current
-    # line.
-    model_config = ConfigDict(extra="ignore")
+class FsAxis(BaseModel):
+    """Derived filesystem parameter (SPEC §5.3, ADR-0006).
 
-    schema_version: int
-    phase: Literal["intent"]
-    call_id: str
-    tool_id: str
-    input_digest: str
-
-
-class AuditRecord(BaseModel):
-    """Outcome line — required fields match botzr-aegis-core AuditRecord.
-
-    BREAK (AILAB-619, migration owner AILAB-624): stale for schema 2. A current
-    outcome line carries `line_type: "outcome"`, `request_digest`,
-    `policy_set_hash`, `seq`, `prev_hash`, `signature`, `key_id`, an
-    always-present `decision_axes` object, and optional `grant_id` /
-    `response_digest`. `phase` and `input_digest` no longer exist on the wire.
+    Both members are required together: the *difference* between the raw and
+    the canonical path is the evidence, so a shape carrying only one of them
+    would record the axis while dropping the reason it exists. In schema 2 they
+    carry the same string, because the capability resolver canonicalizes at
+    mint time.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    schema_version: int
-    phase: Literal["outcome"]
-    call_id: str
-    tool_id: str
-    input_digest: str
+    path_raw: str
+    path_canonical: str
+
+
+class NetAxis(BaseModel):
+    """Derived network parameter (SPEC §5.3, ADR-0006)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    host: str
+    port: int
+
+
+class DecisionAxes(BaseModel):
+    """The inputs the verdict actually turned on (SPEC §5.3).
+
+    Always present on an outcome, possibly `{}` — `{}` says *this emitter
+    recorded no axes*, an absent member says nothing at all, and collapsing the
+    two would lose that distinction. Members follow omit-never-null, so every
+    one is optional here; the null half of that rule is enforced at the ingest
+    boundary (SPEC §3.2), because `Optional[str] = None` alone cannot tell an
+    omitted member from an explicit `null`.
+
+    Parsed but not yet consumed: the detectors and the feature vector stay on
+    the axes they already used (AILAB-624 is a migration, not a detector
+    rewrite). Encoding these into the embedding is a `FEATURE_SCHEMA_VERSION`
+    bump, not an edit in place.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    capability: Optional[str] = None
+    role: Optional[str] = None
+    #: The policy session scope — the `PolicyRequest` scalar, **not** the audit
+    #: Session that `seq` counts within. Two different things, one word.
+    session: Optional[str] = None
+    matched_rule: Optional[str] = None
+    approval_ref: Optional[str] = None
+    fs: Optional[FsAxis] = None
+    net: Optional[NetAxis] = None
+
+
+class AuditIntent(ChainLine):
+    """Pre-execution line for a call (SPEC §5.3).
+
+    Never signed: the intent line is appended and fsynced *ahead of* execution,
+    so a signature computation would land on the pre-execution critical path.
+    It is authenticated transitively — the next signed line commits to
+    `prev_hash`, which chains back through it. `signature` and `key_id` are
+    therefore absent by design, not missing.
+    """
+
+    line_type: Literal["intent"]
+    call_id: Identifier
+    tool_id: Identifier
+    request_digest: Digest
+
+
+class AuditRecord(ChainLine):
+    """Outcome line — the Agent Action Record itself (SPEC §5.3).
+
+    One per call, on every exit path, including denial and trap. Required
+    fields mirror `botzr-aegis-core`'s `AuditRecord`; `grant_id`,
+    `response_digest`, `wall_ms` and `peak_memory_bytes` are omitted (never
+    null) when the call never reached the station that produces them.
+
+    `signature` and `key_id` are required because an outcome is in the signed
+    set and ingest fails closed on missing required fields. Their *presence* is
+    all this model asserts — see the module docstring.
+    """
+
+    line_type: Literal["outcome"]
+    call_id: Identifier
+    tool_id: Identifier
+    request_digest: Digest
+    policy_set_hash: Digest
     policy: PolicyOutcome
     capability: CapabilityOutcome
     execution: ExecutionOutcome
+    decision_axes: DecisionAxes
+    signature: Signature
+    key_id: Digest
+    grant_id: Optional[Identifier] = None
+    response_digest: Optional[Digest] = None
     wall_ms: Optional[int] = None
     peak_memory_bytes: Optional[int] = None
 

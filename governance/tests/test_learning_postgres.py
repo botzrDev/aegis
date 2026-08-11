@@ -54,14 +54,148 @@ def store(database_url: str) -> PostgresLearningStore:
     return PostgresLearningStore(database_url)
 
 
+PRE_MIGRATION_TABLE = """
+CREATE TABLE learning_patterns (
+    pattern_id UUID PRIMARY KEY,
+    call_id TEXT NOT NULL UNIQUE,
+    tool_id TEXT NOT NULL,
+    audit_schema_version INTEGER NOT NULL
+        CONSTRAINT learning_patterns_audit_schema_version_check
+        CHECK (audit_schema_version = 1),
+    feature_schema_version INTEGER NOT NULL,
+    embedding vector(16) NOT NULL,
+    content JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+VERSION_CHECK_SQL = (
+    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+    "WHERE conname = 'learning_patterns_audit_schema_version_check'"
+)
+
+
+def _version_check(conn) -> str:  # type: ignore[no-untyped-def]
+    row = conn.execute(VERSION_CHECK_SQL).fetchone()
+    assert row is not None, "the audit-version CHECK must never be absent"
+    return row[0]
+
+
+def _top_level_statements(sql: str) -> list[str]:
+    """Split SQL into top-level statements the way psql does.
+
+    Dollar-quoted bodies (`$$ ... $$`) are opaque, so a `;` inside a `DO` block
+    does not end a statement. Comments are stripped first.
+    """
+    without_comments = "\n".join(
+        line.split("--", 1)[0] for line in sql.splitlines()
+    )
+    statements: list[str] = []
+    current: list[str] = []
+    in_dollar = False
+    index = 0
+    while index < len(without_comments):
+        if without_comments.startswith("$$", index):
+            in_dollar = not in_dollar
+            current.append("$$")
+            index += 2
+            continue
+        char = without_comments[index]
+        if char == ";" and not in_dollar:
+            statements.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    if "".join(current).strip():
+        statements.append("".join(current).strip())
+    return [s for s in statements if s]
+
+
+def test_upgrading_a_v1_database_never_leaves_it_unconstrained(
+    database_url: str,
+) -> None:
+    """002 must refuse a database holding v1 rows *without* weakening it.
+
+    The failure this guards is specific and was real: with the guard and the
+    constraint swap as separate top-level statements, a raise aborts only
+    itself, `DROP CONSTRAINT` then succeeds, `ADD CONSTRAINT` fails against the
+    very rows the guard objected to, and the table is left with **no** version
+    constraint at all. Asserting "migration raised" is not enough — assert what
+    the table looks like afterwards.
+    """
+    import psycopg
+
+    try:
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            conn.execute("DROP TABLE IF EXISTS learning_patterns")
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            conn.execute(PRE_MIGRATION_TABLE)
+            conn.execute(
+                "INSERT INTO learning_patterns (pattern_id, call_id, tool_id, "
+                "audit_schema_version, feature_schema_version, embedding, content) "
+                "VALUES (%s, 'legacy-v1', 'reader', 1, 1, %s, '{}'::jsonb)",
+                (str(pattern_id_for("legacy-v1")), "[" + ",".join(["0"] * 16) + "]"),
+            )
+            assert "audit_schema_version = 1" in _version_check(conn)
+
+        # Run it the way psql does — statement by statement, autocommit, no
+        # ON_ERROR_STOP — NOT via apply_migrations(). apply_migrations wraps
+        # every file in one psycopg transaction, so it rolls the damage back
+        # and is safe *by accident*; testing only that path would have let the
+        # non-atomic version through green. The README hands operators psql
+        # snippets, so psql semantics are a real operator path.
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "002_audit_schema_v2.sql"
+        ).read_text()
+        raised = False
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            for statement in _top_level_statements(migration):
+                try:
+                    conn.execute(statement)
+                except psycopg.Error:
+                    raised = True  # psql would print ERROR and carry on
+        assert raised, "the guard must refuse a database holding v1 rows"
+
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            # The pre-existing constraint must survive the refusal intact.
+            assert "audit_schema_version = 1" in _version_check(conn)
+            # And it must still be enforced, not merely present.
+            with pytest.raises(psycopg.errors.CheckViolation):
+                conn.execute(
+                    "INSERT INTO learning_patterns (pattern_id, call_id, tool_id, "
+                    "audit_schema_version, feature_schema_version, embedding, "
+                    "content) VALUES (%s, 'bogus', 't', 999, 1, %s, '{}'::jsonb)",
+                    (str(pattern_id_for("bogus")), "[" + ",".join(["0"] * 16) + "]"),
+                )
+            # Refusal, not deletion: the operator's row is still there.
+            count = conn.execute("SELECT count(*) FROM learning_patterns").fetchone()
+            assert count is not None and count[0] == 1
+
+            # Remediate the way the error message and README instruct.
+            conn.execute("DELETE FROM learning_patterns WHERE audit_schema_version <> 2")
+
+        apply_migrations(database_url)
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            assert "audit_schema_version = 2" in _version_check(conn)
+    finally:
+        # Leave the shared database in the shape every other test expects.
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            conn.execute("DROP TABLE IF EXISTS learning_patterns")
+        apply_migrations(database_url)
+
+
 def test_migration_is_idempotent_and_creates_the_vector_schema(
     database_url: str,
 ) -> None:
     import psycopg
 
-    assert apply_migrations(database_url) == ["001_learning_patterns.sql"]
+    expected = ["001_learning_patterns.sql", "002_audit_schema_v2.sql"]
+    assert apply_migrations(database_url) == expected
     # Explicit, operator-run, and safe to re-apply.
-    assert apply_migrations(database_url) == ["001_learning_patterns.sql"]
+    assert apply_migrations(database_url) == expected
 
     with psycopg.connect(database_url) as conn:
         ext = conn.execute(
@@ -80,6 +214,15 @@ def test_migration_is_idempotent_and_creates_the_vector_schema(
             ).fetchall()
         }
         assert "learning_patterns_embedding_hnsw_idx" in index_names
+        # The audit-version pin moved 1 -> 2 with ingest (AILAB-624). 002 is
+        # what carries it to a database 001 already created, so assert the
+        # constraint the table actually ended up with, not the DDL text.
+        check = conn.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'learning_patterns_audit_schema_version_check'"
+        ).fetchone()
+        assert check is not None, "audit schema version CHECK must exist"
+        assert "audit_schema_version = 2" in check[0]
 
 
 def test_batch_upsert_is_idempotent_by_call_id(
@@ -106,9 +249,11 @@ def test_batch_upsert_is_idempotent_by_call_id(
     assert row is not None
     assert str(row[0]) == str(pattern_id_for(record.call_id))
     assert row[1] == record.tool_id
-    assert row[2] == 1
-    assert row[3] == 1
+    assert row[2] == 2  # audit schema version, moved by AILAB-624
+    assert row[3] == 1  # feature schema version, deliberately unchanged
     assert row[4]["policy_status"] == "allowed"
+    # The stored digest key follows the wire rename.
+    assert "request_digest" in row[4] and "input_digest" not in row[4]
 
 
 def test_failed_transaction_persists_nothing(store: PostgresLearningStore) -> None:
@@ -116,8 +261,10 @@ def test_failed_transaction_persists_nothing(store: PostgresLearningStore) -> No
     good_a = make_record(call_id="txn-good-a")
     good_b = make_record(call_id="txn-good-b")
     bad = make_record(call_id="txn-bad")
-    # Violates the CHECK (audit_schema_version = 1) pin on the table.
-    bad.schema_version = 2
+    # Violates the CHECK (audit_schema_version = 2) pin on the table. Schema 1
+    # is exactly what the pin exists to keep out: ingest refuses it, so a row
+    # holding it is one no re-ingest could reproduce.
+    bad.schema_version = 1
 
     with pytest.raises(LearningStoreError):
         store.upsert_patterns([good_a, bad, good_b])

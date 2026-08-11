@@ -47,11 +47,17 @@ def load_fixture(name: str) -> AuditRecord:
 def make_record(**overrides) -> AuditRecord:
     """A granted/success outcome with resource metrics, for the metric axes."""
     base = {
-        "schema_version": 1,
-        "phase": "outcome",
+        "schema_version": 2,
+        "line_type": "outcome",
+        "seq": 0,
+        "prev_hash": "00" * 32,
         "call_id": "call-synth-1",
         "tool_id": "reader",
-        "input_digest": "abc123",
+        "request_digest": "ab" * 32,
+        "policy_set_hash": "11" * 32,
+        "decision_axes": {},
+        "signature": "22" * 64,
+        "key_id": "33" * 32,
         "policy": {"status": "allowed"},
         "capability": {
             "status": "granted",
@@ -81,7 +87,7 @@ def test_encoder_is_deterministic_sized_and_bounded() -> None:
     first = encode_pattern(record)
     second = encode_pattern(AuditRecord.model_validate(record.model_dump()))
 
-    assert first == second, "same schema-v1 input must encode identically"
+    assert first == second, "the same outcome must encode identically"
     assert len(first) == VECTOR_DIMENSIONS == 16
     assert all(isinstance(v, float) for v in first)
     assert all(0.0 <= v <= 1.0 for v in first), "every axis is clamped to [0, 1]"
@@ -91,10 +97,31 @@ def test_encoder_is_deterministic_sized_and_bounded() -> None:
     assert str(pattern_id_for("call-golden-6")) == "594e971b-73f0-5a72-873a-6a72c4fdbb41"
 
 
+def test_version_pins_moved_only_where_the_meaning_moved() -> None:
+    """Audit v1 → v2 changed the wire, not the vector (AILAB-624).
+
+    Every axis reads a field schema 2 kept under the same name with the same
+    meaning, so the layout is untouched and the golden vectors below are
+    byte-identical to their pre-migration values. Bumping the feature version
+    would have hidden every already-stored row — searches pin to the current
+    version — for a layout that did not actually change.
+    """
+    from aegis_governance.audit_ingest import SUPPORTED_SCHEMA_VERSION
+    from aegis_governance.learning import AUDIT_SCHEMA_VERSION
+
+    assert FEATURE_SCHEMA_VERSION == 1
+    # A stored row can only hold a wire version ingest accepts.
+    assert AUDIT_SCHEMA_VERSION == SUPPORTED_SCHEMA_VERSION == 2
+
+
 # Golden vectors. These pin index → meaning for feature schema v1, which the
 # derived-index tests below cannot: they read the same constants the encoder
 # does, so reordering POLICY_STATUSES or EXECUTION_STATUSES would keep them
 # green while silently changing what every stored vector means.
+#
+# Unchanged across the audit v1 → v2 migration, on purpose: the fixtures under
+# them were rewritten to the v2 wire, and every expected vector stayed the
+# same. That is the evidence for keeping FEATURE_SCHEMA_VERSION at 1.
 GOLDEN_MAX_OUTPUT = 0.6666667124988269  # log1p(2^20) / log1p(2^30)
 GOLDEN_VECTORS: dict[str, tuple[float, ...]] = {
     # policy allowed | capability granted | execution resource_exceeded | fs+net
@@ -236,7 +263,8 @@ def test_canonical_content_has_no_raw_prompt_output_or_source_fields() -> None:
     assert set(content) == {
         "call_id",
         "tool_id",
-        "input_digest",
+        # Renamed with the wire in schema 2; `input_digest` is gone.
+        "request_digest",
         "audit_schema_version",
         "feature_schema_version",
         "policy_status",
@@ -269,7 +297,7 @@ def test_canonical_content_has_no_raw_prompt_output_or_source_fields() -> None:
     assert "/fixtures" not in blob
     assert "api.example.com" not in blob
     assert content["feature_schema_version"] == FEATURE_SCHEMA_VERSION
-    assert content["audit_schema_version"] == 1
+    assert content["audit_schema_version"] == 2
     # Free-text runtime reasons never reach the durable store.
     assert "guest trapped" not in json.dumps(canonical_content(load_fixture("trap.json")))
 

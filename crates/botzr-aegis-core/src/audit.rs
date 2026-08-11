@@ -22,7 +22,7 @@ use crate::tool::ToolId;
 pub type AuditSchemaVersion = u32;
 
 /// v2: hash chain, digest newtypes, decision axes. Bumped from 1 by AILAB-619;
-/// the Layer 2 governance ingest migrates under AILAB-624.
+/// the Layer 2 governance ingest migrated under AILAB-624 and now rejects v1.
 pub const AUDIT_SCHEMA_VERSION: AuditSchemaVersion = 2;
 
 /// What kind of line this is. Wire field name is `line_type`.

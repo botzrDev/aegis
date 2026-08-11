@@ -795,10 +795,12 @@ changes every hash in every file.
 
 ### 12.1 Downstream consumers
 
-The Layer 2 governance ingest in [`governance/`](../governance/) still targets
-schema version 1 and rejects version 2 outright. Migrating it is **AILAB-624**;
-until that lands, this format cannot be ingested there. See the break marker at
-the top of [`governance/README.md`](../governance/README.md).
+The Layer 2 governance ingest in [`governance/`](../governance/) targets this
+version (AILAB-624) and rejects version 1. It consumes `intent` and `outcome`
+lines; `open`, `close`, `decision`, `checkpoint` and any line type a newer
+emitter adds are skipped and counted per §5.2, never treated as corruption. It
+parses signatures without checking them — it is a consumer, not a verifier. See
+[`governance/DECISIONS.md`](../governance/DECISIONS.md) D25.
 
 Test packages that exercise this format:
 `aegis-deny-suite`, `aegis-stress-suite`, `aegis-api-surface`,

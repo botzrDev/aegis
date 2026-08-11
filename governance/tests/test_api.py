@@ -88,9 +88,40 @@ def test_ingest_and_propose() -> None:
 
 def test_ingest_rejects_bad_schema() -> None:
     client = TestClient(create_app())
-    bad = '{"schema_version":99,"phase":"intent","call_id":"x","tool_id":"t","input_digest":"d"}\n'
+    bad = '{"schema_version":99,"line_type":"intent","seq":0,"prev_hash":"ab"}\n'
     r = client.post("/v1/ingest", content=bad, headers={"content-type": "text/plain"})
     assert r.status_code == 400
+
+
+def test_ingest_rejects_schema_v1() -> None:
+    """The runtime emits 2; v1 is not compatible and is refused (SPEC §12)."""
+    client = TestClient(create_app())
+    v1 = (
+        '{"schema_version":1,"phase":"outcome","call_id":"x","tool_id":"t",'
+        '"input_digest":"d"}\n'
+    )
+    r = client.post("/v1/ingest", content=v1, headers={"content-type": "text/plain"})
+    assert r.status_code == 400
+    assert "schema_version" in r.json()["detail"]
+
+
+def test_ingest_reports_skipped_line_types_instead_of_failing() -> None:
+    """A whole Session ingests: non-outcome lines are counted, not rejected.
+
+    "0 outcomes" and "0 outcomes, 12 lines skipped" are very different answers
+    to "did my audit trail land?", so the count is in the response body.
+    """
+    client = TestClient(create_app())
+    session = (FIXTURES / "session_v2.jsonl").read_text()
+    r = client.post(
+        "/v1/ingest", content=session, headers={"content-type": "text/plain"}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["outcomes"] == 8
+    assert body["intents"] == 1
+    assert body["skipped"] == 3
+    assert body["skipped_by_type"] == {"open": 1, "decision": 1, "close": 1}
 
 
 def test_propose_floor_violation_returns_409(monkeypatch) -> None:

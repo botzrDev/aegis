@@ -1,33 +1,5 @@
 # Aegis governance (Layer 2) — slices 1–4
 
-> # ⛔ BREAK: INGEST IS BROKEN AGAINST THE CURRENT RUNTIME
->
-> **The Rust runtime now emits audit schema version 2 (AILAB-619). This service
-> hard-rejects `schema_version != 1`, so every line the runtime writes today is
-> refused by `/v1/ingest`. Nothing in `governance/` has been migrated.**
->
-> **Migration owner: AILAB-624.** Do not patch around this here — the models,
-> the validation and the feature extractor all move together in that ticket.
->
-> What changed in schema 2, all of it breaking for this service:
->
-> | v1 | v2 |
-> |---|---|
-> | `phase` (`intent` \| `outcome`) | `line_type` — **six** types: `open`, `intent`, `outcome`, `decision`, `close`, `checkpoint` (reserved) |
-> | `input_digest` | `request_digest` |
-> | — | `seq`, `prev_hash` — every line is a link in a hash chain |
-> | — | `signature`, `key_id` — ed25519 over the line's canonical form |
-> | — | `policy_set_hash`, `grant_id`, `response_digest` |
-> | — | `decision_axes` — always present, possibly `{}`; carries `capability`, `role`, `session`, `matched_rule`, `approval_ref`, derived `fs` / `net` |
-> | — | lines hash under RFC 8785 (JCS); rows on disk are in canonical form |
->
-> Two consequences this service's *design* has to answer, not just its parsers:
-> `AuditPhase` no longer describes the wire (six line types, not two phases), and
-> `FEATURE_SCHEMA_VERSION`'s "schema-v1 outcome" input is now a v2 outcome — a
-> vector layout pinned to one audit schema cannot silently accept the other.
->
-> Format reference: [`spec/SPEC.md`](../spec/SPEC.md).
-
 Python FastAPI service for audit ingest, policy-floor checks, **narrow-only**
 policy proposals, **rule-based drift findings**, **versioned policy packs**, and
 a **pgvector learning fabric**. Not a Cargo workspace member; does not write
@@ -38,9 +10,58 @@ into the Rust runtime.
 1. **Policy floor never relaxable** — `check_floor` rejects widen past `floor.default.yaml`.
 2. **Never blind-load policy** — current/proposed YAML are validated before compare.
 3. **Auto-apply only narrows** — widen → `pending_human` / HTTP 409; proposals never auto-apply to Rust.
-4. **Audit ingest is untrusted** — reject `schema_version != 1`; fail closed on missing required outcome fields. **This is the break above: the runtime now emits `2`. Owner AILAB-624.**
+4. **Audit ingest is untrusted** — reject `schema_version != 2`; fail closed on missing required outcome fields.
 
 Detectors (slice 2) emit `pending_human` findings only — never policy YAML, never auto-widen.
+
+## Audit schema v2 (AILAB-624)
+
+Ingest speaks **audit schema version 2** — the Agent Action Record format in
+[`spec/SPEC.md`](../spec/SPEC.md), as emitted by the runtime since AILAB-619.
+
+**Schema v1 is refused.** SPEC §12 states v1 is not compatible, and a v1 line
+carries no `seq`, no `prev_hash` and no signature — admitting one would put a
+record with no integrity evidence into the store. The error names the version
+and the reason rather than failing as generic corruption. See `DECISIONS.md` D25.
+
+What the migration changed here:
+
+| v1 | v2 |
+|---|---|
+| `phase` (`intent` \| `outcome`) | `line_type` — **six** types: `open`, `intent`, `outcome`, `decision`, `close`, `checkpoint` (reserved) |
+| `input_digest` | `request_digest` |
+| — | `seq`, `prev_hash` — every line is a link in a hash chain |
+| — | `signature`, `key_id` — ed25519 over the line's canonical form |
+| — | `policy_set_hash`, `grant_id`, `response_digest` |
+| — | `decision_axes` — always present, possibly `{}`; carries `capability`, `role`, `session`, `matched_rule`, `approval_ref`, derived `fs` / `net` |
+
+### Three rejection classes, deliberately distinct
+
+| Input | Result |
+|---|---|
+| `schema_version != 2` | `IngestError` → HTTP 400. The batch aborts. |
+| Missing/mistyped `line_type`, `seq` or `prev_hash` | `IngestError` → HTTP 400. Not a chain line; a format violation, not an unknown extension (SPEC §5). |
+| A `line_type` this service does not consume | **Skipped and counted.** Never an abort. |
+
+That third row is the format's whole extensibility story (SPEC §5.2). An emitter
+may add line types within version 2, so treating an unfamiliar one as corruption
+would make every future addition a breaking change. `open`, `close`, `decision`,
+`checkpoint` and anything newer are skipped; `/v1/ingest` reports `skipped` and
+`skipped_by_type`, keyed by the emitter's **verbatim** token — collapsing
+unknowns into one "other" bucket can tell an operator that something was
+unreadable but not *what*.
+
+Downstream stays **outcome-centric**: detectors, proposals and the learning
+fabric read `batch.outcomes`. Skipped lines are reported, not analysed.
+
+### Parsing is not verifying
+
+`signature` and `key_id` are validated as *present* on lines the spec signs,
+because ingest fails closed on missing required fields. Nothing here checks an
+ed25519 signature, walks `prev_hash`, or recomputes a `line_hash` — a line with
+a present-but-forged signature parses cleanly. Verification is `aegis verify`
+(AILAB-621); until it lands, nothing downstream of ingest may be called
+verified.
 
 Policy packs (slice 3) are versioned, floor-checked policy snapshots minted
 `pending_human`. They live **in-process** on `GovernanceState` (no DB). A human
@@ -57,7 +78,7 @@ alter `status`, `policy_yaml`, or a floor decision, and a widen is still `409`
 
 **Patterns are the only durable state.** The ingest buffer, findings, and packs
 stay in-process. One table, `learning_patterns`, stores a deterministic
-`vector(16)` per validated schema-v1 outcome.
+`vector(16)` per validated outcome line.
 
 **Deterministic feature schema v1** — no embedding provider, no API key, no
 network call, so stored vectors are reproducible from the same JSONL:
@@ -80,9 +101,25 @@ so similarity never blurs tool identity. Bounds are frozen with
 `FEATURE_SCHEMA_VERSION`: changing one requires a new version, not an edit.
 
 Stored `content` is a canonical summary — identifiers, status strings, grant
-*shape* (counts and limits), resource metrics. Audit schema v1 carries no raw
+*shape* (counts and limits), resource metrics. The audit schema carries no raw
 prompt/input/output, agent, or project, and the store adds none; free-text
 runtime reasons and messages are dropped too.
+
+**`FEATURE_SCHEMA_VERSION` stayed at 1 across the audit v1 → v2 migration.**
+Every axis above reads a field schema 2 kept under the same name with the same
+meaning, so the same call encodes to a byte-identical vector under either wire
+version — the golden vectors in `tests/test_learning.py` are unchanged while
+the fixtures beneath them were rewritten to v2, which is the evidence. Bumping
+would have been a version with no layout behind it *and* would have hidden every
+already-stored row, since searches pin to the current feature version. What v2
+added — `decision_axes`, `policy_set_hash`, `grant_id`, `response_digest` — is
+parsed but deliberately **not** encoded: putting any of it into the embedding
+changes stored vector meaning, which is a version bump and its own decision.
+
+Only `content` moved with the wire: the digest key is now `request_digest`. A
+migrated database holds no `input_digest` rows — `002` will not complete while
+any `audit_schema_version = 1` row remains, and the CHECK then forbids writing
+another — so this is a clean cut, not a mixed-key store.
 
 **Ingest order is load-bearing:** validate → persist patterns in one
 transaction → *only then* extend the in-memory buffer. A configured store that
@@ -147,6 +184,18 @@ Migrations live in `governance/migrations/` and are applied **explicitly** —
 the app never mutates schema at import time. Never commit a password or a
 production URL.
 
+`002_audit_schema_v2.sql` moves the `audit_schema_version` CHECK from 1 to 2 on
+a database `001` already created (`CREATE TABLE IF NOT EXISTS` is a no-op
+against an existing one). If any row still holds version 1 it **refuses and
+tells you the count** rather than deleting evidence to make its own constraint
+pass — those rows are yours, and no re-ingest can reproduce them now that v1 is
+refused. Review them, remove them, re-run.
+
+It is deliberately a single `DO` block so that refusal cannot half-apply. If you
+run migrations with `psql` rather than the command above, pass
+`-v ON_ERROR_STOP=1`: psql otherwise continues past an error and **exits 0**, so
+a refused migration looks like a successful one in a script's exit status.
+
 ## Test
 
 ```bash
@@ -170,7 +219,7 @@ writes rows into your live database.
 | Method | Path | Behavior |
 |--------|------|----------|
 | `GET` | `/health` | liveness + active learning-store mode |
-| `POST` | `/v1/ingest` | body = JSONL text (schema v1); persists patterns, then buffers; `503` if the store is down |
+| `POST` | `/v1/ingest` | body = JSONL text (audit schema v2); persists patterns, then buffers; reports `skipped` / `skipped_by_type`; `400` on wrong version or a broken chain field; `503` if the store is down |
 | `POST` | `/v1/propose` | narrow-only proposal over ingest buffer; 409 on floor violation; adds `learning_evidence` |
 | `POST` | `/v1/patterns/search` | `{call_id, tool_id?, limit?}` → nearest patterns by cosine distance, source excluded; `404` unknown source, `422` limit outside `[1, 50]` |
 | `GET` | `/v1/floor` | active floor document |

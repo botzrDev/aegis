@@ -1,1 +1,1 @@
-{"schema_version": 1, "phase": "intent", "call_id": "call-golden-intent", "tool_id": "reader", "input_digest": "0badf00d"}
+{"call_id":"call-golden-0","line_type":"intent","prev_hash":"ace4118a6a4ec1bf47503431aaa769ebb74de9c61174bf64470561a99abf4066","request_digest":"fb0288872031fc4818c03a7253bd3a78de192d05e6bccd09ceabeda65b4d7c6f","schema_version":2,"seq":1,"tool_id":"smoke"}

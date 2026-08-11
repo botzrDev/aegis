@@ -1,14 +1,29 @@
 """Deterministic feature schema v1 for the learning fabric (AEG-32 slice 4).
 
-Audit schema v1 carries no raw prompt/input/output text, no agent, and no
+The audit schema carries no raw prompt/input/output text, no agent, and no
 project identity (`models.AuditRecord`). The learning fabric therefore encodes
-*only* shipped schema-v1 fields into a fixed 16-dimensional vector with a
+*only* shipped outcome fields into a fixed 16-dimensional vector with a
 documented, versioned layout — no live embedding provider, no API key, and no
 network call. That keeps stored vectors reproducible for published findings and
 keeps the store replayable from the same JSONL.
 
 Nearest patterns are **evidence only**. They never mint policy YAML, never
 relax the floor, and never auto-apply into the Rust runtime (D24).
+
+`FEATURE_SCHEMA_VERSION` stayed at 1 across the audit schema v1 → v2 migration
+(AILAB-624). Every axis reads `policy.status`, `capability.status`,
+`execution.status`, the granted `fs`/`net` shape, `wall_ms`,
+`peak_memory_bytes` and `grant.max_output_bytes` — schema 2 renamed none of
+those and changed the meaning of none of them, so the same call encodes to a
+byte-identical vector under either wire version. Bumping would have been a
+version with no layout behind it, and it would have hidden every already-stored
+row: searches pin to the current feature version, so a bump makes old patterns
+neither a valid probe nor a valid neighbor.
+
+What schema 2 *added* — `decision_axes`, `policy_set_hash`, `grant_id`,
+`response_digest` — is parsed (`models`) and deliberately **not** encoded here.
+Putting any of it into the embedding changes stored vector meaning, which is a
+`FEATURE_SCHEMA_VERSION` bump and its own decision, not a migration detail.
 """
 
 from __future__ import annotations
@@ -22,7 +37,14 @@ from aegis_governance.models import AuditRecord
 
 FEATURE_SCHEMA_VERSION = 1
 VECTOR_DIMENSIONS = 16
-AUDIT_SCHEMA_VERSION = 1
+# Documentation, not enforcement. It records which wire version this module was
+# written against and is asserted equal to
+# `audit_ingest.SUPPORTED_SCHEMA_VERSION` in the tests. The value actually
+# stored is `record.schema_version`, so the only thing keeping a bad version out
+# of the table is the ingest pin plus the SQL CHECK — construct an `AuditRecord`
+# by hand with another version and the store raises a `LearningStoreError`
+# (surfacing as a 503, which reads as "database down" for what is bad data).
+AUDIT_SCHEMA_VERSION = 2
 
 DEFAULT_SEARCH_LIMIT = 10
 MIN_SEARCH_LIMIT = 1
@@ -101,7 +123,7 @@ def _granted_grant(record: AuditRecord) -> Any:
 
 
 def encode_pattern(record: AuditRecord) -> tuple[float, ...]:
-    """Encode a schema-v1 outcome into the fixed 16-dim feature vector.
+    """Encode an outcome line into the fixed 16-dim feature vector.
 
     Layout (feature schema v1):
 
@@ -152,12 +174,19 @@ def encode_pattern(record: AuditRecord) -> tuple[float, ...]:
 
 
 def canonical_content(record: AuditRecord) -> dict[str, Any]:
-    """JSON-safe summary of a schema-v1 outcome.
+    """JSON-safe summary of an outcome line.
 
     Identifiers, status *strings*, grant shape, and resource metrics only.
-    Free-text reasons/messages are excluded alongside the fields audit schema
-    v1 never carried in the first place, so the durable store cannot become a
-    back door for prompt or output content.
+    Free-text reasons/messages are excluded alongside the fields the audit
+    schema never carried in the first place, so the durable store cannot become
+    a back door for prompt or output content.
+
+    The digest key follows the wire: schema 2 renamed `input_digest` to
+    `request_digest`. A migrated database holds no rows with the old key —
+    `002_audit_schema_v2.sql` will not complete while any `audit_schema_version
+    = 1` row remains, and the CHECK then forbids writing another — so there is
+    no mixed-key store to read, only a store the operator emptied of v1 rows
+    before the pin moved.
     """
     grant = _granted_grant(record)
     grant_shape: Optional[dict[str, Any]] = None
@@ -177,7 +206,7 @@ def canonical_content(record: AuditRecord) -> dict[str, Any]:
     return {
         "call_id": record.call_id,
         "tool_id": record.tool_id,
-        "input_digest": record.input_digest,
+        "request_digest": record.request_digest,
         "audit_schema_version": record.schema_version,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "policy_status": record.policy.status,
