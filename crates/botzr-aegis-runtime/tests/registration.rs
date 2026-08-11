@@ -121,8 +121,11 @@ fn audit_intent_digest_is_derived_from_the_input_bytes() {
     // SHA-256 of the exact bytes that were executed, unmodified.
     let dir = tempfile::tempdir().unwrap();
     let audit_path = dir.path().join("audit.jsonl");
+    // A persistent sink needs a provisioned signing key (AILAB-620).
+    let key_path = dir.path().join("signing.key");
+    botzr_aegis_audit::generate_signing_key(&key_path, false).expect("generate signing key");
     let mut rt = RuntimeBuilder::new()
-        .audit_file(&audit_path)
+        .audit_file(&audit_path, &key_path)
         .expect("open audit sink")
         .build()
         .expect("build runtime");

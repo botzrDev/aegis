@@ -58,10 +58,16 @@ fn outcomes(path: &Path) -> Vec<AuditRecord> {
 }
 
 fn build(audit: &Path, policy_yaml: &str) -> Runtime {
+    // A persistent sink is signed by a provisioned key, never by the dev seed
+    // (AILAB-620). Generate one beside the record file; both die with the
+    // test's tempdir.
+    let key = audit.with_extension("key");
+    botzr_aegis_audit::generate_signing_key(&key, true).expect("generate signing key");
+
     RuntimeBuilder::new()
         .policy_yaml(policy_yaml)
         .expect("valid policy")
-        .audit_file(audit)
+        .audit_file(audit, &key)
         .expect("open audit sink")
         .build()
         .expect("build runtime")

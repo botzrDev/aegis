@@ -15,7 +15,14 @@ pub enum Command {
     Ready {
         policy: Option<PathBuf>,
         audit: Option<PathBuf>,
+        signing_key: Option<PathBuf>,
     },
+    /// Generate an audit signing key and write it to a file (AILAB-620).
+    ///
+    /// Its own command because generation must never be implicit: a key minted
+    /// on the emit path would publish a brand-new `public_key` in the Session's
+    /// `open` line and silently invalidate every pin an operator held.
+    Keygen { out: PathBuf, force: bool },
     /// Register a WASM component and execute one call through the pipeline.
     Run(RunArgs),
     /// Verify a Chain file and report its verdict (ADR-0002 / ADR-0004).
@@ -38,6 +45,9 @@ pub enum Command {
 pub struct RunArgs {
     pub policy: Option<PathBuf>,
     pub audit: Option<PathBuf>,
+    /// Path to the ed25519 seed file signing this Session. Required whenever
+    /// `audit` is set, and meaningless without it (AILAB-620).
+    pub signing_key: Option<PathBuf>,
     pub component: PathBuf,
     pub id: String,
     pub input: Option<String>,
@@ -52,6 +62,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         return Ok(Command::Ready {
             policy: None,
             audit: None,
+            signing_key: None,
         });
     }
 
@@ -67,10 +78,19 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             Err(e) if e == "__help_verify__" => Ok(Command::Help),
             Err(e) => Err(e),
         },
+        "keygen" => match parse_keygen(&args[2..]) {
+            Ok(cmd) => Ok(cmd),
+            Err(e) if e == "__help_keygen__" => Ok(Command::Help),
+            Err(e) => Err(e),
+        },
         other if other.starts_with('-') => {
             // Global flags only → ready mode (backward compatible stub).
             match parse_global_flags(&args[1..]) {
-                Ok((policy, audit)) => Ok(Command::Ready { policy, audit }),
+                Ok((policy, audit, signing_key)) => Ok(Command::Ready {
+                    policy,
+                    audit,
+                    signing_key,
+                }),
                 Err(e) if e == "__help__" => Ok(Command::Help),
                 Err(e) => Err(e),
             }
@@ -79,9 +99,12 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
     }
 }
 
-fn parse_global_flags(args: &[String]) -> Result<(Option<PathBuf>, Option<PathBuf>), String> {
+type GlobalFlags = (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>);
+
+fn parse_global_flags(args: &[String]) -> Result<GlobalFlags, String> {
     let mut policy = None;
     let mut audit = None;
+    let mut signing_key = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -95,17 +118,74 @@ fn parse_global_flags(args: &[String]) -> Result<(Option<PathBuf>, Option<PathBu
                 let v = args.get(i).ok_or("--audit needs a value")?;
                 audit = Some(PathBuf::from(v));
             }
+            "--signing-key" => {
+                i += 1;
+                let v = args.get(i).ok_or("--signing-key needs a value")?;
+                signing_key = Some(PathBuf::from(v));
+            }
             "--help" | "-h" => return Err("__help__".into()),
             other => return Err(format!("unknown flag: {other}")),
         }
         i += 1;
     }
-    Ok((policy, audit))
+    check_audit_key_pair(audit.as_deref(), signing_key.as_deref())?;
+    Ok((policy, audit, signing_key))
+}
+
+/// `--audit` and `--signing-key` travel together, or neither is given.
+///
+/// A usage error, not a default (AILAB-620): a persistent record file signed by
+/// a key the CLI picked on its own is exactly the situation `Verified (pinned)`
+/// must never be able to describe. Without `--audit` the sink is a temp file
+/// signed by the loudly-named dev key, and a signing key for it would be
+/// pointing at nothing.
+fn check_audit_key_pair(audit: Option<&Path>, signing_key: Option<&Path>) -> Result<(), String> {
+    match (audit, signing_key) {
+        (Some(_), None) => Err(
+            "--audit requires --signing-key <PATH>; generate one with `aegis keygen --out <PATH>`"
+                .into(),
+        ),
+        (None, Some(_)) => {
+            Err("--signing-key only applies with --audit <PATH> (the default sink is a temp file)"
+                .into())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Parse `aegis keygen --out <PATH> [--force]`.
+fn parse_keygen(args: &[String]) -> Result<Command, String> {
+    let mut out = None;
+    let mut force = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => {
+                i += 1;
+                let v = args.get(i).ok_or("--out needs a value")?;
+                out = Some(PathBuf::from(v));
+            }
+            "--force" => force = true,
+            "--help" | "-h" => return Err("__help_keygen__".into()),
+            other => return Err(format!("unknown flag: {other}")),
+        }
+        i += 1;
+    }
+
+    Ok(Command::Keygen {
+        // No default path. An implicit `~/.config/aegis/...` would make a
+        // missing key silently resolvable, and the point of this surface is that
+        // key location is a decision the operator states out loud.
+        out: out.ok_or("keygen requires --out <PATH>")?,
+        force,
+    })
 }
 
 fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     let mut policy = None;
     let mut audit = None;
+    let mut signing_key = None;
     let mut component = None;
     let mut id = None;
     let mut input = None;
@@ -126,6 +206,11 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
                 i += 1;
                 let v = args.get(i).ok_or("--audit needs a value")?;
                 audit = Some(PathBuf::from(v));
+            }
+            "--signing-key" => {
+                i += 1;
+                let v = args.get(i).ok_or("--signing-key needs a value")?;
+                signing_key = Some(PathBuf::from(v));
             }
             "--component" | "--wasm" => {
                 i += 1;
@@ -171,10 +256,12 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     if input.is_some() && input_file.is_some() {
         return Err("use only one of --input or --input-file".into());
     }
+    check_audit_key_pair(audit.as_deref(), signing_key.as_deref())?;
 
     Ok(RunArgs {
         policy,
         audit,
+        signing_key,
         component: component.ok_or("run requires --component <PATH>")?,
         id: id.ok_or("run requires --id <TOOL_ID>")?,
         input,
@@ -249,9 +336,10 @@ pub fn usage_text() -> String {
         "aegis {} — research runtime for secure agent tool execution\n\
          \n\
          Usage:\n\
-           aegis [--policy <PATH>] [--audit <PATH>]\n\
+           aegis [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]\n\
            aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]\n\
            aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>\n\
+           aegis keygen --out <PATH> [--force]\n\
          \n\
          Run options:\n\
            --component, --wasm <PATH>  WASM component to register\n\
@@ -260,9 +348,16 @@ pub fn usage_text() -> String {
            --input-file <PATH>         Read call input from file\n\
            --policy <PATH>             Policy YAML (default: allow-all)\n\
            --audit <PATH>              Audit JSONL path (default: temp file)\n\
+           --signing-key <PATH>        ed25519 seed file signing the audit\n\
+                                       Session; required with --audit\n\
            --base-dir <PATH>           Manifest base dir (default: component parent)\n\
            --sha256 <HEX>              Optional component digest pin (G10)\n\
            --version <VER>             Tool version in manifest (default: 0.1.0)\n\
+           --help, -h                  Print this help\n\
+         \n\
+         Keygen options:\n\
+           --out <PATH>                Write a new signing key here (mode 0600)\n\
+           --force                     Overwrite an existing key file\n\
            --help, -h                  Print this help\n\
          \n\
          Verify options:\n\
@@ -289,23 +384,36 @@ pub fn usage_text() -> String {
 /// [`BuildError`](botzr_aegis_runtime::BuildError) already carries the offending
 /// path in its `Display`, so flattening it to `String` here preserves the error
 /// text callers (and `dispatch`) print today.
-pub fn build_runtime(policy: Option<&Path>, audit: Option<&Path>) -> Result<Runtime, String> {
+pub fn build_runtime(
+    policy: Option<&Path>,
+    audit: Option<&Path>,
+    signing_key: Option<&Path>,
+) -> Result<Runtime, String> {
     let mut builder = RuntimeBuilder::new();
 
     if let Some(path) = policy {
         builder = builder.policy_file(path).map_err(|e| e.to_string())?;
     }
 
-    if let Some(path) = audit {
-        builder = builder.audit_file(path).map_err(|e| e.to_string())?;
+    // The pairing rule is re-checked here rather than trusted from `parse_*`:
+    // this function is public, so a library caller reaches it without going
+    // through argument parsing, and "persistent sink with no provisioned key"
+    // must be unrepresentable from every direction (AILAB-620).
+    check_audit_key_pair(audit, signing_key)?;
+    if let (Some(path), Some(key)) = (audit, signing_key) {
+        builder = builder.audit_file(path, key).map_err(|e| e.to_string())?;
     }
 
     builder.build().map_err(|e| e.to_string())
 }
 
 pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
-    let mut rt = build_runtime(args.policy.as_deref(), args.audit.as_deref())
-        .map_err(|e| AegisError::HostDenied { reason: e })?;
+    let mut rt = build_runtime(
+        args.policy.as_deref(),
+        args.audit.as_deref(),
+        args.signing_key.as_deref(),
+    )
+    .map_err(|e| AegisError::HostDenied { reason: e })?;
 
     let bytes = std::fs::read(&args.component).map_err(|e| AegisError::HostDenied {
         reason: format!("read component {}: {e}", args.component.display()),
@@ -369,14 +477,45 @@ fn load_input(args: &RunArgs) -> Result<Vec<u8>, String> {
     Ok(args.input.clone().unwrap_or_default().into_bytes())
 }
 
+/// `aegis keygen --out <PATH> [--force]` — write a signing key and print its
+/// public identity.
+///
+/// Two stdout lines, `public_key <hex>` and `key_id <hex>`, and nothing else: no
+/// timestamp, no path echo, no banner. The `public_key` is what
+/// `aegis verify --key` pins, so it has to be greppable and stable across runs
+/// of different keys. Everything else goes to stderr.
+fn keygen(out: &Path, force: bool) -> ExitCode {
+    match botzr_aegis_audit::generate_signing_key(out, force) {
+        Ok(key) => {
+            println!("public_key {}", key.public_key().to_hex());
+            println!("key_id {}", key.key_id().to_hex());
+            eprintln!("signing key written to {}", out.display());
+            eprintln!(
+                "pin records from this key with: aegis verify --key {} <PATH>",
+                key.public_key().to_hex()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 pub fn dispatch(cmd: Command) -> ExitCode {
     match cmd {
         Command::Help => {
             eprint!("{}", usage_text());
             ExitCode::SUCCESS
         }
-        Command::Ready { policy, audit } => {
-            match build_runtime(policy.as_deref(), audit.as_deref()) {
+        Command::Keygen { out, force } => keygen(&out, force),
+        Command::Ready {
+            policy,
+            audit,
+            signing_key,
+        } => {
+            match build_runtime(policy.as_deref(), audit.as_deref(), signing_key.as_deref()) {
                 Ok(rt) => {
                     eprintln!(
                         "aegis {} — research runtime for secure agent tool execution",
@@ -451,11 +590,18 @@ mod tests {
             "p.yaml".into(),
             "--audit".into(),
             "a.jsonl".into(),
+            "--signing-key".into(),
+            "k.key".into(),
         ];
         match parse_args(&args).unwrap() {
-            Command::Ready { policy, audit } => {
+            Command::Ready {
+                policy,
+                audit,
+                signing_key,
+            } => {
                 assert_eq!(policy, Some(PathBuf::from("p.yaml")));
                 assert_eq!(audit, Some(PathBuf::from("a.jsonl")));
+                assert_eq!(signing_key, Some(PathBuf::from("k.key")));
             }
             other => panic!("expected Ready, got {other:?}"),
         }
@@ -486,6 +632,8 @@ mod tests {
             "p.yaml",
             "--audit",
             "a.jsonl",
+            "--signing-key",
+            "signing.key",
         ]);
         match parse_args(&args).unwrap() {
             Command::Run(r) => {
@@ -498,9 +646,110 @@ mod tests {
                 assert_eq!(r.version, "9.9.9");
                 assert_eq!(r.policy, Some(PathBuf::from("p.yaml")));
                 assert_eq!(r.audit, Some(PathBuf::from("a.jsonl")));
+                assert_eq!(r.signing_key, Some(PathBuf::from("signing.key")));
             }
             other => panic!("expected Run, got {other:?}"),
         }
+    }
+
+    /// LOAD-BEARING (AILAB-620): a persistent audit path with no provisioned key
+    /// is a usage error on every surface that accepts one. The old behaviour
+    /// signed the file with the seed published inside `botzr-aegis-audit`, so
+    /// defaulting here would restore exactly the hole this ticket closed.
+    #[test]
+    fn audit_without_a_signing_key_is_a_usage_error() {
+        for args in [
+            sv(&["aegis", "--audit", "a.jsonl"]),
+            sv(&[
+                "aegis", "run", "--component", "e.wasm", "--id", "echo", "--audit", "a.jsonl",
+            ]),
+        ] {
+            let err = parse_args(&args).expect_err("--audit alone must not parse");
+            assert!(err.contains("--signing-key"), "{err}");
+        }
+
+        // And the mirror: a key with no persistent sink points at nothing.
+        for args in [
+            sv(&["aegis", "--signing-key", "k.key"]),
+            sv(&[
+                "aegis",
+                "run",
+                "--component",
+                "e.wasm",
+                "--id",
+                "echo",
+                "--signing-key",
+                "k.key",
+            ]),
+        ] {
+            let err = parse_args(&args).expect_err("--signing-key alone must not parse");
+            assert!(err.contains("--audit"), "{err}");
+        }
+
+        // The pairing rule also holds for a library caller that never parsed
+        // arguments.
+        let err = build_runtime(None, Some(Path::new("a.jsonl")), None)
+            .expect_err("build_runtime must refuse an unsigned persistent sink");
+        assert!(err.contains("--signing-key"), "{err}");
+    }
+
+    #[test]
+    fn parse_keygen_flags() {
+        match parse_args(&sv(&["aegis", "keygen", "--out", "k.key"])).unwrap() {
+            Command::Keygen { out, force } => {
+                assert_eq!(out, PathBuf::from("k.key"));
+                assert!(!force, "force must default off");
+            }
+            other => panic!("expected Keygen, got {other:?}"),
+        }
+        match parse_args(&sv(&["aegis", "keygen", "--out", "k.key", "--force"])).unwrap() {
+            Command::Keygen { force, .. } => assert!(force),
+            other => panic!("expected Keygen, got {other:?}"),
+        }
+        assert_eq!(
+            parse_args(&sv(&["aegis", "keygen", "--help"])).unwrap(),
+            Command::Help
+        );
+        // No default path: keygen with no --out is a usage error, never a write
+        // to a location the CLI picked.
+        assert!(parse_args(&sv(&["aegis", "keygen"]))
+            .unwrap_err()
+            .contains("--out"));
+        assert!(parse_args(&sv(&["aegis", "keygen", "--out"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&["aegis", "keygen", "--bogus"]))
+            .unwrap_err()
+            .contains("unknown flag"));
+    }
+
+    /// `keygen` writes an owner-only key and prints the two fields an operator
+    /// needs, on stdout, in a fixed order.
+    #[test]
+    fn keygen_writes_a_loadable_key_and_prints_its_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing.key");
+
+        let success = format!("{:?}", ExitCode::SUCCESS);
+        assert_eq!(format!("{:?}", keygen(&path, false)), success);
+
+        // The key on disk is the one that was announced, and it loads.
+        let loaded = botzr_aegis_audit::load_signing_key(&path).expect("generated key loads");
+        assert_ne!(
+            loaded.public_key(),
+            botzr_aegis_audit::insecure_dev_key().public_key(),
+            "keygen must not hand back the dev key"
+        );
+
+        // A second keygen without --force refuses rather than replacing it.
+        let failure = format!("{:?}", ExitCode::from(1));
+        assert_eq!(format!("{:?}", keygen(&path, false)), failure);
+        assert_eq!(
+            botzr_aegis_audit::load_signing_key(&path)
+                .unwrap()
+                .public_key(),
+            loaded.public_key()
+        );
     }
 
     #[test]
@@ -523,7 +772,8 @@ mod tests {
             parse_args(&sv(&["aegis"])).unwrap(),
             Command::Ready {
                 policy: None,
-                audit: None
+                audit: None,
+                signing_key: None,
             }
         );
         // unknown command / unknown flags / missing values
@@ -581,10 +831,15 @@ mod tests {
             "--version",
             "--key",
             "--trust-store",
+            "--signing-key",
+            "--out",
+            "--force",
         ] {
             assert!(usage.contains(flag), "usage missing {flag}");
         }
-        assert!(usage.contains("verify"), "usage missing the verify command");
+        for command in ["verify", "keygen"] {
+            assert!(usage.contains(command), "usage missing the {command} command");
+        }
     }
 
     /// The four exit codes are API (ADR-0002), so `--help` has to name them.
@@ -717,7 +972,8 @@ mod tests {
                 "{:?}",
                 dispatch(Command::Ready {
                     policy: None,
-                    audit: None
+                    audit: None,
+                    signing_key: None,
                 })
             ),
             success
@@ -730,6 +986,20 @@ mod tests {
                 dispatch(Command::Ready {
                     policy: Some(PathBuf::from("/nonexistent/policy.yaml")),
                     audit: None,
+                    signing_key: None,
+                })
+            ),
+            failure
+        );
+        // A key that will not load fails the ready path too — no fallback key,
+        // so no Session opens (AILAB-620).
+        assert_eq!(
+            format!(
+                "{:?}",
+                dispatch(Command::Ready {
+                    policy: None,
+                    audit: Some(PathBuf::from("/nonexistent/audit.jsonl")),
+                    signing_key: Some(PathBuf::from("/nonexistent/signing.key")),
                 })
             ),
             failure

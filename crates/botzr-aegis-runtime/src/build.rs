@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use botzr_aegis_audit::{insecure_dev_key, AuditError, AuditWriter};
+use botzr_aegis_audit::{load_signing_key, AuditError, AuditWriter};
 use botzr_aegis_policy::PolicyEngine;
 use thiserror::Error;
 
@@ -28,6 +28,12 @@ pub enum BuildError {
 
     #[error("open audit {path}: {source}")]
     OpenAudit { path: PathBuf, source: AuditError },
+
+    /// The signing key for a persistent audit sink could not be loaded. Fatal
+    /// on purpose: there is no fallback key, so a build that cannot sign must
+    /// not hand back a runtime that emits records anyway.
+    #[error("load signing key {path}: {source}")]
+    LoadSigningKey { path: PathBuf, source: AuditError },
 }
 
 /// Builder for a configured [`Runtime`].
@@ -68,19 +74,28 @@ impl RuntimeBuilder {
         self.policy_yaml(&yaml)
     }
 
-    /// Append audit records to `path` instead of the default temp sink.
+    /// Append audit records to `path`, signed by the key at `signing_key`,
+    /// instead of the default temp sink.
     ///
-    /// Signed with [`insecure_dev_key`] — a fixed seed compiled into the audit
-    /// crate, so a line it signs proves that *some* Aegis build wrote it, never
-    /// which one. AILAB-620 replaces it with a persisted per-host key; until
-    /// then there is deliberately no config flag, key file, or search path that
-    /// reaches this call, so nobody can mistake a dev key for a provisioned one.
-    pub fn audit_file(mut self, path: &Path) -> Result<Self, BuildError> {
-        let writer = AuditWriter::open(path, insecure_dev_key()).map_err(|source| {
-            BuildError::OpenAudit {
-                path: path.to_path_buf(),
-                source,
-            }
+    /// The key path is **required**, not optional (AILAB-620). A persistent sink
+    /// is a file somebody will later pin a `Verified (pinned to <fp>)` label to,
+    /// and this call used to sign every one of them with `insecure_dev_key` — a
+    /// seed compiled into the published audit crate. Pinning a published secret
+    /// is worse than not pinning at all, so there is no overload that omits the
+    /// key and no fallback if it fails to load. Generate one with
+    /// `aegis keygen --out <PATH>`.
+    ///
+    /// The dev key survives only where it cannot be mistaken for provisioned
+    /// authority: `AuditWriter::open_temp`, which [`Runtime::new`] uses for its
+    /// throwaway sink, and tests.
+    pub fn audit_file(mut self, path: &Path, signing_key: &Path) -> Result<Self, BuildError> {
+        let key = load_signing_key(signing_key).map_err(|source| BuildError::LoadSigningKey {
+            path: signing_key.to_path_buf(),
+            source,
+        })?;
+        let writer = AuditWriter::open(path, key).map_err(|source| BuildError::OpenAudit {
+            path: path.to_path_buf(),
+            source,
         })?;
         self.audit = Some(writer);
         Ok(self)
@@ -172,12 +187,21 @@ rules:
         assert!(matches!(err, BuildError::ReadPolicy { .. }), "{err:?}");
     }
 
+    /// A provisioned key for a persistent sink, the way an operator gets one:
+    /// `aegis keygen` into a file, then hand the builder the path.
+    fn temp_signing_key(dir: &Path) -> PathBuf {
+        let path = dir.join("signing.key");
+        botzr_aegis_audit::generate_signing_key(&path, false).expect("generate signing key");
+        path
+    }
+
     #[test]
     fn audit_file_redirects_the_sink() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/audit.jsonl");
+        let key = temp_signing_key(dir.path());
         let rt = RuntimeBuilder::new()
-            .audit_file(&path)
+            .audit_file(&path, &key)
             .expect("open audit")
             .build()
             .expect("build");
@@ -190,5 +214,51 @@ rules:
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[0].contains("\"line_type\":\"open\""), "{text}");
         assert!(lines[1].contains("\"line_type\":\"intent\""), "{text}");
+    }
+
+    /// LOAD-BEARING (AILAB-620): a persistent sink whose key will not load must
+    /// fail the build, not quietly fall back to `insecure_dev_key`. A fallback
+    /// would put a signature from a published seed on records an operator
+    /// afterwards pins a `Verified (pinned)` label to.
+    #[test]
+    fn a_persistent_sink_with_an_unloadable_key_fails_the_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit = dir.path().join("audit.jsonl");
+
+        let err = RuntimeBuilder::new()
+            .audit_file(&audit, &dir.path().join("absent.key"))
+            .expect_err("a missing signing key must fail the build");
+        assert!(matches!(err, BuildError::LoadSigningKey { .. }), "{err:?}");
+
+        let corrupt = dir.path().join("corrupt.key");
+        std::fs::write(&corrupt, "not-a-seed\n").unwrap();
+        let err = RuntimeBuilder::new()
+            .audit_file(&audit, &corrupt)
+            .expect_err("a corrupt signing key must fail the build");
+        assert!(matches!(err, BuildError::LoadSigningKey { .. }), "{err:?}");
+
+        // And nothing was written: the sink never opened, so no Session exists.
+        assert!(!audit.exists(), "a failed build must not create the sink");
+    }
+
+    /// The key the builder was handed is the key the Session publishes — the
+    /// dev key must not appear on a persistent sink.
+    #[test]
+    fn a_persistent_sink_publishes_the_provisioned_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit = dir.path().join("audit.jsonl");
+        let key_path = temp_signing_key(dir.path());
+        let key = botzr_aegis_audit::load_signing_key(&key_path).expect("load");
+
+        let rt = RuntimeBuilder::new()
+            .audit_file(&audit, &key_path)
+            .expect("open audit")
+            .build()
+            .expect("build");
+        assert_eq!(rt.audit().public_key(), key.public_key());
+        assert_ne!(
+            rt.audit().public_key(),
+            botzr_aegis_audit::insecure_dev_key().public_key()
+        );
     }
 }

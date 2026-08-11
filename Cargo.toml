@@ -54,6 +54,11 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # Key *lifecycle* (location, permissions, first-run generation) is AILAB-620 —
 # this pin only buys the signing primitive.
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
+# AILAB-620: OS entropy for `aegis keygen` — 32 seed bytes, nothing else.
+# MIT OR Apache-2.0, both already in deny.toml's allow list; MSRV 1.63 <= 1.86.
+# Already in the tree transitively (via rand_core); this makes the audit crate's
+# use of it a declared, direct dependency rather than a borrowed one.
+getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"

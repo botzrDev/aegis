@@ -24,12 +24,21 @@ use botzr_aegis_runtime::RuntimeBuilder;
 
 let mut rt = RuntimeBuilder::new()
     .policy_file(Path::new("policy.yaml"))?   // or .policy_yaml(yaml_str)?
-    .audit_file(Path::new("/tmp/audit.jsonl"))?
+    .audit_file(Path::new("/tmp/audit.jsonl"), Path::new("/tmp/aegis-signing.key"))?
     .build()?;                                 // -> Result<Runtime, BuildError>
 ```
 
 Policy YAML is parsed once, up front: a bad document fails at the builder call
 that supplied it, not on the first tool call.
+
+`audit_file` takes the signing key's path and it is **not** optional: a
+persistent record file is one somebody will later pin a `Verified (pinned)` label
+to, so it is never signed with the dev seed compiled into `botzr-aegis-audit`.
+Generate the key once with `aegis keygen --out /tmp/aegis-signing.key`. A key
+that is missing, malformed, or readable beyond its owner fails the build
+(`BuildError::LoadSigningKey`) rather than falling back to anything. Leaving
+`audit_file` unset keeps the temp sink, which *is* dev-key-signed and is not a
+production record.
 
 ## Registration
 

@@ -20,6 +20,9 @@ botzr-aegis-core = { workspace = true }
 # cannot verify anything, which keeps the crypto dependency off every crate
 # that only reads records.
 ed25519-dalek = { workspace = true }
+# Key *generation* only (`keyfile.rs`): 32 bytes from the OS CSPRNG. Kept
+# separate from ed25519-dalek's `rand` feature so the dalek pin stays minimal.
+getrandom = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
@@ -30,4 +33,8 @@ criterion = { workspace = true }
 
 [[bench]]
 name = "emission"
+harness = false
+
+[[bench]]
+name = "sign"
 harness = false
