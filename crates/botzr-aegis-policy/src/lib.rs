@@ -13,6 +13,7 @@ mod error;
 mod eval;
 mod parse;
 mod ratelimit;
+mod recheck;
 mod set;
 
 // Supported consumer surface. The compiled AST (`PolicySet`, `Rule`,
@@ -24,6 +25,13 @@ pub use engine::{PolicyEngine, ReloadOutcome, ReloadSource};
 pub use error::PolicyError;
 pub use eval::{PolicyDecision, PolicyRequest};
 pub use parse::SUPPORTED_POLICY_VERSION;
+// Forensic re-evaluation (`aegis recheck`). `PolicyEngine::preview` is the
+// side-effect-free twin of `evaluate` and stays a method on the engine, so the
+// crate-internal `select` and `PolicySet` never have to become public to let a
+// caller ask what a rule set *would* decide.
+pub use recheck::{
+    classify, outcome_token, recheck_record, RecheckClass, RecheckIndeterminate, RecheckVerdict,
+};
 
 #[cfg(test)]
 mod tests {

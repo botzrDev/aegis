@@ -83,9 +83,8 @@ impl PolicyEngine {
     /// Grab the active set once (station 1). In-flight calls that captured an
     /// earlier `Arc` complete under the set they started with. Crate-internal:
     /// `PolicySet` is not part of the supported surface — consumers observe the
-    /// active set through [`PolicyEngine::active_digest`] and
-    /// [`PolicyEngine::evaluate`].
-    #[cfg(test)]
+    /// active set through [`PolicyEngine::active_digest`],
+    /// [`PolicyEngine::evaluate`] and [`PolicyEngine::preview`].
     pub(crate) fn snapshot(&self) -> Arc<PolicySet> {
         self.active.load_full()
     }

@@ -1,0 +1,19 @@
+# The would-block set: `reader` ran and was allowed; this set refuses it.
+#
+# The other two rules are unchanged.yaml's, on purpose — the diff has to name
+# the one call that moved and nothing else, or a reader cannot tell the finding
+# from the noise a rewritten rule file generates.
+version: 1
+default: allow
+rules:
+  - id: block-reader
+    action: deny
+    tool: reader
+    reason: "workspace reads are no longer permitted from tools"
+  - id: keep-writer-denied
+    action: deny
+    tool: writer
+    reason: "writer disabled in this environment"
+  - id: keep-gate-parked
+    action: pending_approval
+    tool: gate

@@ -1,0 +1,16 @@
+# `gate` was already recorded as pending_approval and this set still parks it.
+#
+# The row this fixture exists for: a call that was parked and is still parked is
+# `unchanged pending_approval`, never `newly_parked`. Reporting the park again
+# as a change would fill a diff with calls nothing happened to, and the one
+# approval id in the record is the recorded one — a recheck mints none.
+version: 1
+default: allow
+rules:
+  - id: park-gate
+    action: pending_approval
+    tool: gate
+  - id: keep-writer-denied
+    action: deny
+    tool: writer
+    reason: "writer disabled in this environment"

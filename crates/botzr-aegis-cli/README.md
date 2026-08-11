@@ -173,15 +173,112 @@ A file that rotates keys across Sessions prints `Verified (pinned)` with one
 in your store, not merely one of them. An `open` key that is not in a supplied
 store is `Tampered`, never "unpinned".
 
+### `aegis recheck` — re-evaluate a finished record against new rules
+
+```
+aegis recheck --policy <YAML> <PATH>
+```
+
+Reads one Agent Action Record chain file, re-evaluates every recorded outcome
+against the Policy Set in `<YAML>`, and prints a would-block diff — the answer to
+"if these rules had been in force, which of these calls would have gone
+differently?". **Nothing is executed**: no component is loaded, no grant is
+minted, no approval id is issued, no network or filesystem effect is re-run.
+The verdicts come from `botzr-aegis-policy`; this command is the surface over
+them.
+
+`<PATH>` is a positional argument and any path is accepted, as with `verify` —
+the record file's name and extension are not specified yet (AILAB-623), so
+examples here write `session.<ext>`.
+
+| Flag | Description |
+|------|-------------|
+| `--policy <YAML>` | Policy YAML to re-evaluate against. **Required** |
+
+`--policy` has no default, unlike `run`'s. The whole question is "what would
+*these* rules have done?", and an implicit allow-all set would answer a question
+nobody asked while looking like a finding — every recorded denial would print as
+`newly_allowed`.
+
+No signature is checked and no key is involved, so there is no `--signing-key`
+here. `aegis verify` answers "is this chain intact?"; recheck answers "what would
+today's rules do to these calls?", and asking that of a file `verify` would call
+`Tampered` is a legitimate forensic question. The two verbs are deliberately
+independent, so neither becomes a precondition for the other.
+
+The work is chain-only. Every input a verdict needs is a decision axis carried in
+the record itself, so no Envelope is opened (see [`spec/SPEC.md`](../../spec/SPEC.md)
+§9). In particular the recorded `decision_axes.fs.path_canonical` is read as
+*evidence* and never resolved, stat-ed or opened — a symlink repointed after the
+call ran cannot move a verdict, and an auditor on a machine that never saw the
+call reads the same report.
+
+#### Exit codes
+
+These are API — the moment anyone scripts `if aegis recheck` in a policy-change
+review, they are the contract.
+
+| Exit | Meaning |
+|------|---------|
+| `0` | Every call unchanged |
+| `1` | A call is newly blocked, allowed or parked — or a usage error (bad flag, missing `--policy`, missing `<PATH>`) |
+| `2` | Could not read the policy or the record |
+| `3` | Indeterminate — at least one call could not be answered for |
+
+`3` outranks `1`. A run that could not answer for one call has not established
+that the rest of the file is a complete diff, so reporting "some calls would now
+be blocked" would invite acting on a subset as though it were the whole finding.
+
+#### Output
+
+stdout is a pure function of two byte strings — the policy file and the record
+file. No clock, no echo of the paths you typed, no key fingerprints, so two runs
+over the same bytes are byte-identical. One line per recorded outcome, in file
+order, addressed by the same `session {i} seq {n}` coordinates `aegis verify`
+prints, so a finding carries from one report to the other.
+
+```
+$ aegis recheck --policy new-rules.yaml session.<ext>
+call call-1 session 0 seq 2: newly_blocked was=allowed now=denied
+call call-2 session 0 seq 3: unchanged denied
+call call-3 session 0 seq 4: unchanged pending_approval
+```
+
+The verdict clause is one of `unchanged <action>`, `newly_blocked was=… now=…`,
+`newly_allowed was=… now=…`, `newly_parked was=…`, or `indeterminate <reason>`.
+An action is `allowed`, `denied`, `rate_limited` or `pending_approval`; a reason
+is `missing_envelope`, `envelope_digest_mismatch`, `unknown_policy_set_hash`,
+`no_binding` or `rate_limit_unevaluable`.
+
+Two of those are worth stating plainly:
+
+- **`newly_parked` is not `newly_blocked`.** A rules change that adds a human
+  review gate is a different finding from one that refuses the call outright, and
+  collapsing them would let the first read as an outage. It prints no `now=`
+  clause, because the only `now` available would be a `pending_approval` whose id
+  this run invented.
+- **`rate_limit_unevaluable` is honest, not a gap.** A rate-limit window is
+  process-local counter and wall-clock state that no record carries. Calling it
+  allowed or blocked would be a coin flip wearing a verdict's clothes.
+
+A line that cannot be read as an outcome record still occupies a row — a dropped
+line would make the diff quietly incomplete — as `indeterminate no_binding`, with
+the parse failure explained on stderr. Exit 2 prints nothing at all on stdout:
+it is "no report", not a report, so a script piping stdout into a review never
+finds a half-answer there.
+
 ## Status
 
 `aegis run` lands the AEG-30 research quickstart path. `aegis verify` lands the
-AILAB-621 evidence-reading path. Full admin surface / config files remain out of
-scope, as do follow modes for a live record file (D3) and `aegis recheck`
-(AILAB-622).
+AILAB-621 evidence-reading path, and `aegis recheck` the AILAB-622 what-if path.
+Full admin surface / config files remain out of scope, as do follow modes for a
+live record file (D3).
 
 ## Dependencies
 
 - `botzr-aegis-runtime` for pipeline orchestration
 - `botzr-aegis-capability` for `ToolManifest` registration
 - `botzr-aegis-audit` for the chain walker behind `aegis verify`
+- `botzr-aegis-policy` for the side-effect-free preview behind `aegis recheck` —
+  a direct dependency on purpose, so a read-only forensic path cannot reach a
+  component engine through the runtime

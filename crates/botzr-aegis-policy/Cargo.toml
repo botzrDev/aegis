@@ -23,6 +23,10 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Tests only. `AuditRecord::schema_version` is sealed against callers, so the
+# only way to hold a foreign-schema record — and the only way a real recheck
+# ever meets one — is to deserialize it.
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [[bench]]

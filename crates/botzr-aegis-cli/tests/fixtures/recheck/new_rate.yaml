@@ -1,0 +1,20 @@
+# A rate_limit rule now governs `reader`.
+#
+# Offline this is unanswerable: the window is process-local counter and
+# wall-clock state that no record carries, so the recheck reports
+# `rate_limit_unevaluable` rather than guessing. A guess would be the worst
+# available outcome — a confident verdict that is right about half the time.
+version: 1
+default: allow
+rules:
+  - id: throttle-reader
+    action: rate_limit
+    tool: reader
+    rate: { max: 1, per_seconds: 60 }
+  - id: keep-writer-denied
+    action: deny
+    tool: writer
+    reason: "writer disabled in this environment"
+  - id: keep-gate-parked
+    action: pending_approval
+    tool: gate

@@ -28,15 +28,21 @@ document implements.
   needs nothing else. The implementation is specified in
   [`crates/botzr-aegis-audit/README.md`](../crates/botzr-aegis-audit/README.md).
   Rotation is the one part that *is* format surface, and it is normative in §8.4.
-- The `aegis recheck` command surface and its exit codes (AILAB-622).
 - Envelope reader/writer behaviour beyond the boundary in §9. No Envelope code
   ships in this version.
 - Argument matchers and the Bindings that produce them (AILAB-626).
 
+**`aegis recheck` is specified, as of AILAB-622:** `aegis recheck --policy <YAML>
+<PATH>` re-evaluates every recorded outcome in `<PATH>` against the Policy Set in
+`<YAML>` and prints a would-block diff, exiting `0` when every call is unchanged,
+`1` when a call is newly blocked, allowed or parked, `2` when the policy or the
+record could not be read, and `3` when any call is indeterminate — reading the
+Chain only, opening no Envelope (§9) and executing nothing.
+
 ## The `aegis verify` command surface
 
-Deliberately unnumbered: this is the one command surface the format document
-pins, and it sits ahead of §1 so it cannot be mistaken for a property of the
+Deliberately unnumbered: this is the command surface the format document pins in
+full, and it sits ahead of §1 so it cannot be mistaken for a property of the
 format. Sections 1–12 keep the numbers they have always had.
 
 **`aegis verify` is specified, as of AILAB-621.** The verdict *model* stays in

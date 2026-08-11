@@ -1,0 +1,19 @@
+# The "nothing moved" Policy Set: every recorded outcome in the session
+# fixtures still falls out of these rules unchanged.
+#
+#   reader -> default allow      (recorded: allowed)
+#   writer -> deny               (recorded: denied)
+#   gate   -> pending_approval   (recorded: pending_approval)
+#
+# It exists so the exit-0 row is a real re-evaluation and not the absence of
+# one — an empty rule list would report every recorded denial as newly_allowed.
+version: 1
+default: allow
+rules:
+  - id: keep-writer-denied
+    action: deny
+    tool: writer
+    reason: "writer disabled in this environment"
+  - id: keep-gate-parked
+    action: pending_approval
+    tool: gate

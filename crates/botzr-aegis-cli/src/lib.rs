@@ -1,5 +1,6 @@
 //! `aegis` CLI library — argument parsing and `run` pipeline wiring.
 
+mod recheck;
 mod verify;
 
 use std::path::{Path, PathBuf};
@@ -41,6 +42,19 @@ pub enum Command {
         keys: Vec<PublicKey>,
         trust_store: Option<PathBuf>,
     },
+    /// Re-evaluate every recorded outcome in a record file against a *new*
+    /// Policy Set and print the would-block diff (AILAB-622).
+    ///
+    /// `policy` is required, unlike `run`'s: the whole question is "what would
+    /// *these* rules have done?", and an implicit allow-all default would answer
+    /// a question nobody asked while looking like a finding. Nothing is
+    /// executed, no grant is minted, no signature is checked — a record
+    /// `aegis verify` would call `Tampered` is still a legitimate subject for
+    /// the what-if.
+    Recheck {
+        policy: PathBuf,
+        path: PathBuf,
+    },
     Help,
 }
 
@@ -79,6 +93,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         "verify" => match parse_verify(&args[2..]) {
             Ok(cmd) => Ok(cmd),
             Err(e) if e == "__help_verify__" => Ok(Command::Help),
+            Err(e) => Err(e),
+        },
+        "recheck" => match parse_recheck(&args[2..]) {
+            Ok(cmd) => Ok(cmd),
+            Err(e) if e == "__help_recheck__" => Ok(Command::Help),
             Err(e) => Err(e),
         },
         "keygen" => match parse_keygen(&args[2..]) {
@@ -334,6 +353,54 @@ fn parse_verify(args: &[String]) -> Result<Command, String> {
     })
 }
 
+/// Parse `aegis recheck --policy <YAML> <PATH>`.
+///
+/// Every error here is a usage error, which `main.rs` maps to exit 1 — kept
+/// clear of recheck's own 0/1/2/3, exactly as `parse_verify` is. A missing
+/// `--policy` is refused here rather than defaulted: `run` may fall back to an
+/// allow-all set because its job is to execute something, but a *diff* against
+/// a policy nobody named would print `newly_allowed` for every recorded denial
+/// and look like a finding.
+fn parse_recheck(args: &[String]) -> Result<Command, String> {
+    let mut policy: Option<PathBuf> = None;
+    let mut path: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--policy" => {
+                i += 1;
+                let v = args.get(i).ok_or("--policy needs a value")?;
+                policy = Some(PathBuf::from(v));
+            }
+            "--help" | "-h" => return Err("__help_recheck__".into()),
+            other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
+            other => {
+                // One record file per invocation, for `parse_verify`'s reason:
+                // two positionals is more likely a forgotten flag value than a
+                // request to diff both, and guessing would fold two reports
+                // into one exit code.
+                if let Some(first) = &path {
+                    return Err(format!(
+                        "recheck takes one PATH, got `{}` and `{other}`",
+                        first.display()
+                    ));
+                }
+                path = Some(PathBuf::from(other));
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Recheck {
+        policy: policy.ok_or("recheck requires --policy <PATH>")?,
+        // Any extension, like `verify`: the record file's name is unresolved
+        // (SPEC.md, AILAB-623), and validating one here would invent the
+        // format's spelling by accident.
+        path: path.ok_or("recheck requires <PATH>")?,
+    })
+}
+
 pub fn usage_text() -> String {
     format!(
         "aegis {} — research runtime for secure agent tool execution\n\
@@ -342,6 +409,7 @@ pub fn usage_text() -> String {
            aegis [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]\n\
            aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]\n\
            aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>\n\
+           aegis recheck --policy <YAML> <PATH>\n\
            aegis keygen --out <PATH> [--force]\n\
          \n\
          Run options:\n\
@@ -370,7 +438,15 @@ pub fn usage_text() -> String {
          \n\
          Verify exit codes:\n\
            0  verified        2  could not read the record or the trust store\n\
-           1  tampered, or a usage error                 3  indeterminate\n",
+           1  tampered, or a usage error                 3  indeterminate\n\
+         \n\
+         Recheck options:\n\
+           --policy <PATH>             Policy YAML to re-evaluate against (required)\n\
+           --help, -h                  Print this help\n\
+         \n\
+         Recheck exit codes:\n\
+           0  every call unchanged     2  could not read the policy or the record\n\
+           1  a call is newly blocked, allowed or parked      3  indeterminate\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -540,6 +616,7 @@ pub fn dispatch(cmd: Command) -> ExitCode {
             keys,
             trust_store,
         } => verify::run(&path, &keys, trust_store.as_deref()),
+        Command::Recheck { policy, path } => recheck::run(&policy, &path),
         Command::Run(args) => match execute_run(&args) {
             Ok(out) => {
                 if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), &out) {
@@ -847,7 +924,7 @@ mod tests {
         ] {
             assert!(usage.contains(flag), "usage missing {flag}");
         }
-        for command in ["verify", "keygen"] {
+        for command in ["verify", "recheck", "keygen"] {
             assert!(
                 usage.contains(command),
                 "usage missing the {command} command"
@@ -972,6 +1049,104 @@ mod tests {
                     .contains("64-hex public key"),
                 "expected a hex usage error for {bad}"
             );
+        }
+    }
+
+    /// `--policy` is required and the record path is positional, so the two
+    /// cannot be swapped by accident.
+    #[test]
+    fn parse_recheck_requires_a_policy_and_a_path() {
+        match parse_args(&sv(&[
+            "aegis",
+            "recheck",
+            "--policy",
+            "p.yaml",
+            "session.jsonl",
+        ]))
+        .unwrap()
+        {
+            Command::Recheck { policy, path } => {
+                assert_eq!(policy, PathBuf::from("p.yaml"));
+                assert_eq!(path, PathBuf::from("session.jsonl"));
+            }
+            other => panic!("expected Recheck, got {other:?}"),
+        }
+        // Flag order does not matter.
+        assert_eq!(
+            parse_args(&sv(&[
+                "aegis",
+                "recheck",
+                "session.jsonl",
+                "--policy",
+                "p.yaml"
+            ]))
+            .unwrap(),
+            Command::Recheck {
+                policy: PathBuf::from("p.yaml"),
+                path: PathBuf::from("session.jsonl"),
+            }
+        );
+        // Any extension, for `verify`'s reason (AILAB-623).
+        for path in ["session.log", "session", "session.jsonl", "/var/log/a.b.c"] {
+            match parse_args(&sv(&["aegis", "recheck", "--policy", "p.yaml", path])).unwrap() {
+                Command::Recheck { path: parsed, .. } => assert_eq!(parsed, PathBuf::from(path)),
+                other => panic!("expected Recheck, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_recheck_usage_errors() {
+        for args in [
+            sv(&["aegis", "recheck", "--help"]),
+            sv(&["aegis", "recheck", "-h"]),
+        ] {
+            assert_eq!(parse_args(&args).unwrap(), Command::Help);
+        }
+        // LOAD-BEARING: no allow-all default. A diff against a policy nobody
+        // named would report every recorded denial as `newly_allowed`.
+        assert!(parse_args(&sv(&["aegis", "recheck", "session.jsonl"]))
+            .unwrap_err()
+            .contains("--policy"));
+        assert!(parse_args(&sv(&["aegis", "recheck", "--policy", "p.yaml"]))
+            .unwrap_err()
+            .contains("requires <PATH>"));
+        assert!(parse_args(&sv(&["aegis", "recheck", "--policy"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&[
+            "aegis", "recheck", "--policy", "p.yaml", "a.log", "b.log"
+        ]))
+        .unwrap_err()
+        .contains("one PATH"));
+        assert!(parse_args(&sv(&["aegis", "recheck", "--bogus", "a.log"]))
+            .unwrap_err()
+            .contains("unknown flag"));
+        // `recheck` never takes a signing key: it checks no signatures.
+        assert!(parse_args(&sv(&[
+            "aegis",
+            "recheck",
+            "--policy",
+            "p.yaml",
+            "--signing-key",
+            "k.key",
+            "a.log"
+        ]))
+        .unwrap_err()
+        .contains("unknown flag"));
+    }
+
+    /// The four exit codes are API here too, so `--help` has to name them.
+    #[test]
+    fn usage_text_names_the_recheck_exit_codes() {
+        let usage = usage_text();
+        for code in [
+            "0  every call unchanged",
+            "1  a call is newly blocked",
+            "2  could not read the policy",
+            "3  indeterminate",
+        ] {
+            assert!(usage.contains(code), "usage missing exit code line {code}");
         }
     }
 

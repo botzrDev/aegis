@@ -1,0 +1,9 @@
+# Not a Policy Set: the rule id opens a quote it never closes, so the document
+# fails to scan as YAML. Committed rather than written into a temp file so the
+# exit-2 row is exercised against a fixed byte string.
+version: 1
+default: allow
+rules:
+  - id: "broken
+    action: deny
+    tool: writer

@@ -1,0 +1,19 @@
+# Adds a review gate over a call that ran unattended: `reader` was allowed,
+# this set holds it for a human.
+#
+# Kept apart from new_deny.yaml because `newly_parked` and `newly_blocked` are
+# different findings — a governance change that adds an approval step must not
+# read as an outage.
+version: 1
+default: allow
+rules:
+  - id: park-reader
+    action: pending_approval
+    tool: reader
+  - id: keep-writer-denied
+    action: deny
+    tool: writer
+    reason: "writer disabled in this environment"
+  - id: keep-gate-parked
+    action: pending_approval
+    tool: gate
