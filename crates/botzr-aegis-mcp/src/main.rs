@@ -1,4 +1,5 @@
-//! stdio MCP binary — CLI flags mirror `aegis` (`--policy`, `--audit`).
+//! stdio MCP binary — CLI flags mirror `aegis` (`--policy`, `--audit`,
+//! `--signing-key`).
 
 use std::env;
 use std::io::{self, BufRead, Write};
@@ -18,15 +19,24 @@ fn print_help() {
     eprintln!("Options:");
     eprintln!("  --policy <PATH>  Path to policy YAML (default: allow-all except exfil)");
     eprintln!("  --audit  <PATH>  Path for audit JSONL output (default: temp file)");
+    eprintln!("  --signing-key <PATH>");
+    eprintln!("                   ed25519 seed file signing the audit Session;");
+    eprintln!(
+        "                   required with --audit. Make one with `aegis keygen --out <PATH>`"
+    );
     eprintln!("  --help, -h       Print this help");
     eprintln!();
     eprintln!("Transport: MCP JSON-RPC on stdio (newline-delimited). Logs go to stderr.");
     eprintln!("See crates/botzr-aegis-mcp/DECISIONS.md (D17) and docs/threat-model.md.");
 }
 
-fn parse_args(args: &[String]) -> Result<(Option<PathBuf>, Option<PathBuf>), i32> {
+/// `--policy`, `--audit`, `--signing-key` — in that order.
+type GatewayPaths = (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>);
+
+fn parse_args(args: &[String]) -> Result<GatewayPaths, i32> {
     let mut policy_path = None;
     let mut audit_path = None;
+    let mut signing_key_path = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -46,30 +56,47 @@ fn parse_args(args: &[String]) -> Result<(Option<PathBuf>, Option<PathBuf>), i32
                 };
                 audit_path = Some(PathBuf::from(v));
             }
+            "--signing-key" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("--signing-key needs a value");
+                    return Err(1);
+                };
+                signing_key_path = Some(PathBuf::from(v));
+            }
             "--help" | "-h" => {
                 print_help();
                 return Err(0);
             }
             other => {
                 eprintln!("unknown flag: {other}");
-                eprintln!("Usage: botzr-aegis-mcp [--policy <PATH>] [--audit <PATH>]");
+                eprintln!(
+                    "Usage: botzr-aegis-mcp [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]"
+                );
                 return Err(1);
             }
         }
         i += 1;
     }
-    Ok((policy_path, audit_path))
+    Ok((policy_path, audit_path, signing_key_path))
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-    let (policy_path, audit_path) = match parse_args(&args) {
+    let (policy_path, audit_path, signing_key_path) = match parse_args(&args) {
         Ok(paths) => paths,
         Err(0) => return ExitCode::SUCCESS,
         Err(_) => return ExitCode::from(1),
     };
 
-    let runtime = match build_runtime(policy_path.as_deref(), audit_path.as_deref()) {
+    // `build_runtime` owns the `--audit`/`--signing-key` pairing rule, so a
+    // persistent sink with no provisioned key dies here rather than opening a
+    // Session signed by the published dev seed (AILAB-620).
+    let runtime = match build_runtime(
+        policy_path.as_deref(),
+        audit_path.as_deref(),
+        signing_key_path.as_deref(),
+    ) {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("error: {e}");

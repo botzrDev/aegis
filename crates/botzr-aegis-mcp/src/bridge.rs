@@ -41,9 +41,17 @@ const ECHO_WASM: &[u8] = include_bytes!("../fixtures/echo.wasm");
 ///
 /// When `policy_path` is `None`, loads [`DEFAULT_DENY_EXFIL_POLICY`] so the
 /// `exfil` deny-smoke path works without a host-supplied YAML file.
+///
+/// `audit_path` and `signing_key_path` travel together (AILAB-620). A host that
+/// asks for a persistent record file must say which key signs it: a Session an
+/// MCP host later pins a `Verified (pinned)` label to must not have been signed
+/// by a seed compiled into the published audit crate. The pairing is checked
+/// here as well as in `main.rs` because this function is public — a library
+/// caller reaches it without going through argument parsing.
 pub fn build_runtime(
     policy_path: Option<&Path>,
     audit_path: Option<&Path>,
+    signing_key_path: Option<&Path>,
 ) -> Result<Runtime, String> {
     let mut builder = RuntimeBuilder::new();
 
@@ -54,8 +62,24 @@ pub fn build_runtime(
             .map_err(|e| e.to_string())?,
     };
 
-    if let Some(path) = audit_path {
-        builder = builder.audit_file(path).map_err(|e| e.to_string())?;
+    match (audit_path, signing_key_path) {
+        (Some(path), Some(key)) => {
+            builder = builder.audit_file(path, key).map_err(|e| e.to_string())?;
+        }
+        (Some(_), None) => return Err(
+            "--audit requires --signing-key <PATH>; generate one with `aegis keygen --out <PATH>`"
+                .to_string(),
+        ),
+        (None, Some(_)) => {
+            return Err(
+                "--signing-key only applies with --audit <PATH> (the default sink is a temp file)"
+                    .to_string(),
+            )
+        }
+        // No persistent sink: the runtime's own temp file, signed by the
+        // loudly-named dev key. Nothing an operator can mistake for provisioned
+        // authority, so no key is required.
+        (None, None) => {}
     }
 
     let mut rt = builder.build().map_err(|e| e.to_string())?;
@@ -102,6 +126,21 @@ fn echo_fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool")
 }
 
+/// A persistent audit sink and the key that signs it — test-only.
+///
+/// A persistent sink has no dev-key fallback (AILAB-620), so every test that
+/// names an audit path has to mint a key first, exactly as an operator does with
+/// `aegis keygen --out`. The `TempDir` comes back with them because dropping it
+/// removes both files.
+#[cfg(test)]
+pub(crate) fn temp_audit_sink() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let audit = dir.path().join("audit.jsonl");
+    let key = dir.path().join("signing.key");
+    botzr_aegis_audit::generate_signing_key(&key, false).expect("generate signing key");
+    (dir, audit, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,10 +149,9 @@ mod tests {
 
     #[test]
     fn echo_tools_call_emits_schema_v2_audit_outcome() {
-        let audit = NamedTempFile::new().expect("temp audit");
-        let audit_path = audit.path().to_path_buf();
+        let (_dir, audit_path, key) = temp_audit_sink();
 
-        let rt = build_runtime(None, Some(&audit_path)).expect("runtime");
+        let rt = build_runtime(None, Some(&audit_path), Some(&key)).expect("runtime");
         let out = call_echo(&rt, "hello-mcp").expect("echo succeeds");
         assert_eq!(out, b"hello-mcp");
 
@@ -134,8 +172,8 @@ mod tests {
 
     #[test]
     fn exfil_policy_deny_emits_audit_outcome() {
-        let audit = NamedTempFile::new().expect("temp audit");
-        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+        let (_dir, audit_path, key) = temp_audit_sink();
+        let rt = build_runtime(None, Some(&audit_path), Some(&key)).expect("runtime");
 
         let err = call_tool(&rt, EXFIL_TOOL_ID, "secret")
             .expect_err("exfil must be denied by default policy");
@@ -144,7 +182,7 @@ mod tests {
             "unexpected error: {err:?}"
         );
 
-        let jsonl = std::fs::read_to_string(audit.path()).expect("audit readable");
+        let jsonl = std::fs::read_to_string(&audit_path).expect("audit readable");
         let outcome = jsonl
             .lines()
             .find(|l| l.contains("\"line_type\":\"outcome\""))
@@ -166,8 +204,8 @@ mod tests {
 
     #[test]
     fn call_tool_rejects_non_catalog_ids() {
-        let audit = NamedTempFile::new().expect("temp audit");
-        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+        let (_dir, audit_path, key) = temp_audit_sink();
+        let rt = build_runtime(None, Some(&audit_path), Some(&key)).expect("runtime");
         let err = call_tool(&rt, "ghost", "x").unwrap_err();
         assert!(matches!(err, AegisError::HostDenied { .. }), "got: {err:?}");
     }
@@ -176,13 +214,54 @@ mod tests {
     fn build_runtime_accepts_policy_file() {
         let policy = NamedTempFile::new().expect("temp policy");
         std::fs::write(policy.path(), DEFAULT_DENY_EXFIL_POLICY).expect("write policy");
-        let audit = NamedTempFile::new().expect("temp audit");
-        let rt = build_runtime(Some(policy.path()), Some(audit.path())).expect("runtime");
+        let (_dir, audit_path, key) = temp_audit_sink();
+        let rt =
+            build_runtime(Some(policy.path()), Some(&audit_path), Some(&key)).expect("runtime");
         // Same deny policy as the default: exfil still refused at the policy station.
         let err = call_tool(&rt, EXFIL_TOOL_ID, "secrets").unwrap_err();
         assert!(
             matches!(err, AegisError::PolicyDenied { .. }),
             "got: {err:?}"
+        );
+    }
+
+    /// LOAD-BEARING (AILAB-620): the gateway must refuse a persistent record
+    /// file it cannot sign with a provisioned key. Falling back to the dev key
+    /// here would put a published seed's signature on every MCP session an
+    /// operator later pins a `Verified (pinned)` label to.
+    #[test]
+    fn a_persistent_sink_without_a_key_is_refused() {
+        let (_dir, audit_path, key) = temp_audit_sink();
+
+        // `Runtime` has no `Debug`, so the error is destructured rather than
+        // pulled out with `expect_err`.
+        let Err(err) = build_runtime(None, Some(&audit_path), None) else {
+            panic!("--audit with no --signing-key must not build");
+        };
+        assert!(err.contains("--signing-key"), "got: {err}");
+        assert!(
+            !audit_path.exists(),
+            "a refused build must not open the sink"
+        );
+
+        // And the mirror: a key with nothing to sign is a mistake, not a no-op.
+        let Err(err) = build_runtime(None, None, Some(&key)) else {
+            panic!("--signing-key with no --audit must not build");
+        };
+        assert!(err.contains("--audit"), "got: {err}");
+    }
+
+    /// A persistent sink publishes the key it was handed — never the dev key.
+    #[test]
+    fn a_persistent_sink_publishes_the_provisioned_key() {
+        let (_dir, audit_path, key_path) = temp_audit_sink();
+        let key = botzr_aegis_audit::load_signing_key(&key_path).expect("load key");
+
+        let rt = build_runtime(None, Some(&audit_path), Some(&key_path)).expect("runtime");
+        assert_eq!(rt.audit().public_key(), key.public_key());
+        assert_ne!(
+            rt.audit().public_key(),
+            botzr_aegis_audit::insecure_dev_key().public_key()
         );
     }
 }

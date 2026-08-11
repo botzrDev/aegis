@@ -6,7 +6,10 @@
 #   ./scripts/mcp-stdio-smoke.sh --deny       # also tools/call exfil → policy deny audit
 #   ./scripts/mcp-stdio-smoke.sh --keep-audit # leave AUDIT_PATH for inspection
 #
-# Exit 0 only when required audit outcomes are present (schema v1). Requires cargo.
+# Exit 0 only when required audit outcomes are present (schema v2). Requires cargo.
+#
+# A persistent `--audit` sink has no dev-key fallback (AILAB-620), so this script
+# mints a throwaway signing key with `aegis keygen` and passes `--signing-key`.
 
 set -euo pipefail
 
@@ -31,7 +34,11 @@ for arg in "$@"; do
 done
 
 AUDIT_PATH="${TMPDIR:-/tmp}/aegis-mcp-smoke-$$.jsonl"
+# The signing key is always removed, even under --keep-audit: keeping a private
+# key around to inspect is not a debugging convenience worth offering.
+KEY_PATH="${TMPDIR:-/tmp}/aegis-mcp-smoke-$$.key"
 cleanup() {
+  rm -f "$KEY_PATH"
   if [[ "$KEEP_AUDIT" -eq 0 ]]; then
     rm -f "$AUDIT_PATH"
   else
@@ -40,20 +47,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> building botzr-aegis-mcp" >&2
-cargo build -p botzr-aegis-mcp --quiet
+# `aegis` comes along for `keygen`: the gateway refuses a persistent sink it has
+# no provisioned key for, and minting one here is the documented path an operator
+# follows rather than a test-only shortcut.
+echo "==> building botzr-aegis-mcp + aegis" >&2
+cargo build -p botzr-aegis-mcp -p botzr-aegis-cli --quiet
 
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
 BIN="${TARGET_DIR}/debug/botzr-aegis-mcp"
-if [[ ! -x "$BIN" ]]; then
-  echo "error: binary not found at $BIN" >&2
+AEGIS="${TARGET_DIR}/debug/aegis"
+for exe in "$BIN" "$AEGIS"; do
+  if [[ ! -x "$exe" ]]; then
+    echo "error: binary not found at $exe" >&2
+    exit 1
+  fi
+done
+
+echo "==> keygen: $AEGIS keygen --out $KEY_PATH" >&2
+PUBLIC_KEY="$("$AEGIS" keygen --out "$KEY_PATH" | sed -n 's/^public_key //p')"
+if [[ -z "$PUBLIC_KEY" ]]; then
+  echo "error: keygen did not print a public_key" >&2
   exit 1
 fi
 
 : >"$AUDIT_PATH"
 
-echo "==> spawn: $BIN --audit $AUDIT_PATH" >&2
+echo "==> spawn: $BIN --audit $AUDIT_PATH --signing-key $KEY_PATH" >&2
 
 REQS=$(mktemp)
 {
@@ -66,7 +86,7 @@ REQS=$(mktemp)
   fi
 } >"$REQS"
 
-RESPONSES="$("$BIN" --audit "$AUDIT_PATH" <"$REQS")"
+RESPONSES="$("$BIN" --audit "$AUDIT_PATH" --signing-key "$KEY_PATH" <"$REQS")"
 rm -f "$REQS"
 
 expect_lines=3
@@ -116,23 +136,36 @@ if [[ ! -s "$AUDIT_PATH" ]]; then
   exit 1
 fi
 
-if ! grep -q '"phase":"intent"' "$AUDIT_PATH"; then
+if ! grep -q '"line_type":"intent"' "$AUDIT_PATH"; then
   echo "error: audit missing intent line:" >&2
   cat "$AUDIT_PATH" >&2
   exit 1
 fi
 
-SUCCESS_OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" | grep '"tool_id":"echo"' || true)"
+# AILAB-620: the Session published the key we minted, not the dev seed compiled
+# into botzr-aegis-audit — so the record file is pinnable to something we hold.
+if ! grep -q "$PUBLIC_KEY" "$AUDIT_PATH"; then
+  echo "error: open line does not publish the generated public key $PUBLIC_KEY:" >&2
+  cat "$AUDIT_PATH" >&2
+  exit 1
+fi
+if ! "$AEGIS" verify --key "$PUBLIC_KEY" "$AUDIT_PATH" >/dev/null; then
+  echo "error: aegis verify --key $PUBLIC_KEY did not pin the record file:" >&2
+  "$AEGIS" verify --key "$PUBLIC_KEY" "$AUDIT_PATH" >&2 || true
+  exit 1
+fi
+
+SUCCESS_OUTCOME="$(grep '"line_type":"outcome"' "$AUDIT_PATH" | grep '"tool_id":"echo"' || true)"
 if [[ -z "$SUCCESS_OUTCOME" ]]; then
-  SUCCESS_OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" | grep '"status":"success"' || true)"
+  SUCCESS_OUTCOME="$(grep '"line_type":"outcome"' "$AUDIT_PATH" | grep '"status":"success"' || true)"
 fi
 if [[ -z "$SUCCESS_OUTCOME" ]]; then
   echo "error: missing success outcome for echo:" >&2
   cat "$AUDIT_PATH" >&2
   exit 1
 fi
-if ! printf '%s' "$SUCCESS_OUTCOME" | grep -q '"schema_version":1'; then
-  echo "error: echo outcome missing schema_version 1:" >&2
+if ! printf '%s' "$SUCCESS_OUTCOME" | grep -q '"schema_version":2'; then
+  echo "error: echo outcome missing schema_version 2:" >&2
   echo "$SUCCESS_OUTCOME" >&2
   exit 1
 fi
@@ -145,14 +178,14 @@ if [[ "$RUN_DENY" -eq 1 ]]; then
     exit 1
   fi
 
-  DENY_OUTCOME="$(grep '"phase":"outcome"' "$AUDIT_PATH" | grep '"tool_id":"exfil"' || true)"
+  DENY_OUTCOME="$(grep '"line_type":"outcome"' "$AUDIT_PATH" | grep '"tool_id":"exfil"' || true)"
   if [[ -z "$DENY_OUTCOME" ]]; then
     echo "error: missing audit outcome for exfil:" >&2
     cat "$AUDIT_PATH" >&2
     exit 1
   fi
-  if ! printf '%s' "$DENY_OUTCOME" | grep -q '"schema_version":1'; then
-    echo "error: exfil outcome missing schema_version 1:" >&2
+  if ! printf '%s' "$DENY_OUTCOME" | grep -q '"schema_version":2'; then
+    echo "error: exfil outcome missing schema_version 2:" >&2
     echo "$DENY_OUTCOME" >&2
     exit 1
   fi
@@ -163,6 +196,6 @@ if [[ "$RUN_DENY" -eq 1 ]]; then
   fi
   echo "ok: MCP stdio smoke — catalog + echo allow + exfil deny audited" >&2
 else
-  echo "ok: MCP stdio smoke — catalog + echo allow + audit schema v1 success" >&2
+  echo "ok: MCP stdio smoke — catalog + echo allow + audit schema v2 success" >&2
 fi
 exit 0

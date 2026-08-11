@@ -31,6 +31,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+# Test-only: a persistent audit sink needs a provisioned signing key and has no
+# dev-key fallback (AILAB-620), so the tests mint one with `generate_signing_key`.
+# The gateway itself never links the audit crate — it goes through `RuntimeBuilder`.
+botzr-aegis-audit = { workspace = true }
 tempfile = { workspace = true }
 
 [[bin]]

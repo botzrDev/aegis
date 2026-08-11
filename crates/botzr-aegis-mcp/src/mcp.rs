@@ -163,12 +163,11 @@ fn error_code(err: &AegisError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bridge::build_runtime;
-    use tempfile::NamedTempFile;
+    use crate::bridge::{build_runtime, temp_audit_sink};
 
     #[test]
     fn tools_list_exposes_multi_tool_catalog() {
-        let rt = build_runtime(None, None).expect("runtime");
+        let rt = build_runtime(None, None, None).expect("runtime");
         let listed = handle_line(&rt, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
             .expect("tools/list");
         assert!(listed.contains("\"echo\""));
@@ -177,8 +176,8 @@ mod tests {
 
     #[test]
     fn tools_call_via_jsonrpc_emits_audit_outcome() {
-        let audit = NamedTempFile::new().expect("temp audit");
-        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+        let (_dir, audit_path, key) = temp_audit_sink();
+        let rt = build_runtime(None, Some(&audit_path), Some(&key)).expect("runtime");
 
         let init = handle_line(
             &rt,
@@ -200,7 +199,7 @@ mod tests {
         assert!(called.contains("mcp-smoke"));
         assert!(called.contains("\"isError\":false"));
 
-        let jsonl = std::fs::read_to_string(audit.path()).expect("audit");
+        let jsonl = std::fs::read_to_string(&audit_path).expect("audit");
         let outcome = jsonl
             .lines()
             .find(|l| l.contains("\"line_type\":\"outcome\""))
@@ -211,8 +210,8 @@ mod tests {
 
     #[test]
     fn tools_call_exfil_deny_audited_via_jsonrpc() {
-        let audit = NamedTempFile::new().expect("temp audit");
-        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+        let (_dir, audit_path, key) = temp_audit_sink();
+        let rt = build_runtime(None, Some(&audit_path), Some(&key)).expect("runtime");
 
         let called = handle_line(
             &rt,
@@ -224,7 +223,7 @@ mod tests {
             "expected isError, got: {called}"
         );
 
-        let jsonl = std::fs::read_to_string(audit.path()).expect("audit");
+        let jsonl = std::fs::read_to_string(&audit_path).expect("audit");
         let outcome = jsonl
             .lines()
             .find(|l| l.contains("\"line_type\":\"outcome\""))
@@ -240,7 +239,7 @@ mod tests {
 
     #[test]
     fn tools_call_exfil_returns_machine_readable_error_code() {
-        let rt = build_runtime(None, None).expect("runtime");
+        let rt = build_runtime(None, None, None).expect("runtime");
 
         let called = handle_line(
             &rt,
@@ -259,8 +258,8 @@ mod tests {
 
     #[test]
     fn handle_line_edges() {
-        let audit = NamedTempFile::new().expect("temp audit");
-        let rt = build_runtime(None, Some(audit.path())).expect("runtime");
+        let (_dir, audit_path, key) = temp_audit_sink();
+        let rt = build_runtime(None, Some(&audit_path), Some(&key)).expect("runtime");
 
         // Empty input and notifications (no id / null id): silence.
         assert_eq!(handle_line(&rt, ""), None);

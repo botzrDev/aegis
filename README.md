@@ -113,14 +113,20 @@ Execute one Model A tool call from the CLI (registers the echo fixture, walks th
 full pipeline, writes audit JSONL):
 
 ```bash
+# A persistent record file is signed by a key you provision — once, per host.
+cargo run -p botzr-aegis-cli -- keygen --out /tmp/aegis-signing.key
+# stdout: public_key <hex> / key_id <hex>
+
 cargo run -p botzr-aegis-cli -- \
   run \
   --component tests/fixtures/echo-tool/echo.wasm \
   --id echo \
   --input 'hello' \
-  --audit /tmp/aegis-audit.jsonl
+  --audit /tmp/aegis-audit.jsonl \
+  --signing-key /tmp/aegis-signing.key
 # stdout: hello
 # inspect Intent + Outcome lines in /tmp/aegis-audit.jsonl
+# then pin them: cargo run -p botzr-aegis-cli -- verify --key <public_key> /tmp/aegis-audit.jsonl
 ```
 
 Reproduce the adversarial containment demo (a deliberately malicious `wasip2` guest

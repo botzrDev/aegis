@@ -166,6 +166,19 @@ fn report_read_failure(path: &Path, error: &AuditError) -> ExitCode {
         | AuditError::Serialize(_)
         | AuditError::Canonicalize(_)
         | AuditError::TornTail { .. } => eprintln!("error: verify {path}: {error}"),
+        // `verify` never loads a *signing* key: it reads a record file and
+        // checks signatures against public keys handed to it on the command
+        // line. These variants belong to the emit path (AILAB-620) and cannot
+        // arrive here — named rather than swept under a `_` so a future
+        // key-loading verify surface has to choose its own exit code. Their
+        // `Display` already names the key file, which is a different path from
+        // the record file, so nothing is prefixed with `{path}`.
+        AuditError::KeyFileMissing { .. }
+        | AuditError::KeyFileExists { .. }
+        | AuditError::KeyFilePermissions { .. }
+        | AuditError::KeyFileMalformed { .. }
+        | AuditError::KeyFileIo { .. }
+        | AuditError::Entropy { .. } => eprintln!("error: {error}"),
     }
     ExitCode::from(EXIT_COULD_NOT_READ)
 }

@@ -22,8 +22,12 @@ document implements.
 
 - The record file's name and extension (AILAB-623). Examples below write
   `session.<ext>`. Do not infer an extension from anything here.
-- Key lifecycle — where a private key lives, its permissions, whether it is
-  generated on first run (AILAB-620).
+- Key lifecycle — where a private key lives, its permissions, how it is
+  generated. Deliberately **out of the format** (ADR-0004), not merely deferred:
+  what a Line carries is a `key_id` and a published `public_key`, and a verifier
+  needs nothing else. The implementation is specified in
+  [`crates/botzr-aegis-audit/README.md`](../crates/botzr-aegis-audit/README.md).
+  Rotation is the one part that *is* format surface, and it is normative in §8.4.
 - The `aegis recheck` command surface and its exit codes (AILAB-622).
 - Envelope reader/writer behaviour beyond the boundary in §9. No Envelope code
   ships in this version.

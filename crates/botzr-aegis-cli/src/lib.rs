@@ -22,7 +22,10 @@ pub enum Command {
     /// Its own command because generation must never be implicit: a key minted
     /// on the emit path would publish a brand-new `public_key` in the Session's
     /// `open` line and silently invalidate every pin an operator held.
-    Keygen { out: PathBuf, force: bool },
+    Keygen {
+        out: PathBuf,
+        force: bool,
+    },
     /// Register a WASM component and execute one call through the pipeline.
     Run(RunArgs),
     /// Verify a Chain file and report its verdict (ADR-0002 / ADR-0004).
@@ -145,10 +148,10 @@ fn check_audit_key_pair(audit: Option<&Path>, signing_key: Option<&Path>) -> Res
             "--audit requires --signing-key <PATH>; generate one with `aegis keygen --out <PATH>`"
                 .into(),
         ),
-        (None, Some(_)) => {
-            Err("--signing-key only applies with --audit <PATH> (the default sink is a temp file)"
-                .into())
-        }
+        (None, Some(_)) => Err(
+            "--signing-key only applies with --audit <PATH> (the default sink is a temp file)"
+                .into(),
+        ),
         _ => Ok(()),
     }
 }
@@ -514,26 +517,24 @@ pub fn dispatch(cmd: Command) -> ExitCode {
             policy,
             audit,
             signing_key,
-        } => {
-            match build_runtime(policy.as_deref(), audit.as_deref(), signing_key.as_deref()) {
-                Ok(rt) => {
-                    eprintln!(
-                        "aegis {} — research runtime for secure agent tool execution",
-                        env!("CARGO_PKG_VERSION")
-                    );
-                    eprintln!("Pipeline: policy → capability → sandbox → audit");
-                    eprintln!("Audit: {}", rt.audit().path().display());
-                    eprintln!(
+        } => match build_runtime(policy.as_deref(), audit.as_deref(), signing_key.as_deref()) {
+            Ok(rt) => {
+                eprintln!(
+                    "aegis {} — research runtime for secure agent tool execution",
+                    env!("CARGO_PKG_VERSION")
+                );
+                eprintln!("Pipeline: policy → capability → sandbox → audit");
+                eprintln!("Audit: {}", rt.audit().path().display());
+                eprintln!(
                     "Runtime ready — use `aegis run --component <WASM> --id <TOOL_ID>` to execute"
                 );
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    ExitCode::from(1)
-                }
+                ExitCode::SUCCESS
             }
-        }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(1)
+            }
+        },
         Command::Verify {
             path,
             keys,
@@ -661,7 +662,14 @@ mod tests {
         for args in [
             sv(&["aegis", "--audit", "a.jsonl"]),
             sv(&[
-                "aegis", "run", "--component", "e.wasm", "--id", "echo", "--audit", "a.jsonl",
+                "aegis",
+                "run",
+                "--component",
+                "e.wasm",
+                "--id",
+                "echo",
+                "--audit",
+                "a.jsonl",
             ]),
         ] {
             let err = parse_args(&args).expect_err("--audit alone must not parse");
@@ -687,9 +695,11 @@ mod tests {
         }
 
         // The pairing rule also holds for a library caller that never parsed
-        // arguments.
-        let err = build_runtime(None, Some(Path::new("a.jsonl")), None)
-            .expect_err("build_runtime must refuse an unsigned persistent sink");
+        // arguments. `Runtime` has no `Debug`, so the error is destructured
+        // rather than pulled out with `expect_err`.
+        let Err(err) = build_runtime(None, Some(Path::new("a.jsonl")), None) else {
+            panic!("build_runtime must refuse an unsigned persistent sink");
+        };
         assert!(err.contains("--signing-key"), "{err}");
     }
 
@@ -838,7 +848,10 @@ mod tests {
             assert!(usage.contains(flag), "usage missing {flag}");
         }
         for command in ["verify", "keygen"] {
-            assert!(usage.contains(command), "usage missing the {command} command");
+            assert!(
+                usage.contains(command),
+                "usage missing the {command} command"
+            );
         }
     }
 

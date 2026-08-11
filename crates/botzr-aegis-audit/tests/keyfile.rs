@@ -201,7 +201,9 @@ fn generate_refuses_to_overwrite_without_force() {
     // The refusal left the original key untouched — otherwise the error would be
     // cosmetic and the pin would already be broken.
     assert_eq!(
-        load_signing_key(&path).expect("original still loads").public_key(),
+        load_signing_key(&path)
+            .expect("original still loads")
+            .public_key(),
         first.public_key()
     );
 

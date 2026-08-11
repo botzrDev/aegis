@@ -12,7 +12,7 @@ Pipeline: policy → capability → sandbox → audit
 ### Ready (library-style bootstrap)
 
 ```
-aegis [--policy <yaml-path>] [--audit <jsonl-path>]
+aegis [--policy <yaml-path>] [--audit <jsonl-path> --signing-key <key-path>]
 ```
 
 Wires `Runtime` with optional policy/audit, prints the audit path, and exits.
@@ -35,21 +35,63 @@ and `request_digest` go to stderr. Deny/trap paths still emit audit JSONL.
 | `--input` | Call input bytes as text (default: empty) |
 | `--input-file` | Read call input from a file |
 | `--policy` | Policy YAML (default: allow-all) |
-| `--audit` | Audit JSONL path (default: temp file) |
+| `--audit` | Audit JSONL path (default: temp file). Requires `--signing-key` |
+| `--signing-key` | ed25519 seed file signing the audit Session (see `aegis keygen`) |
 | `--base-dir` | Manifest base dir (default: component parent) |
 | `--sha256` | Optional component digest pin (G10) |
 | `--version` | Tool version recorded in the Manifest (default `0.1.0`) |
 
+`--audit` and `--signing-key` travel together, or neither is given — a persistent
+record file with no provisioned key is a **usage error** (exit 1), never a
+default. Without `--audit` the sink is a temp file signed by the loudly-named dev
+key, and `--signing-key` alone would be pointing at nothing. See
+[AILAB-620 in the audit crate README](../botzr-aegis-audit/README.md#the-signing-key).
+
 Example against the in-tree echo fixture:
 
 ```bash
+aegis keygen --out /tmp/aegis-signing.key      # once, per host
+
 cargo run -p botzr-aegis-cli -- \
   run \
   --component tests/fixtures/echo-tool/echo.wasm \
   --id echo \
   --input 'hello' \
-  --audit /tmp/aegis-audit.jsonl
+  --audit /tmp/aegis-audit.jsonl \
+  --signing-key /tmp/aegis-signing.key
 ```
+
+### `aegis keygen` — mint the key that signs a record file
+
+```
+aegis keygen --out <PATH> [--force]
+```
+
+Writes a fresh ed25519 seed to `<PATH>` as one line of 64 lowercase hex
+characters, mode `0600`, fsynced. Prints exactly two lines to stdout:
+
+```
+public_key <64 hex>
+key_id     <64 hex>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--out <PATH>` | Where to write the key. **No default** — the location is a decision you state out loud, never one the CLI picks |
+| `--force` | Overwrite an existing key file (and tighten its mode back to `0600`) |
+
+Generation is its own command because it must never happen implicitly. A key
+minted on the emit path would publish a brand-new `public_key` in the Session's
+`open` line and silently invalidate every pin held against the old one — so
+`--force` is the only way past an existing file.
+
+Feed the printed `public_key` — not the `key_id` — to `aegis verify --key` to
+pin. A recommended location is something like `~/.config/aegis/signing.key`, but
+nothing is searched for: a missing key is a loud failure, by design.
+
+**Rotation** means `keygen` into a new file and starting a new process (one
+process is one Session, and one Session holds one key). The rule a verifier
+enforces is normative in [`spec/SPEC.md`](../../spec/SPEC.md) §8.4.
 
 ### `aegis verify` — read a record file, report a verdict
 

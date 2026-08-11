@@ -188,10 +188,11 @@ fn parse_seed_hex(path: &Path, text: &str) -> Result<[u8; 32], AuditError> {
             body.len()
         )));
     }
-    if let Some(bad) = body.chars().find(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase()) {
-        return Err(malformed(format!(
-            "expected lowercase hex, found {bad:?}"
-        )));
+    if let Some(bad) = body
+        .chars()
+        .find(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase())
+    {
+        return Err(malformed(format!("expected lowercase hex, found {bad:?}")));
     }
 
     let mut seed = [0u8; 32];
@@ -227,7 +228,8 @@ mod tests {
         let body = text.strip_suffix('\n').expect("trailing newline");
         assert_eq!(body.len(), SEED_HEX_LEN, "{body:?}");
         assert!(
-            body.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            body.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
             "{body:?}"
         );
     }

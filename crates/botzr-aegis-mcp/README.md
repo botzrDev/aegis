@@ -41,12 +41,25 @@ To build from this checkout instead, see below.
 ## Run (stdio)
 
 ```bash
+# A persistent record file is signed by a key you provision — once, per host:
+cargo run -p botzr-aegis-cli -- keygen --out /tmp/aegis-signing.key
+
 # From workspace root — write audit JSONL to a known path for inspection:
-cargo run -p botzr-aegis-mcp -- --audit /tmp/aegis-mcp-audit.jsonl
+cargo run -p botzr-aegis-mcp -- \
+  --audit /tmp/aegis-mcp-audit.jsonl --signing-key /tmp/aegis-signing.key
 
 # Optional policy YAML (replaces the built-in default):
-cargo run -p botzr-aegis-mcp -- --policy path/to/policy.yaml --audit /tmp/aegis-mcp-audit.jsonl
+cargo run -p botzr-aegis-mcp -- --policy path/to/policy.yaml \
+  --audit /tmp/aegis-mcp-audit.jsonl --signing-key /tmp/aegis-signing.key
 ```
+
+**`--audit` requires `--signing-key`** (AILAB-620). A persistent record file an
+operator later pins a `Verified (pinned)` label to must not be signed by a seed
+compiled into the published audit crate, so the gateway refuses to start rather
+than falling back to one. Omit both and the sink is a temp file signed by the
+loudly-named dev key. Mint a key with `aegis keygen --out <PATH>`; the format,
+permissions, and rotation rules are in the
+[audit crate README](../botzr-aegis-audit/README.md#the-signing-key).
 
 **Default policy** (when `--policy` is omitted): allow everything **except** `exfil`
 (station-1 deny-smoke for AEG-28).
@@ -61,8 +74,12 @@ Reproducible end-to-end path without a full agent host (AEG-29 / AEG-28):
 ./scripts/mcp-stdio-smoke.sh --keep-audit # leave the audit JSONL for inspection
 ```
 
-The script builds `botzr-aegis-mcp`, spawns it with `--audit`, speaks MCP over stdio,
-and exits non-zero unless the expected audit outcome(s) land with `schema_version: 1`.
+The script builds `botzr-aegis-mcp` and `aegis`, mints a throwaway signing key with
+`aegis keygen`, spawns the gateway with `--audit … --signing-key …`, speaks MCP over
+stdio, and exits non-zero unless the expected audit outcome(s) land with
+`schema_version: 2`. It also checks that the Session published the generated public
+key and that `aegis verify --key` pins the resulting file. The key is deleted on
+exit even under `--keep-audit`.
 
 ### Cursor / Claude MCP client config
 
@@ -74,7 +91,10 @@ Point a Cursor/Claude-style MCP host at the built binary (stdio). Logs go to
   "mcpServers": {
     "aegis": {
       "command": "/absolute/path/to/target/debug/botzr-aegis-mcp",
-      "args": ["--audit", "/tmp/aegis-mcp-audit.jsonl"]
+      "args": [
+        "--audit", "/tmp/aegis-mcp-audit.jsonl",
+        "--signing-key", "/tmp/aegis-signing.key"
+      ]
     }
   }
 }

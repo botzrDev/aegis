@@ -1,9 +1,23 @@
 //! E2E: drive the botzr-aegis-mcp binary over stdio (covers src/main.rs).
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use tempfile::NamedTempFile;
+use tempfile::TempDir;
+
+/// A persistent audit sink plus the key that signs it.
+///
+/// `--audit` has no dev-key fallback (AILAB-620), so a gateway asked for a
+/// record file needs a provisioned key or it refuses to start. The `TempDir`
+/// comes back with the paths because dropping it removes both files.
+fn temp_audit_sink() -> (TempDir, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let audit = dir.path().join("audit.jsonl");
+    let key = dir.path().join("signing.key");
+    botzr_aegis_audit::generate_signing_key(&key, false).expect("generate signing key");
+    (dir, audit, key)
+}
 
 fn spawn_gateway(extra_args: &[&str]) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_botzr-aegis-mcp"))
@@ -17,8 +31,13 @@ fn spawn_gateway(extra_args: &[&str]) -> std::process::Child {
 
 #[test]
 fn stdio_session_initialize_list_call_and_deny() {
-    let audit = NamedTempFile::new().expect("temp audit");
-    let mut child = spawn_gateway(&["--audit", audit.path().to_str().unwrap()]);
+    let (_dir, audit_path, key_path) = temp_audit_sink();
+    let mut child = spawn_gateway(&[
+        "--audit",
+        audit_path.to_str().unwrap(),
+        "--signing-key",
+        key_path.to_str().unwrap(),
+    ]);
     let mut stdin = child.stdin.take().expect("stdin");
     let stdout = child.stdout.take().expect("stdout");
     let mut lines = BufReader::new(stdout).lines();
@@ -74,10 +93,22 @@ fn stdio_session_initialize_list_call_and_deny() {
     let status = child.wait().expect("wait");
     assert!(status.success(), "gateway exit: {status:?}");
 
-    let jsonl = std::fs::read_to_string(audit.path()).expect("audit readable");
+    let jsonl = std::fs::read_to_string(&audit_path).expect("audit readable");
     assert!(
         jsonl.contains("\"line_type\":\"outcome\""),
         "audit: {jsonl}"
+    );
+
+    // The Session published the provisioned key, not the dev seed compiled into
+    // the audit crate — the whole point of AILAB-620 at the MCP boundary.
+    let key = botzr_aegis_audit::load_signing_key(&key_path).expect("load key");
+    assert!(
+        jsonl.contains(&key.public_key().to_hex()),
+        "open line must publish the provisioned public key: {jsonl}"
+    );
+    assert!(
+        !jsonl.contains(&botzr_aegis_audit::insecure_dev_key().public_key().to_hex()),
+        "dev key must not sign a persistent sink: {jsonl}"
     );
 }
 
@@ -97,13 +128,69 @@ fn help_flag_exits_zero_with_usage() {
 
 #[test]
 fn bad_flags_exit_nonzero() {
-    for args in [&["--bogus"][..], &["--policy"][..], &["--audit"][..]] {
+    for args in [
+        &["--bogus"][..],
+        &["--policy"][..],
+        &["--audit"][..],
+        &["--signing-key"][..],
+    ] {
         let out = Command::new(env!("CARGO_BIN_EXE_botzr-aegis-mcp"))
             .args(args)
             .output()
             .expect("spawn");
         assert!(!out.status.success(), "expected failure for {args:?}");
     }
+}
+
+/// LOAD-BEARING (AILAB-620): a gateway asked for a persistent record file it has
+/// no provisioned key for must refuse to start. Starting anyway — signed by the
+/// dev seed shipped in the published audit crate — is how a `Verified (pinned)`
+/// label ends up pinning a public secret.
+#[test]
+fn a_persistent_sink_without_a_signing_key_exits_nonzero() {
+    let (_dir, audit_path, key_path) = temp_audit_sink();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_botzr-aegis-mcp"))
+        .args(["--audit", audit_path.to_str().unwrap()])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success(), "expected failure with no key");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--signing-key"), "stderr: {stderr}");
+    assert!(
+        !audit_path.exists(),
+        "a refused gateway must not open the sink"
+    );
+
+    // The mirror: a key with no sink to sign is a mistake, not a silent no-op.
+    let out = Command::new(env!("CARGO_BIN_EXE_botzr-aegis-mcp"))
+        .args(["--signing-key", key_path.to_str().unwrap()])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success(), "expected failure with no --audit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--audit"), "stderr: {stderr}");
+}
+
+/// A key path that cannot be loaded is fatal, not a fallback.
+#[test]
+fn an_unloadable_signing_key_exits_nonzero() {
+    let (dir, audit_path, _key_path) = temp_audit_sink();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_botzr-aegis-mcp"))
+        .args([
+            "--audit",
+            audit_path.to_str().unwrap(),
+            "--signing-key",
+            dir.path().join("absent.key").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success(), "expected failure for a missing key");
+    assert!(
+        !audit_path.exists(),
+        "a refused gateway must not open the sink"
+    );
 }
 
 #[test]

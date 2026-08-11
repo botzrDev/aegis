@@ -149,6 +149,47 @@ the entire median is write + fsync latency on WSL2's filesystem. Expect it to
 move by an order of magnitude on a different filesystem, and **do not cite it as
 an Aegis-side overhead figure**.
 
+## Isolated ed25519 signing (AILAB-620)
+
+Added because the previous section makes the emission cycle unusable as a
+crypto number: at 4.7185 ms it is a measurement of `fsync`, and quoting a 50 µs
+signing target against it would be a claim about the filesystem. This group
+measures one thing — `SigningKey::sign` over bytes already in hand.
+
+**Hardware / OS / toolchain: identical to the run above** (AMD Ryzen AI 5 340,
+4 vCPUs, WSL2 Linux 6.6.87.2, rustc 1.86.0, Criterion 0.5.1, `bench` profile,
+plotters backend). Date: 2026-08-11.
+
+```bash
+cargo bench -p botzr-aegis-audit --bench sign
+```
+
+| Group | Median | Target | Status |
+|---|---|---|---|
+| `audit_signing/sign_outcome_line` | **13.765 µs** | < 50 µs (AILAB-620) | **pass** (~3.6× under) |
+
+```
+audit_signing/sign_outcome_line
+                        time:   [13.641 µs 13.765 µs 13.907 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+```
+
+Per iteration: one ed25519 signature over the canonical signing input of a
+representative `outcome` line — the JCS form with `signature` absent and
+`key_id` present (ADR-0003), built **once outside the loop**. No `AuditWriter`,
+no file, no fsync, no canonicalization inside the measured region, so the median
+is the signature and nothing else. The key comes from `insecure_dev_key`:
+signing cost is a property of ed25519, not of which 32 bytes the seed holds, and
+a fixed seed keeps the bench deterministic. Nothing here reads a key file.
+
+**What this does and does not license.** 13.765 µs is the cost of *signing a
+line*. It is not the cost of emitting one — that is `begin_complete` above, and
+it is ~340× larger because of two `sync_all` calls. Adding signing to the shipped
+emit path is therefore invisible against fsync; that is a statement about how
+expensive durability is, not about how cheap ed25519 is. Cite the two numbers
+together or neither.
+
 ## Notes
 
 - The sandbox crate's benches are compiled with the `test-utils` feature on,
