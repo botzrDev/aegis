@@ -170,6 +170,7 @@ containment cases and measured costs — they do not certify the instrument.
 | [Stage 2 demo](tests/stage2-demo/README.md) | A minimal `wasip2` path detector through the full pipeline; native-vs-wasm equivalence scorecard |
 | [Hot-path benchmarks](benches/results/hot_path.md) | Policy ≪ 100 µs; combined hot path ≪ 1 ms, on cited hardware ([bench notes](benches/README.md)) |
 | [MCP gateway](crates/botzr-aegis-mcp/README.md) | Out-of-process MCP stdio gateway (research scaffold, not a production firewall) |
+| [MCP live-deny cast](docs/demos/README.md) | Watchable reproduction: an `exfil` call refused with `POLICY_DENIED`, the `schema_version: 2` record that refusal wrote, and `aegis verify` over it — [replay the cast](docs/demos/mcp-live-deny.cast) or run it live with [`scripts/mcp-live-deny-demo.sh`](scripts/mcp-live-deny-demo.sh) |
 
 ## Status
 

@@ -209,6 +209,8 @@ coverage 4244, corpus 2817), on the hardware cited in that log.
 
 ## 5. How to reproduce
 
+### 5.1 Evidence bundle
+
 One command runs the bounded evidence subset and writes a stamped bundle:
 
 ```bash
@@ -230,6 +232,32 @@ run `cargo bench` or a long fuzz campaign. Setting `AEGIS_EVIDENCE_FUZZ=1` adds
 a 30-second fuzz smoke (`fuzz-smoke.log`) when nightly and cargo-fuzz are
 available, and records a clean skip note otherwise. Bundle output under
 `evidence/` is generated per run and not committed.
+
+### 5.2 MCP live-deny demo
+
+A watchable pass over the MCP stdio gateway — an allowed `echo` call, a refused
+`exfil` call, then, from one session of its own, the JSON-RPC error an MCP client
+receives for the refused call, the audit record that same call wrote, and a
+signature check over that record file:
+
+```bash
+./scripts/mcp-live-deny-demo.sh
+```
+
+- Expected observation: the `exfil` call returns `"code": "POLICY_DENIED"` with
+  `"isError": true`, and the audit file carries a `schema_version: 2` outcome for
+  `exfil` whose `policy.status` is `denied`, `capability.status` is `denied`
+  ("policy blocked before capability") and `execution.status` is `host_denied`
+  ("not executed"). `aegis verify --key <public_key>` reports
+  `Verified (pinned to <key_id>)` over that file.
+- The demo is presentation only. Its assertions are
+  `./scripts/mcp-stdio-smoke.sh --deny`, which the demo runs first and exits 0
+  only when it does. CI does not run that smoke; the equivalent assertions run
+  there as `botzr-aegis-mcp` tests under `cargo test --workspace`.
+- A recording is committed at
+  [`docs/demos/mcp-live-deny.cast`](demos/mcp-live-deny.cast) — replay it with
+  `asciinema play docs/demos/mcp-live-deny.cast`, or see
+  [`docs/demos/README.md`](demos/README.md) for what each beat shows.
 
 ---
 
