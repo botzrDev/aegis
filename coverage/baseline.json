@@ -5,5 +5,9 @@
   "lines_covered": 4473,
   "lines_total": 4829,
   "percent": 92.6279,
-  "note": "High-water mark for scripts/coverage.sh check. Raise via `scripts/coverage.sh bump`; lowering requires a hand-edited, reviewed commit."
+  "recorded_at": "2026-08-09",
+  "recorded_commit": "d1cf988",
+  "sanity_checked_at": "2026-08-12",
+  "sanity_checked_commit": "b00ff72",
+  "note": "High-water mark for scripts/coverage.sh check. Raise via `scripts/coverage.sh bump`; lowering requires a hand-edited, reviewed commit. See docs/coverage-ratchet.md."
 }

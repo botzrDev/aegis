@@ -109,6 +109,12 @@ coverage below the committed high-water mark in
 ./scripts/coverage.sh bump     # raise the baseline after improving coverage
 ```
 
+If `check` fails, the fix is normally to add tests. A drop can be legitimate —
+deleting or refactoring heavily tested code — in which case the baseline is
+hand-edited **in the same PR**, with a rationale; `bump` will not lower it.
+[`docs/coverage-ratchet.md`](docs/coverage-ratchet.md) documents that procedure,
+the float tolerance, and the provenance fields.
+
 Execute one Model A tool call from the CLI (registers the echo fixture, walks the
 full pipeline, writes audit JSONL):
 

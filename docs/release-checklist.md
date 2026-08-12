@@ -1,7 +1,7 @@
 # Aegis release checklist
 
-> **Status:** v0.3.0 (AILAB-608) · **Last updated:** 2026-08-08
-> **Related:** [CHANGELOG](../CHANGELOG.md) · [Findings](findings.md) · [Threat model](threat-model.md) · [SECURITY.md](../SECURITY.md)
+> **Status:** v0.3.0 (AILAB-608) · **Last updated:** 2026-08-12 (AILAB-636 coverage gate)
+> **Related:** [CHANGELOG](../CHANGELOG.md) · [Findings](findings.md) · [Threat model](threat-model.md) · [Coverage ratchet](coverage-ratchet.md) · [SECURITY.md](../SECURITY.md)
 
 Cutting a release means putting immutable artifacts on crates.io under the Aegis
 name. **Steps 3–6 are run by the maintainer, not by an agent.** An agent may
@@ -42,16 +42,25 @@ what this rule exists to prevent.
 
 ## 2. Full CI-equivalent locally
 
-Run all four. Every one must be clean before proceeding.
+Run all five. Every one must be clean before proceeding.
 
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo +1.86 check --workspace --locked
+./scripts/coverage.sh check
 ```
 
-The last command is the one that catches a stale or uncommitted `Cargo.lock` —
+**Coverage is release-blocking.** The tagged commit must pass the same ratchet CI
+enforces on `main`: if total line coverage sits below
+[`coverage/baseline.json`](../coverage/baseline.json), the release does not go
+out. A deliberate drop is handled by editing the baseline in the PR that caused
+it — with a rationale, per [`coverage-ratchet.md`](coverage-ratchet.md) — never
+by skipping the check at release time. The run needs `cargo-llvm-cov` and takes
+around ten minutes.
+
+The MSRV command is the one that catches a stale or uncommitted `Cargo.lock` —
 it is what the MSRV job runs in CI. If it fails with a lockfile-needs-update
 error, regenerate and commit `Cargo.lock`. Never drop `--locked` or add
 `--offline` to make it pass; that hides the failure rather than fixing it.

@@ -22,8 +22,8 @@ use botzr_aegis_capability::{
     ToolKind, ToolLimits, ToolManifest,
 };
 use botzr_aegis_core::{
-    to_canonical_json, AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome,
-    ResourceCeiling, ToolId,
+    to_canonical_json, AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, GrantId,
+    PolicyOutcome, ResourceCeiling, ToolId,
 };
 use botzr_aegis_policy::PolicyEngine;
 use botzr_aegis_runtime::Runtime;
@@ -130,6 +130,8 @@ fn pin_grant_id(record: &mut AuditRecord, grant_id: &str) {
     if let CapabilityOutcome::Granted { ref mut grant } = record.capability {
         grant.grant_id = grant_id.into();
     }
+    // Schema v2 (AILAB-619): top-level grant_id must match the nested grant id.
+    record.grant_id = Some(GrantId::new(grant_id));
 }
 
 // ---- POLICY station (station 1 short-circuits before any grant) ------------
