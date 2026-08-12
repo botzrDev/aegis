@@ -28,6 +28,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use botzr_aegis_core::AUDIT_SCHEMA_VERSION;
 use tempfile::TempDir;
 
 // ---- running the binary --------------------------------------------------
@@ -177,11 +178,65 @@ fn a_record_from_another_schema_version_is_indeterminate() {
     // looks authoritative and is unfounded. `unchanged.yaml` is the set under
     // which every *readable* call is unchanged, which is what makes this row
     // about the record rather than about the rules.
+    //
+    // The `call-4` line in the fixture is the genuine v1 wire shape — it tags
+    // itself with `phase` and carries no `line_type`, no chain fields and no
+    // `policy_set_hash`, because v1 had none of them. A v2 record with its
+    // `schema_version` integer rewritten to 1 would not test this row: it
+    // deserializes as an `AuditRecord`, so it exercises the library's version
+    // gate (which the policy crate's own suite covers) and never the question
+    // of whether the walk can see a line it cannot parse. Hence `seq 0` —
+    // `ABSENT_SEQ`, and the proof the line is really v1-shaped. A `seq 5` here
+    // means the synthetic record came back.
     let output = recheck_fixtures("unchanged.yaml", "session.jsonl");
     assert_exit(&output, 3);
     assert_reports(
         &output,
-        "call call-4 session 0 seq 5: indeterminate unknown_policy_set_hash",
+        "call call-4 session 0 seq 0: indeterminate unknown_policy_set_hash",
+    );
+}
+
+// ---- row: a schema newer than this build ---------------------------------
+
+#[test]
+fn a_record_from_a_newer_schema_version_is_indeterminate() {
+    // The forward half of the row above. A build meeting a record written by a
+    // *later* one is in the same position as one meeting a v1 line: it holds
+    // field names whose meaning was fixed by rules it does not have, so the
+    // only honest answer is that it withheld one. Without this row the walk
+    // could satisfy the v1 case by special-casing the integer 1 and still read
+    // tomorrow's records as though they were today's.
+    //
+    // `no_binding` is asserted against, not merely absent from the expectation:
+    // it is the answer this line used to get, and it says "this record named no
+    // tool" — which sends a reader looking for a damaged line instead of a
+    // newer emitter.
+    //
+    // The version is derived from the constant rather than written down. A
+    // frozen integer would stop meaning "one past this build" the first time
+    // the schema is bumped, and would then be testing a *past* schema under a
+    // name that claims otherwise.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("newer-schema.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{{\"schema_version\":{},\"phase\":\"outcome\",\"call_id\":\"call-future\",\"tool_id\":\"reader\"}}\n",
+            AUDIT_SCHEMA_VERSION + 1
+        ),
+    )
+    .expect("write a newer-schema record");
+
+    let output = recheck(&fixture("unchanged.yaml"), &path);
+    assert_exit(&output, 3);
+    assert_reports(
+        &output,
+        "call call-future session 0 seq 0: indeterminate unknown_policy_set_hash",
+    );
+    assert!(
+        !stdout(&output).contains("no_binding"),
+        "a newer-schema record must not read as an unbound one, stdout={}",
+        stdout(&output)
     );
 }
 

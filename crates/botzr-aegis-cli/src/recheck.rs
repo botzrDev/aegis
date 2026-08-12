@@ -9,6 +9,16 @@
 //! would be a second thing to keep in step with the crate under test, and the
 //! two would drift the first time a variant was added.
 //!
+//! Two verdicts are constructed here rather than fetched, and only because they
+//! cannot be fetched: `recheck_record` takes an [`AuditRecord`], so no line this
+//! build cannot parse into one ever reaches it. A line from another schema is
+//! answered with the policy crate's own `UnknownPolicySetHash` — the same
+//! variant `recheck_record` returns for the version mismatch it *can* see — and
+//! a line from *this* schema that will not deserialize with its `NoBinding`
+//! (see [`verdict_for`]). Both are the crate's own variants, so the exception
+//! adds call sites, never a word. The crate's version gate stays where it is as
+//! defence in depth.
+//!
 //! Nothing here reaches for the runtime, the sandbox, a capability resolver, or
 //! a component engine. A recheck answers a question *about a finished call* —
 //! nothing is executed, nothing is minted, nothing is granted. Nor does it check
@@ -30,7 +40,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use botzr_aegis_core::{AuditRecord, ToolId};
+use botzr_aegis_core::{AuditRecord, PolicySetHash, ToolId, AUDIT_SCHEMA_VERSION};
 use botzr_aegis_policy::{recheck_record, PolicyEngine, RecheckIndeterminate, RecheckVerdict};
 use serde_json::Value;
 
@@ -93,13 +103,40 @@ struct Report {
 
 /// Walk the record file and render one line per recorded outcome, in file order.
 ///
-/// The walk is deliberately shallow. It reads exactly one field of its own —
-/// `line_type` — and hands everything else to the policy crate; the chain
-/// fields, the signatures and the Session structure are `aegis verify`'s
-/// subject, not this one's. That is also why an unparseable line is stepped
-/// over rather than reported: a torn tail is a statement about the file's
-/// integrity, and answering it here would be a second, weaker verifier living
-/// next to the real one.
+/// The walk is deliberately shallow, but "shallow" is not "reads one field".
+/// Three fields *route* a line — `line_type`, `phase` and `schema_version`
+/// decide whether it is an outcome at all, whether it opens a Session, and
+/// which of the two locally-constructed verdicts it earns — and four more are
+/// read only to *label* a row or fill a payload: `call_id` and `seq` are the
+/// identity columns of the printed line, `tool_id` names the tool inside a
+/// [`RecheckIndeterminate::NoBinding`], and `policy_set_hash` fills the payload
+/// of an `UnknownPolicySetHash` that is never printed at all. None of the seven
+/// is read in order to weigh a recorded call against a rule — that comparison
+/// is `recheck_record`'s alone, and the two verdicts built here (see the module
+/// header) exist because the line cannot be handed over, not because this
+/// module formed an opinion about what it contains. Everything else goes to the
+/// policy crate whole; the chain fields, the signatures and the Session
+/// structure are `aegis verify`'s subject, not this one's. That is also why an
+/// unparseable line is stepped over rather than reported: a torn tail is a
+/// statement about the file's integrity, and answering it here would be a
+/// second, weaker verifier living next to the real one.
+///
+/// The two routing fields beyond `line_type` are what it costs to notice a
+/// record this build cannot account for. `phase` is the v1 spelling of `line_type`: a
+/// schema-v1 outcome carries `phase: "outcome"` and no `line_type` at all, so a
+/// walk keyed on `line_type` alone steps over a genuine recorded call as though
+/// it were a checkpoint — dropping it from a diff an operator is reading as
+/// complete, which is the one failure a forensic verb must not have. And
+/// `schema_version` is read *before* the line is offered to [`AuditRecord`],
+/// because the two ways a line can fail to deserialize are not the same
+/// finding. A line from another schema is unreadable by construction — its
+/// field names were given meaning by rules this build does not have — whereas a
+/// line from *this* schema that will not deserialize is a damaged or incomplete
+/// record. The first is `unknown_policy_set_hash`; the second is `no_binding`;
+/// and a v1 line routed through the deserializer would report the second, which
+/// says "this line named no tool" and sends a reader hunting for corruption
+/// instead of an older emitter. A line carrying no `schema_version` at all is
+/// only unlabelled, not another schema's, and still goes to the deserializer.
 fn walk(engine: &PolicyEngine, text: &str) -> Report {
     let mut lines: Vec<String> = Vec::new();
     let mut changed = false;
@@ -122,28 +159,34 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
             continue;
         };
 
-        match value.get("line_type").and_then(Value::as_str) {
-            Some("open") => session = Some(session.map_or(0, |index| index + 1)),
-            // Intents, decisions, closes, checkpoints and anything a newer
-            // emitter writes carry no recorded policy outcome, so there is
-            // nothing for a Policy Set to be re-run against.
-            Some("outcome") => {
-                let verdict = verdict_for(engine, &value, number + 1);
-                lines.push(format!(
-                    "call {} session {} seq {}: {verdict}",
-                    call_id(&value),
-                    session.unwrap_or(0),
-                    seq(&value),
-                ));
-                match verdict {
-                    RecheckVerdict::Unchanged { .. } => {}
-                    RecheckVerdict::Indeterminate { .. } => indeterminate = true,
-                    RecheckVerdict::NewlyBlocked { .. }
-                    | RecheckVerdict::NewlyAllowed { .. }
-                    | RecheckVerdict::NewlyParked { .. } => changed = true,
+        // Intents, decisions, closes, checkpoints and anything a newer emitter
+        // writes carry no recorded policy outcome, so there is nothing for a
+        // Policy Set to be re-run against and they fall out of both arms.
+        if is_outcome_shaped(&value) {
+            let verdict = if is_from_another_schema(&value) {
+                RecheckVerdict::Indeterminate {
+                    reason: RecheckIndeterminate::UnknownPolicySetHash {
+                        recorded: recorded_hash(&value),
+                    },
                 }
+            } else {
+                verdict_for(engine, &value, number + 1)
+            };
+            lines.push(format!(
+                "call {} session {} seq {}: {verdict}",
+                call_id(&value),
+                session.unwrap_or(0),
+                seq(&value),
+            ));
+            match verdict {
+                RecheckVerdict::Unchanged { .. } => {}
+                RecheckVerdict::Indeterminate { .. } => indeterminate = true,
+                RecheckVerdict::NewlyBlocked { .. }
+                | RecheckVerdict::NewlyAllowed { .. }
+                | RecheckVerdict::NewlyParked { .. } => changed = true,
             }
-            _ => {}
+        } else if value.get("line_type").and_then(Value::as_str) == Some("open") {
+            session = Some(session.map_or(0, |index| index + 1));
         }
     }
 
@@ -167,6 +210,77 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
             EXIT_ALL_UNCHANGED
         },
     }
+}
+
+/// Whether the line claims to be a post-work outcome, under either spelling of
+/// the tag.
+///
+/// `line_type` is the v2 field; `phase` was v1's. Both are accepted because the
+/// question this verb answers — "what would today's rules do to this recorded
+/// call?" — is asked of files an older build wrote, and a record that named
+/// itself an outcome in the vocabulary of its own schema is an outcome.
+///
+/// The two are read in order, not as alternatives: `line_type` is authoritative
+/// whenever the line carries one, and `phase` is consulted only as a fallback
+/// for records written before `line_type` existed. (A `line_type` that is
+/// present but not a string is no tag either, and falls through to the fallback
+/// exactly as it always has.) Nothing is lost by the ordering, because a genuine
+/// v1 outcome carries `phase: "outcome"` and no `line_type` at all — the
+/// fallback still reaches every line it was added for.
+///
+/// LOAD-BEARING: the fallback must not be allowed to speak over a `line_type`
+/// that is there. To the audit walker a line tagged `open` is a Session
+/// boundary and nothing else — it numbers Sessions on `line_type` alone and
+/// never looks at `phase` — and the counter in [`walk`] has to stay the same
+/// rule, or a session address printed here names a different Session from the
+/// one `aegis verify` prints for the same file, and a finding stops carrying
+/// between the two reports. Reading `phase: "outcome"` off a line already
+/// tagged `open` would do both halves of that damage at once: a boundary would
+/// be reported as a call, and the counter would never advance past it.
+///
+/// Note that only the *outcome* spelling is honoured: a v1 `phase: "intent"`
+/// line stays skipped, exactly as `line_type: "intent"` does, because an intent
+/// carries no recorded decision to compare against.
+fn is_outcome_shaped(value: &Value) -> bool {
+    match value.get("line_type").and_then(Value::as_str) {
+        Some(line_type) => line_type == "outcome",
+        None => value.get("phase").and_then(Value::as_str) == Some("outcome"),
+    }
+}
+
+/// Whether the line was written under a schema this build is not the author of.
+///
+/// Present-and-a-number is the whole test: a line that carries no
+/// `schema_version` is *unlabelled* rather than another schema's, and is left
+/// to the deserializer — reporting an absent field as "from another schema" would
+/// invent provenance the bytes do not claim. A number that is not this build's
+/// version answers **yes**, this line is another schema's, whatever the number's
+/// shape — including a number that is not a `u32` at all. That last case is
+/// deliberate rather than incidental: a version written as `2.0` or `2e0` is one
+/// no emitter in this repo could have produced, and this build has no way to
+/// match it against its own version, so the conservative reading is the one
+/// taken here. The line is answered `indeterminate`, which withholds a verdict,
+/// rather than being read as a version it does not spell, which would invent
+/// one.
+fn is_from_another_schema(value: &Value) -> bool {
+    value.get("schema_version").is_some_and(|version| {
+        version.is_number() && version.as_u64() != Some(u64::from(AUDIT_SCHEMA_VERSION))
+    })
+}
+
+/// The Policy Set hash a line from another schema recorded, if it recorded one.
+///
+/// Never printed — [`RecheckIndeterminate`] renders as its token alone — so
+/// this is the variant's payload rather than report content, and a v1 line,
+/// which has no `policy_set_hash` field at all, still has to produce one. The
+/// hash of no bytes is the honest stand-in: it names no Policy Set that any run
+/// could have used, and it keeps the payload a `PolicySetHash` rather than
+/// widening the variant to `Option` for the sake of a field nobody reads.
+fn recorded_hash(value: &Value) -> PolicySetHash {
+    value
+        .get("policy_set_hash")
+        .and_then(|hash| serde_json::from_value::<PolicySetHash>(hash.clone()).ok())
+        .unwrap_or_else(|| PolicySetHash::of_canonical_bytes(&[]))
 }
 
 /// The verdict for one `outcome` line.
@@ -253,10 +367,19 @@ mod tests {
     /// Session numbering follows the audit walker's rule exactly: the first
     /// `open` is 0, and an outcome seen before any `open` is reported under 0
     /// as well.
+    ///
+    /// The second `open` also carries a stray `phase: "outcome"`, which is the
+    /// case where the two tags disagree. `line_type` wins, so that line stays a
+    /// Session boundary: it prints no row of its own, and — the assertion that
+    /// matters — `call-second` is still session **1**. Letting `phase` speak
+    /// over `line_type` would report the boundary as a call *and* stall the
+    /// counter, so every address after it would name a different Session from
+    /// the one `aegis verify` prints for the same file.
     #[test]
     fn sessions_are_numbered_from_zero_at_each_open() {
         let text = format!(
-            "{}\n{{\"line_type\":\"open\"}}\n{}\n{{\"line_type\":\"open\"}}\n{}\n",
+            "{}\n{{\"line_type\":\"open\"}}\n{}\n\
+             {{\"line_type\":\"open\",\"phase\":\"outcome\"}}\n{}\n",
             outcome_line("call-before", "t", PolicyOutcome::Allowed),
             outcome_line("call-first", "t", PolicyOutcome::Allowed),
             outcome_line("call-second", "t", PolicyOutcome::Allowed),
@@ -273,6 +396,13 @@ mod tests {
 
     /// Every line type that is not an outcome is stepped over, including one no
     /// build here emits.
+    ///
+    /// The last two rows are the v1 spelling of the same skip, and they are
+    /// what pins the `== "outcome"` comparison in [`is_outcome_shaped`]: with
+    /// only `line_type` rows here, the fallback could be widened to "any
+    /// `phase` at all" without a test noticing, and a v1 **intent** — which
+    /// records no decision for a Policy Set to be re-run against — would start
+    /// appearing in the diff as a call that was never answered.
     #[test]
     fn non_outcome_lines_produce_no_report_line() {
         let text = "{\"line_type\":\"open\"}\n\
@@ -281,10 +411,36 @@ mod tests {
                     {\"line_type\":\"checkpoint\"}\n\
                     {\"line_type\":\"something-from-2027\"}\n\
                     \n   \n\
-                    {\"line_type\":\"close\"}\n";
+                    {\"line_type\":\"close\"}\n\
+                    {\"schema_version\":1,\"phase\":\"intent\",\"call_id\":\"call-1\",\"tool_id\":\"t\"}\n\
+                    {\"schema_version\":1,\"phase\":\"something-from-2019\"}\n";
         let report = walk(&allow_all(), text);
         assert_eq!(report.body, "");
         assert_eq!(report.exit, EXIT_ALL_UNCHANGED);
+    }
+
+    /// A genuine schema-v1 outcome — the `phase` spelling, no `line_type`, and
+    /// none of the v2 chain fields — is reported rather than stepped over.
+    ///
+    /// This is the shape an emitter actually wrote before AILAB-619, so it is
+    /// the shape the skip would have swallowed in the field: no `line_type`
+    /// meant no report line at all, and a call that ran under rules nobody can
+    /// re-derive would have gone missing from a diff read as complete. `seq` is
+    /// [`ABSENT_SEQ`] because v1 had no chain and therefore no `seq` to print.
+    #[test]
+    fn a_v1_outcome_line_is_reported_as_indeterminate() {
+        let text = "{\"schema_version\":1,\"phase\":\"outcome\",\"call_id\":\"call-legacy\",\
+                    \"tool_id\":\"legacy\",\
+                    \"input_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\
+                    \"policy\":{\"status\":\"allowed\"},\
+                    \"capability\":{\"status\":\"denied\",\"reason\":\"not evaluated\"},\
+                    \"execution\":{\"status\":\"success\"}}\n";
+        let report = walk(&allow_all(), text);
+        assert_eq!(
+            report.body,
+            "call call-legacy session 0 seq 0: indeterminate unknown_policy_set_hash\n"
+        );
+        assert_eq!(report.exit, EXIT_INDETERMINATE);
     }
 
     /// 3 beats 1, computed after the whole walk rather than at the first
