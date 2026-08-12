@@ -193,4 +193,21 @@ retired: the Phase 2 gateway is MCP over stdio, so use `botzr-aegis-mcp` instead
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Dual licensed under either of
+
+- Apache License, Version 2.0 — [`LICENSE-APACHE`](LICENSE-APACHE) or
+  <http://www.apache.org/licenses/LICENSE-2.0>
+- MIT license — [`LICENSE-MIT`](LICENSE-MIT)
+
+at your option. [`LICENSE`](LICENSE) is the pointer to both. Unless you state
+otherwise, any contribution you intentionally submit for inclusion in this work,
+as defined in Apache-2.0, is dual licensed as above with no additional terms.
+
+Apache-2.0 is here for its explicit patent grant, which matters most for the
+[Agent Action Record spec](spec/SPEC.md) — a format nobody should have to adopt
+on a handshake. See
+[ADR-0011](docs/adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md).
+
+**The `0.3.0` crates on crates.io are MIT as published** and stay that way — a
+published registry tarball cannot be relicensed. The dual license applies to this
+repository and to every release cut after `0.3.0`.

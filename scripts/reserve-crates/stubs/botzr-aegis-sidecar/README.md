@@ -15,4 +15,4 @@ This crate never shipped a UDS gRPC/HTTP sidecar — that design is retired and 
 
 `0.0.1` exists only as a signpost pointing at `botzr-aegis-mcp`. It contains no functionality — no gateway, no transport, no runtime. Do not depend on it.
 
-License: MIT
+License: Apache-2.0 OR MIT, at your option.

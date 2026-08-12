@@ -4,4 +4,4 @@
 
 This `0.0.0` release is a placeholder only.
 
-License: MIT
+License: Apache-2.0 OR MIT, at your option.

@@ -17,6 +17,12 @@ ignore = [
 [licenses]
 # Only licenses the current dependency tree actually needs; keep MIT-compatible.
 # NO GPL / AGPL / LGPL / MPL entries.
+#
+# AILAB-634: the eight published workspace crates now declare
+# `Apache-2.0 OR MIT` (see `[workspace.package] license`) instead of MIT alone.
+# Both halves of that expression were already allowed, so this list is unchanged
+# and the check stays green. MIT-only dependencies remain fine: they are
+# compatible with whichever branch a downstream consumer takes.
 allow = [
     "MIT",
     "Apache-2.0",

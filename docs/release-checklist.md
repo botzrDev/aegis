@@ -29,6 +29,16 @@ what this rule exists to prevent.
   it is **not** already on crates.io. Check the registry, not just the tree.
 - [`CHANGELOG.md`](../CHANGELOG.md) has an entry for this version, and the
   `— unreleased` marker is removed and replaced with the release date.
+- **License expression check.** Since AILAB-634 the workspace declares
+  `license = "Apache-2.0 OR MIT"`, which every published crate inherits through
+  `license.workspace = true` — confirm with
+  `cargo metadata --no-deps --format-version 1`. The crates published at `0.3.0`
+  carry MIT in their registry metadata and stay that way: that metadata is
+  immutable, so the first dual-licensed tarballs are the ones cut **after**
+  `0.3.0`. Do not republish or retag `0.3.0` to "fix" it. (The license *texts*
+  live at the repo root, not inside each crate directory, so they are not in the
+  tarballs — same as `0.3.0`. Changing that means adding per-crate license files,
+  which is not part of AILAB-634.)
 
 ## 2. Full CI-equivalent locally
 

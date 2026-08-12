@@ -39,6 +39,27 @@ document implements.
 record could not be read, and `3` when any call is indeterminate — reading the
 Chain only, opening no Envelope (§9) and executing nothing.
 
+## License
+
+This specification is dual licensed — SPDX `Apache-2.0 OR MIT` — under either
+the **Apache License, Version 2.0** ([`LICENSE-APACHE`](../LICENSE-APACHE) or
+<http://www.apache.org/licenses/LICENSE-2.0>) or the **MIT license**
+([`LICENSE-MIT`](../LICENSE-MIT)), at your option. Same terms as the reference
+implementation in this repository.
+
+Apache-2.0 is offered because this document is meant to be *implemented by other
+people*: writing an emitter or a verifier from it, and shipping that, should not
+depend on a handshake about patents. The Apache-2.0 branch carries an explicit
+patent grant; take that branch if your organisation needs one. Neither branch
+requires attribution to Aegis in a record you emit — the format is deliberately
+vendor-neutral (ADR-0008), and nothing here conditions conformance on naming the
+reference implementation.
+
+Applies to this document and to any release of the workspace cut after `0.3.0`.
+The `botzr-aegis-*` crates published to crates.io at `0.3.0` carry MIT in their
+registry metadata and remain MIT as published; see
+[ADR-0011](../docs/adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md).
+
 ## The `aegis verify` command surface
 
 Deliberately unnumbered: this is the command surface the format document pins in

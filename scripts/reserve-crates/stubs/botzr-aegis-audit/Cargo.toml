@@ -2,7 +2,7 @@
 name = "botzr-aegis-audit"
 version = "0.0.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0 OR MIT"
 description = "Reserved: audit logging for Aegis — secure execution runtime for AI agent tool calls."
 repository = "https://github.com/botzrDev/aegis"
 readme = "README.md"

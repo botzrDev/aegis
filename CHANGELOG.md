@@ -12,6 +12,24 @@ support.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Relicensed to dual `Apache-2.0 OR MIT`** (AILAB-634). `[workspace.package]
+  license` now reads `Apache-2.0 OR MIT`, so all eight published crates express
+  it through `license.workspace = true`; root `LICENSE-APACHE` and `LICENSE-MIT`
+  hold the two texts and `LICENSE` is the either-or pointer. The Agent Action
+  Record spec ([`spec/SPEC.md`](spec/SPEC.md)) carries the same terms — the
+  patent grant is the point, because the format is meant to be implemented by
+  people who are not us. This **supersedes OQ-1**, which closed MIT-only on
+  2026-07-05; see
+  [ADR-0011](docs/adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md).
+  **The `0.3.0` crates on crates.io stay MIT as published** — a registry tarball
+  cannot be relicensed after the fact, and none were republished or retagged. The
+  dual license reaches the registry with the next release cut. No version bump,
+  no runtime change.
+
 ## [0.3.0] — 2026-08-09
 
 ### Added
@@ -81,5 +99,6 @@ published from a later commit (`196ada6`, 2026-07-17). The tag is left where it
 is — see the standing rules in
 [docs/release-checklist.md](docs/release-checklist.md).
 
+[Unreleased]: https://github.com/botzrDev/aegis/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/botzrDev/aegis/releases/tag/v0.3.0
 [0.1.0]: https://github.com/botzrDev/aegis/releases/tag/v0.1.0

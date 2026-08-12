@@ -2,7 +2,7 @@
 name = "botzr-aegis-sidecar"
 version = "0.0.1"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0 OR MIT"
 description = "RETIRED name — no implementation was ever published here. The Aegis Phase 2 gateway is MCP over stdio: use botzr-aegis-mcp instead. This release is a redirect only."
 repository = "https://github.com/botzrDev/aegis"
 readme = "README.md"
