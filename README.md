@@ -11,9 +11,10 @@ The goal is not to assert that agent tools are safe. It is to make the isolation
 claims **falsifiable**: a pipeline you can run, a malicious guest you can point at it,
 benchmarks you can reproduce, and a threat model that names its own gaps.
 
-**Docs.** The stranger-facing hub is the [mdBook](docs/) under
-`docs/`. From a clone: `cd docs && mdbook serve`. CI builds it on every PR.
-GitHub Pages deploy is a maintainer step, not yet live.
+**Docs.** The stranger-facing hub is published at
+**<https://botzrdev.github.io/aegis/>**. Source lives in [`docs/`](docs/); from a
+clone, `cd docs && mdbook serve`. CI builds the book on every PR and redeploys
+the site on every push to `main`.
 
 ## Hypothesis
 

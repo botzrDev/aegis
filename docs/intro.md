@@ -56,5 +56,5 @@ cd docs && mdbook serve    # http://localhost:3000
 cd docs && mdbook build --dest-dir ../target/book
 ```
 
-mdBook 0.5.4 is what CI pins. GitHub Pages deploy is a maintainer step;
-until it is live, this tree is the hub.
+mdBook 0.5.4 is what CI pins, and the same pinned build publishes this book
+to <https://botzrdev.github.io/aegis/> on every push to `main`.

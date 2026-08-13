@@ -24,7 +24,10 @@ support.
   Chapter files are flat and grouped only by `SUMMARY.md`;
   [`docs/README.md`](docs/README.md) is the same index for people browsing
   the folder on GitHub. CI job `docs` pins mdBook 0.5.4 and fails the PR if
-  `mdbook build` fails. GitHub Pages deploy is a maintainer step.
+  `mdbook build` fails.
+- **Docs site** — the book is published at <https://botzrdev.github.io/aegis/>
+  by a `Pages` workflow that reuses the same pinned mdBook tarball and digest
+  as the CI gate, so the deployed site is the artifact CI proved builds.
 
 ### Changed
 
