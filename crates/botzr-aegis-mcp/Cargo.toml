@@ -35,6 +35,12 @@ serde_json = { workspace = true }
 # dev-key fallback (AILAB-620), so the tests mint one with `generate_signing_key`.
 # The gateway itself never links the audit crate — it goes through `RuntimeBuilder`.
 botzr-aegis-audit = { workspace = true }
+# Test-only, and deliberately in *this* package: the interop AC (AILAB-625) puts
+# `aegis wrap` in front of a real, unmodified stdio MCP server, and
+# `CARGO_BIN_EXE_botzr-aegis-mcp` only resolves for tests of the package that
+# declares the bin. The gateway itself never links wrap — the dependency points
+# one way, and wrap must stay able to interpose on any server, not just ours.
+botzr-aegis-wrap = { workspace = true }
 tempfile = { workspace = true }
 
 [[bin]]

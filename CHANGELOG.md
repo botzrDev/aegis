@@ -14,11 +14,21 @@ support.
 
 ## [Unreleased]
 
+### Added
+
+- **Docs book** — mdBook hub under `docs/` (`book.toml`, `SUMMARY.md`,
+  `docs/guide/`). Stranger-facing chapters for the pipeline, trust models,
+  CLI, wrap (records, does not confine), and policy YAML as it ships.
+  Evidence pages (threat model, findings, SPEC, ADRs) are listed in the
+  book rather than copied. CI job `docs` pins mdBook 0.5.4 and fails the
+  PR if `mdbook build` fails. GitHub Pages deploy is a maintainer step.
+
 ### Changed
 
 - **Relicensed to dual `Apache-2.0 OR MIT`** (AILAB-634). `[workspace.package]
-  license` now reads `Apache-2.0 OR MIT`, so all eight published crates express
-  it through `license.workspace = true`; root `LICENSE-APACHE` and `LICENSE-MIT`
+  license` now reads `Apache-2.0 OR MIT`, so the eight crates published at
+  `0.3.0` (and `botzr-aegis-wrap`, in-tree, unpublished until the next cut)
+  express it through `license.workspace = true`; root `LICENSE-APACHE` and `LICENSE-MIT`
   hold the two texts and `LICENSE` is the either-or pointer. The Agent Action
   Record spec ([`spec/SPEC.md`](spec/SPEC.md)) carries the same terms — the
   patent grant is the point, because the format is meant to be implemented by

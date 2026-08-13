@@ -4,11 +4,11 @@
 > `AUDIT_SCHEMA_VERSION` to `2`: `phase` became `line_type` with six values,
 > `input_digest` became `request_digest`, and every line gained chain
 > (`seq`, `prev_hash`) and signature (`signature`, `key_id`) fields.
-> **The current wire contract is [`spec/SPEC.md`](../spec/SPEC.md).** This page
+> **The current wire contract is [`spec/SPEC.md`](guide/spec.md).** This page
 > is kept as the v1 record; do not implement against it.
 
 > **Status:** Frozen at `schema_version: 1` for v0.1 (OQ-15 T7 / AEG-34)  
-> **Authority:** types in [`crates/botzr-aegis-core/src/audit.rs`](../crates/botzr-aegis-core/src/audit.rs) · writers in [`botzr-aegis-audit`](../crates/botzr-aegis-audit/)  
+> **Authority:** types in [`crates/botzr-aegis-core/src/audit.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/audit.rs) · writers in [`botzr-aegis-audit`](https://github.com/botzrDev/aegis/tree/main/crates/botzr-aegis-audit/)  
 > **Constant:** `AUDIT_SCHEMA_VERSION = 1` (`u32`)
 
 This document is the Layer 2 / governance **input contract** for JSONL audit lines.

@@ -3,9 +3,13 @@
 CLI for Aegis. Installed binary name: `aegis`.
 
 ```
-aegis 0.1.0 — research runtime for secure agent tool execution
+aegis <version> — research runtime for secure agent tool execution
 Pipeline: policy → capability → sandbox → audit
 ```
+
+The banner prints the crate version. Note that only `run` shipped in the
+published `0.3.0` binary — `keygen`, `verify`, `recheck`, and `wrap` all
+landed after that tag and reach crates.io with the next release.
 
 ## Usage
 
@@ -267,12 +271,54 @@ the parse failure explained on stderr. Exit 2 prints nothing at all on stdout:
 it is "no report", not a report, so a script piping stdout into a review never
 finds a half-answer there.
 
+### `aegis wrap` — interpose and record
+
+```
+aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]
+```
+
+Sits in the middle of an existing MCP session — client ↔ `aegis wrap` ↔ child
+server — relays JSON-RPC byte-faithfully, and writes a schema-v2 chained, signed
+record for every `tools/call`. **Wrap records; it does not confine.**
+
+Read this list before describing wrap as a sandbox, a firewall, or a guard:
+
+- **No policy evaluation.** Every `tools/call` is relayed. Nothing is blocked.
+- **No argument matching.** Wrap does not look at `params.arguments`.
+- **No filesystem or network restriction on the child.** The child is an ordinary
+  OS process under the operator's own account.
+- **Not Model A isolation.** Nothing runs inside wasmtime. See
+  [`docs/threat-model.md`](../../docs/threat-model.md) §3.
+
+`--audit` and `--signing-key` are both **required**. Wrap has no temp-sink mode:
+the only thing an interposer produces is its record, so a throwaway file signed
+by the compiled-in dev key would be a process that stood in the middle and
+proved nothing. Mint a key with `aegis keygen --out <PATH>`.
+
+The literal `--` ends wrap's own flags. Everything after it is the child argv,
+including the child's `--help`.
+
+```bash
+aegis keygen --out /tmp/aegis-signing.key
+aegis wrap \
+  --audit /tmp/wrap-audit.jsonl \
+  --signing-key /tmp/aegis-signing.key \
+  -- npx -y some-mcp-server
+# then pin the record:
+aegis verify --key <public_key printed by keygen> /tmp/wrap-audit.jsonl
+```
+
+`aegis verify` distinguishes **pinned** from **unpinned**. A bare `Verified`
+without saying which is an overclaim — see [ADR-0004](../../docs/adr/0004-embedded-key-with-labelled-trust.md).
+The library crate is [`botzr-aegis-wrap`](../botzr-aegis-wrap/README.md).
+
 ## Status
 
 `aegis run` lands the AEG-30 research quickstart path. `aegis verify` lands the
-AILAB-621 evidence-reading path, and `aegis recheck` the AILAB-622 what-if path.
+AILAB-621 evidence-reading path, `aegis recheck` the AILAB-622 what-if path, and
+`aegis wrap` the AILAB-625 interposer path — **record only**, not confinement.
 Full admin surface / config files remain out of scope, as do follow modes for a
-live record file (D3).
+live record file and the D3 policy/confine tickets.
 
 ## Dependencies
 
@@ -282,3 +328,4 @@ live record file (D3).
 - `botzr-aegis-policy` for the side-effect-free preview behind `aegis recheck` —
   a direct dependency on purpose, so a read-only forensic path cannot reach a
   component engine through the runtime
+- `botzr-aegis-wrap` for the stdio relay behind `aegis wrap`

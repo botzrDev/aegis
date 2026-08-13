@@ -1,7 +1,7 @@
 # Aegis threat model
 
-> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-07-16 (AEG-36 Part B review)  
-> **Related:** [SECURITY.md](../SECURITY.md) · [Audit schema freeze](audit-schema.md) · [DamageBot demo](../examples/damage-bot-demo/README.md) · [Benchmarks](../benches/results/hot_path.md)  
+> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-08-12 (narrowed the “tamper-evident log” non-goal: schema v2 is a signed hash chain over a file, not a public transparency log)  
+> **Related:** [SECURITY.md](guide/security.md) · [Audit schema freeze](audit-schema.md) · [DamageBot demo](https://github.com/botzrDev/aegis/blob/main/examples/damage-bot-demo/README.md) · [Benchmarks](guide/benchmarks.md)  
 > **Part B review:** [OQ-15 peer review (#19)](https://github.com/botzrDev/aegis/issues/19)
 
 Aegis is a **research instrument** for testing what agent tool isolation actually
@@ -34,13 +34,13 @@ record on **every** exit path — allow, deny, trap, resource cap, or panic.
 | **Policy** | Role gate, approval gate, rate limits (sync; parsed-once `Arc<PolicySet>`) |
 | **Capability** | Default-deny manifest resolution → minted grant (denial never reaches sandbox) |
 | **Sandbox** | Configure wasmtime `Store` **from the grant**, then run (per-call store; epoch + memory limits) |
-| **Audit** | Schema-versioned JSONL records (`schema_version: 2`), hash-chained and ed25519-signed; no raw secrets — the shipped payload digests are `request_digest` / `response_digest` ([record format](../spec/SPEC.md)) |
+| **Audit** | Schema-versioned JSONL records (`schema_version: 2`), hash-chained and ed25519-signed; no raw secrets — the shipped payload digests are `request_digest` / `response_digest` ([record format](guide/spec.md)) |
 
 ### Out of scope (v1)
 
 - Layer 2 governance (LLM-side guardian, approval UX, policy authoring)
 - Multi-agent orchestration, dashboards, SaaS hosting
-- Cryptographic audit proofs or tamper-evident log chains
+- Public transparency logs, timestamping authorities, or inclusion proofs independent of possessing the record file. Schema v2 **is** a hash-chained, ed25519-signed JSONL file; truncation of an unanchored tail is still undetectable from the chain alone (see [record format](guide/spec.md) and [ADR-0002](adr/0002-verify-reports-coverage-not-pass-fail.md))
 - Output DLP / content filtering on return values (see [§6 Non-goals](#6-named-non-goals))
 - Credential injection as a first-class capability (design reserved; host env reality today)
 - In-process multi-tenancy (v1 = process-per-tenant deployment pattern)
@@ -92,7 +92,7 @@ reach the outside world through WASI surfaces wired from the grant:
 **Isolation is strong** because the guest cannot express an un-granted effect — there
 is no syscall surface except what the host linked.
 
-Evidence: [DamageBot demo](../examples/damage-bot-demo/README.md) — write under
+Evidence: [DamageBot demo](https://github.com/botzrDev/aegis/blob/main/examples/damage-bot-demo/README.md) — write under
 read-only grant, `..` traversal, symlink escape all refused at the WASI/cap-std
 boundary.
 
@@ -155,7 +155,7 @@ When correctly configured and integrated, Aegis v1 aims to ensure:
 6. **Audit on every exit.** Denials, traps, resource caps, and panics produce
    schema-versioned JSONL records without raw secret payloads. v0.1 persists via
    `AuditWriter` (per-line fsync) only — OpenTelemetry / OTLP export is
-   **deferred** (not shipped). Wire contract: [`spec/SPEC.md`](../spec/SPEC.md).
+   **deferred** (not shipped). Wire contract: [`spec/SPEC.md`](guide/spec.md).
 
 Operational meaning of "foolproof" in this project: **no single mistake — a forgotten
 host check, a malformed policy, a panicking host function — escalates into ambient
@@ -262,7 +262,7 @@ honest non-goals is the product posture.
 | Policy evaluated after capability minted | **High** | Pipeline order violation; denied calls must never get a `Store` |
 | Hung Model B I/O ignoring epoch | **Medium** | Wall-clock timeout + cancellation token required for host I/O |
 | Audit sink failure | **Medium** | Fail-closed vs fail-open is a deployment choice (see G3) |
-| wasmtime / cap-std CVE | **Platform** | Track upstream advisories; in-scope for [SECURITY.md](../SECURITY.md) |
+| wasmtime / cap-std CVE | **Platform** | Track upstream advisories; in-scope for [SECURITY.md](guide/security.md) |
 | Return-value exfil (G9) | **Accepted non-goal** | Partial mitigations only |
 
 ---
@@ -274,10 +274,10 @@ containment cases; they do not exhaust all attack classes.
 
 | Artifact | What it shows |
 |---|---|
-| [DamageBot demo](../examples/damage-bot-demo/README.md) | Six adversarial cases through `Runtime::execute_tool_call` |
-| [Deny suite](../tests/deny-suite/) | Policy/capability/sandbox denial paths + audit emission |
-| [Record format spec](../spec/SPEC.md) | Field-level line contract, chain rule, verdict model, and the non-guarantees stated plainly |
-| [Hot-path benchmarks](../benches/results/hot_path.md) | Policy ≪ 100 µs; combined pipeline ≪ 1 ms (cited hardware) |
+| [DamageBot demo](https://github.com/botzrDev/aegis/blob/main/examples/damage-bot-demo/README.md) | Six adversarial cases through `Runtime::execute_tool_call` |
+| [Deny suite](https://github.com/botzrDev/aegis/tree/main/tests/deny-suite/) | Policy/capability/sandbox denial paths + audit emission |
+| [Record format spec](guide/spec.md) | Field-level line contract, chain rule, verdict model, and the non-guarantees stated plainly |
+| [Hot-path benchmarks](guide/benchmarks.md) | Policy ≪ 100 µs; combined pipeline ≪ 1 ms (cited hardware) |
 | [Findings report](findings.md) | Measured guarantees vs named gaps; reproducible case studies + evidence bundle script |
 
 A passing demo is evidence, not certification. This threat model is the explicit
@@ -287,7 +287,7 @@ statement of scope.
 
 ## 9. Reporting security issues
 
-See [SECURITY.md](../SECURITY.md) for private disclosure, supported versions, and
+See [SECURITY.md](guide/security.md) for private disclosure, supported versions, and
 coordinated disclosure policy.
 
 ---

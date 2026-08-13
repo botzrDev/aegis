@@ -1,0 +1,10 @@
+[book]
+title = "Aegis"
+authors = ["Botzr"]
+description = "A reproducible runtime for testing what agent tool isolation actually guarantees."
+language = "en"
+src = "."
+
+[output.html]
+git-repository-url = "https://github.com/botzrDev/aegis"
+edit-url-template = "https://github.com/botzrDev/aegis/edit/main/docs/{path}"

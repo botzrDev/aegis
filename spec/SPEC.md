@@ -2,9 +2,9 @@
 
 **Status:** draft, tracks the code shipped by AILAB-619 · **Schema version:** `2`
 **Normative source of truth:** the record types in
-[`crates/botzr-aegis-core/src/audit.rs`](../crates/botzr-aegis-core/src/audit.rs),
-the canonicalizer in [`crates/botzr-aegis-core/src/jcs.rs`](../crates/botzr-aegis-core/src/jcs.rs),
-and the writer in [`crates/botzr-aegis-audit/src/writer.rs`](../crates/botzr-aegis-audit/src/writer.rs).
+[`crates/botzr-aegis-core/src/audit.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/audit.rs),
+the canonicalizer in [`crates/botzr-aegis-core/src/jcs.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/jcs.rs),
+and the writer in [`crates/botzr-aegis-audit/src/writer.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-audit/src/writer.rs).
 Where this document and the code disagree, the code is the defect report.
 
 This document specifies a file format, not an implementation. A third party
@@ -15,7 +15,7 @@ deliberate — an evidence format that overclaims is worse than no format, becau
 the overclaim is what gets quoted.
 
 The decisions behind this format, with the options that were rejected and why,
-are in [`docs/adr/`](../docs/adr/) — ADR-0001 through ADR-0006 are the ones this
+are in [`docs/adr/`](https://github.com/botzrDev/aegis/tree/main/docs/adr/) — ADR-0001 through ADR-0006 are the ones this
 document implements.
 
 **Not specified by this version, deliberately:**
@@ -26,7 +26,7 @@ document implements.
   generated. Deliberately **out of the format** (ADR-0004), not merely deferred:
   what a Line carries is a `key_id` and a published `public_key`, and a verifier
   needs nothing else. The implementation is specified in
-  [`crates/botzr-aegis-audit/README.md`](../crates/botzr-aegis-audit/README.md).
+  [`crates/botzr-aegis-audit/README.md`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-audit/README.md).
   Rotation is the one part that *is* format surface, and it is normative in §8.4.
 - Envelope reader/writer behaviour beyond the boundary in §9. No Envelope code
   ships in this version.
@@ -42,9 +42,9 @@ Chain only, opening no Envelope (§9) and executing nothing.
 ## License
 
 This specification is dual licensed — SPDX `Apache-2.0 OR MIT` — under either
-the **Apache License, Version 2.0** ([`LICENSE-APACHE`](../LICENSE-APACHE) or
+the **Apache License, Version 2.0** ([`LICENSE-APACHE`](https://github.com/botzrDev/aegis/blob/main/LICENSE-APACHE) or
 <http://www.apache.org/licenses/LICENSE-2.0>) or the **MIT license**
-([`LICENSE-MIT`](../LICENSE-MIT)), at your option. Same terms as the reference
+([`LICENSE-MIT`](https://github.com/botzrDev/aegis/blob/main/LICENSE-MIT)), at your option. Same terms as the reference
 implementation in this repository.
 
 Apache-2.0 is offered because this document is meant to be *implemented by other
@@ -58,7 +58,7 @@ reference implementation.
 Applies to this document and to any release of the workspace cut after `0.3.0`.
 The `botzr-aegis-*` crates published to crates.io at `0.3.0` carry MIT in their
 registry metadata and remain MIT as published; see
-[ADR-0011](../docs/adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md).
+[ADR-0011](https://github.com/botzrDev/aegis/blob/main/docs/adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md).
 
 ## The `aegis verify` command surface
 
@@ -160,7 +160,7 @@ Digest-valued fields are distinct types, not interchangeable strings:
 An implementation SHOULD make transposing them a type error rather than a
 convention — a Chain that hashes the policy set into `prev_hash` verifies clean
 while being wrong, and the shipped Rust types make that swap fail to compile
-([`crates/botzr-aegis-core/src/digest.rs`](../crates/botzr-aegis-core/src/digest.rs)).
+([`crates/botzr-aegis-core/src/digest.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/digest.rs)).
 
 ---
 
@@ -298,7 +298,7 @@ and `prev_hash` chains back through every unsigned Line before it. In the shippe
 implementation this is a type-system property, not a rule the writer remembers —
 the intent type implements the chain trait and not the signing trait, so there is
 no way to hand it to the signing path
-([`crates/botzr-aegis-audit/src/line.rs`](../crates/botzr-aegis-audit/src/line.rs)).
+([`crates/botzr-aegis-audit/src/line.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-audit/src/line.rs)).
 
 **`checkpoint` is reserved.** No emitter in this repository produces one. A
 verifier MUST handle one: it is a signed Line, so it extends Coverage — and it
@@ -761,7 +761,7 @@ All vectors are live in the tree and are checked by CI.
 
 ### 11.1 Canonicalization
 
-Source: [`crates/botzr-aegis-core/src/jcs.rs`](../crates/botzr-aegis-core/src/jcs.rs),
+Source: [`crates/botzr-aegis-core/src/jcs.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/jcs.rs),
 test `published_test_vector_canonical_form_and_hash`.
 
 Input (member order deliberately scrambled, nested object included):
@@ -801,7 +801,7 @@ bytes.
 ### 11.2 A Session, end to end
 
 Source: the committed goldens in
-[`crates/botzr-aegis-audit/tests/golden/`](../crates/botzr-aegis-audit/tests/golden/),
+[`crates/botzr-aegis-audit/tests/golden/`](https://github.com/botzrDev/aegis/tree/main/crates/botzr-aegis-audit/tests/golden/),
 emitted through the real writer into one Session and signed with a fixed-seed
 development key. Each file in that directory **is** the canonical form of one
 Line, exactly as written to disk.
@@ -901,12 +901,12 @@ changes every hash in every file.
 
 ### 12.1 Downstream consumers
 
-The Layer 2 governance ingest in [`governance/`](../governance/) targets this
+The Layer 2 governance ingest in [`governance/`](https://github.com/botzrDev/aegis/tree/main/governance/) targets this
 version (AILAB-624) and rejects version 1. It consumes `intent` and `outcome`
 lines; `open`, `close`, `decision`, `checkpoint` and any line type a newer
 emitter adds are skipped and counted per §5.2, never treated as corruption. It
 parses signatures without checking them — it is a consumer, not a verifier. See
-[`governance/DECISIONS.md`](../governance/DECISIONS.md) D25.
+[`governance/DECISIONS.md`](https://github.com/botzrDev/aegis/blob/main/governance/DECISIONS.md) D25.
 
 Test packages that exercise this format:
 `aegis-deny-suite`, `aegis-stress-suite`, `aegis-api-surface`,

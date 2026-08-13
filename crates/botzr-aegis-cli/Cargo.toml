@@ -23,6 +23,11 @@ botzr-aegis-core = { workspace = true }
 # into a read-only forensic path.
 botzr-aegis-policy = { workspace = true }
 botzr-aegis-runtime = { workspace = true }
+# `aegis wrap` is a thin argv-to-`WrapConfig` shim over this crate. The relay
+# lives there and only there — a second copy of the pump in the CLI would be a
+# second thing to keep deadlock-free, and the one in the library is the one
+# under test.
+botzr-aegis-wrap = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

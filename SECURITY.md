@@ -3,7 +3,7 @@
 Aegis is a research instrument for secure agent tool execution. This document
 covers how to report vulnerabilities, what we support, and what is in scope.
 
-**Threat model:** [docs/threat-model.md](docs/threat-model.md) — read this first
+**Threat model:** [docs/threat-model.md](https://github.com/botzrDev/aegis/blob/main/docs/threat-model.md) — read this first
 to understand what Aegis protects and its named non-goals. Scope of protection
 and scope of disclosure are one story.
 
@@ -79,7 +79,7 @@ integrity, or availability of the enforcement pipeline:
 | `botzr-aegis-policy` | Policy evaluation bypass, silent widening |
 | `botzr-aegis-capability` | Grant minting, default-deny bypass |
 | `botzr-aegis-sandbox` | WASM isolation, cap-std preopens, host-function grant enforcement |
-| `botzr-aegis-audit` | Record emission gaps, secret leakage in audit fields (v0.1: JSONL + `input_digest` only; no `output_digest` / OTel — see [audit schema](docs/audit-schema.md)) |
+| `botzr-aegis-audit` | Record emission gaps, secret leakage in audit fields (v0.1: JSONL + `input_digest` only; no `output_digest` / OTel — see [audit schema](https://github.com/botzrDev/aegis/blob/main/docs/audit-schema.md)) |
 | `botzr-aegis-runtime` | Pipeline ordering, audit-on-all-exits |
 
 Also in scope:
@@ -99,7 +99,7 @@ Also in scope:
 | **Third-party WASM guests** | Tool code you compile and run; Aegis does not audit your guest's business logic |
 | **Upstream wasmtime/cap-std** | Report to Bytecode Alliance / upstream; we track and bump pins |
 | **Deployment misconfiguration** | Over-broad grants, shared host credentials, missing network segmentation |
-| **Prompt injection / return-value exfil** | Named non-goals — see [threat model §6](docs/threat-model.md#6-named-non-goals) |
+| **Prompt injection / return-value exfil** | Named non-goals — see [threat model §6](https://github.com/botzrDev/aegis/blob/main/docs/threat-model.md#6-named-non-goals) |
 | **Model B marketed as full isolation** | Documentation issue if our docs are wrong; design limitation if expectations exceed Model B |
 
 ---
@@ -124,7 +124,7 @@ code for it to check. Upstream dependencies such as wasmtime and cap-std do
 contain their own `unsafe` and own their UB surface; we consume them as pinned
 dependencies and track RUSTSEC advisories via cargo-deny (`deny.toml` + CI
 supply-chain and weekly advisory jobs) rather than re-auditing their unsafe
-code here. See [docs/threat-model.md](docs/threat-model.md) for what isolation
+code here. See [docs/threat-model.md](https://github.com/botzrDev/aegis/blob/main/docs/threat-model.md) for what isolation
 is and is not claimed.
 
 ---

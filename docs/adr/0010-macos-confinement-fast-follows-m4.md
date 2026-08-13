@@ -2,6 +2,15 @@
 
 **Status:** accepted (2026-08-10) · lands in AILAB-630, conditions AILAB-631
 
+> **Not implemented.** This is an accepted design decision, not a description of
+> shipped behaviour. M4 has not launched, and neither of the two layers this ADR
+> sequences exists in `v0.3.0` or current `main`: no native confinement
+> ([ADR-0007](./0007-confinement-via-self-restricting-re-exec.md)) on any
+> platform, and no argument-level policy
+> ([ADR-0006](./0006-matchers-target-derived-capability-parameters.md)). Read
+> "M4 launches with…" as the plan of record on 2026-08-10, not as something that
+> happened. Lands in AILAB-630 as ticketed.
+
 M4 launches with Linux-only native confinement. macOS ships everything else.
 
 The deciding reason is not that AILAB-628's fail-closed machinery already covers the degraded case — that is plumbing, and plumbing does not justify a launch decision. It is that **the D4 demo and two of report §1's three structural gaps do not depend on confinement at all.**

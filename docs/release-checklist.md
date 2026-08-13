@@ -11,11 +11,16 @@ GitHub release are manual, because each is irreversible: a published version can
 be yanked but never replaced, and a moved tag silently invalidates every
 reference to it.
 
-The workspace versions in lockstep. All eight `botzr-aegis-*` crates carry the
-same number, inherited from `[workspace.package]`; there are no per-crate
-version overrides. If you find one, reconcile it before releasing rather than
-publishing a split set — the 0.1.0/0.1.1/0.2.0 skew that AILAB-608 unwound is
-what this rule exists to prevent.
+The workspace versions in lockstep. Every `botzr-aegis-*` workspace member
+carries the same number, inherited from `[workspace.package]`; there are no
+per-crate version overrides. If you find one, reconcile it before releasing
+rather than publishing a split set — the 0.1.0/0.1.1/0.2.0 skew that AILAB-608
+unwound is what this rule exists to prevent.
+
+**Crate count.** `0.3.0` published **eight** crates. `botzr-aegis-wrap` is a
+ninth in-tree crate and first appears on the registry with the **next** cut —
+do not try to add it to `0.3.0`. The publish order below includes wrap for that
+next cut.
 
 ---
 
@@ -108,10 +113,11 @@ cargo publish -p botzr-aegis-capability
 cargo publish -p botzr-aegis-sandbox
 cargo publish -p botzr-aegis-audit
 
-# Tier 3 — depends on audit, capability, core, policy, sandbox
+# Tier 3 — depends on audit + core (wrap); or audit, capability, core, policy, sandbox (runtime)
+cargo publish -p botzr-aegis-wrap
 cargo publish -p botzr-aegis-runtime
 
-# Tier 4 — each depends on capability, core, runtime
+# Tier 4 — mcp/cli depend on capability, core, runtime; cli also depends on wrap
 cargo publish -p botzr-aegis-mcp
 cargo publish -p botzr-aegis-cli
 ```

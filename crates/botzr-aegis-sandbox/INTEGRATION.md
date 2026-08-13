@@ -19,8 +19,8 @@ grant types (`CapabilityGrant`, `FsGrant`, `NetGrant`, `ToolId`). Take both.
 
 ```toml
 [dependencies]
-botzr-aegis-sandbox = "0.1.0"
-botzr-aegis-core = "0.1.0"
+botzr-aegis-sandbox = "0.3.0"
+botzr-aegis-core = "0.3.0"
 ```
 
 **git** (track `main` before/without a crates.io release):

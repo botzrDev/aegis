@@ -14,7 +14,21 @@ Policies are parsed once at startup into an `Arc<PolicySet>`. Evaluation is sync
 
 ## Policy format
 
-See `tests/fixtures/policies/` for example YAML. Every rule specifies a `tool` matcher, an `action` (allow/deny/rate_limit/pending_approval), and optional `limits` (max memory, max wall time).
+On-disk shape is YAML `version: 1`. Every rule has an `id`, an `action`
+(`allow` / `deny` / `rate_limit` / `pending_approval`), and optional matchers.
+Matchers today are `tool`, `capability`, and `role` only — **policy does not
+inspect call arguments.** Argument-level matching is not shipped.
+
+Worked examples:
+
+- [`examples/dreamd-poc/fixtures/dreamd-policy.yaml`](../../examples/dreamd-poc/fixtures/dreamd-policy.yaml)
+- [`fuzz/corpus/policy_yaml/`](../../fuzz/corpus/policy_yaml/) (parse-surface seeds)
+
+`pending_approval` is reject-with-resume-token: the call is not executed and no
+grant is minted. It is not a parked in-flight call.
+
+The full language is documented in the [policy YAML chapter](../../docs/guide/policy.md)
+of the docs book.
 
 ## Dependencies
 

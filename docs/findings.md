@@ -1,7 +1,7 @@
 # Aegis findings report
 
 > **Status:** v0.3 findings synthesis (AILAB-606) · **Last updated:** 2026-08-07  
-> **Related:** [Threat model](threat-model.md) · [Audit schema freeze](audit-schema.md) · [SECURITY.md](../SECURITY.md) · [Benchmarks](../benches/results/hot_path.md) · [Fuzz campaign log](../fuzz/README.md)
+> **Related:** [Threat model](threat-model.md) · [Audit schema freeze](audit-schema.md) · [SECURITY.md](guide/security.md) · [Benchmarks](guide/benchmarks.md) · [Fuzz campaign log](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md)
 
 Aegis is a **research instrument**: the point is not to assert that agent tool
 execution is safe, but to make isolation claims falsifiable and then attack them.
@@ -14,7 +14,7 @@ certification** (see [threat model §8](threat-model.md#8-evidence-artifacts-not
 
 ## 1. Claim under test
 
-The [README](../README.md) states the hypothesis:
+The [README](https://github.com/botzrDev/aegis/blob/main/README.md) states the hypothesis:
 
 > A **default-deny**, capability-grant-driven, **per-call** WASM sandbox with
 > mandatory audit can contain an adversarial or prompt-injected tool call such that
@@ -78,11 +78,11 @@ Explicit gaps, stated so a reviewer does not have to discover them:
 - **No Miri on upstream unsafe code.** The workspace forbids `unsafe`, so there
   is no first-party unsafe for Miri to check; wasmtime and cap-std own their own
   unsafe surface. We track RUSTSEC advisories via cargo-deny instead — see the
-  verification posture in [SECURITY.md](../SECURITY.md).
+  verification posture in [SECURITY.md](guide/security.md).
 
 **Supply-chain posture:** cargo-deny runs in CI (full `cargo deny check`) plus a
 weekly advisory workflow; scope and the one recorded advisory ignore are in
-`deny.toml`. Details in [SECURITY.md](../SECURITY.md).
+`deny.toml`. Details in [SECURITY.md](guide/security.md).
 
 **Layer 2 / governance findings are out of scope** of this runtime findings
 document; `governance/` is a separate service with its own evidence trail.
@@ -102,9 +102,9 @@ parent on any axis — filesystem writes and output caps are checked by unit
 tests, and the subset invariant is exercised as a property test over randomized
 memory / wall-clock / output limits.
 
-- Files: [`crates/botzr-aegis-capability/src/narrow.rs`](../crates/botzr-aegis-capability/src/narrow.rs)
+- Files: [`crates/botzr-aegis-capability/src/narrow.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-capability/src/narrow.rs)
   (unit tests `rejects_fs_write_escalation`, `rejects_output_cap_escalation`),
-  [`crates/botzr-aegis-capability/tests/capability.rs`](../crates/botzr-aegis-capability/tests/capability.rs)
+  [`crates/botzr-aegis-capability/tests/capability.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-capability/tests/capability.rs)
   (proptest `narrowed_grant_never_broader_than_parent`)
 - Command:
 
@@ -130,9 +130,9 @@ a read-only grant, `..` traversal, symlink escape (Model A / cap-std), and HTTP
 exfiltration without a net grant or to a disallowed host (Model B / host grant
 check).
 
-- Files: [`examples/damage-bot-demo/README.md`](../examples/damage-bot-demo/README.md)
+- Files: [`examples/damage-bot-demo/README.md`](https://github.com/botzrDev/aegis/blob/main/examples/damage-bot-demo/README.md)
   (case table),
-  [`tests/adversarial-demo/tests/damage_bot.rs`](../tests/adversarial-demo/tests/damage_bot.rs)
+  [`tests/adversarial-demo/tests/damage_bot.rs`](https://github.com/botzrDev/aegis/blob/main/tests/adversarial-demo/tests/damage_bot.rs)
   (the six acceptance tests), guest source under `tests/fixtures/damage-bot/`
 - Command:
 
@@ -152,7 +152,7 @@ The deny suite drives the full pipeline through its refusal paths and asserts
 both the refusal and the audit record it produces; golden snapshots freeze the
 audit wire shape so a drift in the record format is itself a test failure.
 
-- Files: [`tests/deny-suite/`](../tests/deny-suite/) — representative tests:
+- Files: [`tests/deny-suite/`](https://github.com/botzrDev/aegis/tree/main/tests/deny-suite/) — representative tests:
   `policy_deny_is_refused_and_audited`, `unregistered_tool_is_capability_denied`,
   `memory_cap_trips_through_pipeline`, `wall_clock_cap_trips_through_pipeline`
 - Command:
@@ -172,7 +172,7 @@ Under mixed success, denial, trap, resource-cap, and panic-class calls fired on
 scoped threads at one shared `Runtime`, each call produces exactly one intent
 and exactly one outcome record — no orphan intents, no duplicate outcomes.
 
-- Files: [`tests/stress/tests/exactly_once.rs`](../tests/stress/tests/exactly_once.rs)
+- Files: [`tests/stress/tests/exactly_once.rs`](https://github.com/botzrDev/aegis/blob/main/tests/stress/tests/exactly_once.rs)
   (single test `audit_is_exactly_once_under_concurrency`; plain threads, no
   async runtime)
 - Command:
@@ -189,12 +189,12 @@ and exactly one outcome record — no orphan intents, no duplicate outcomes.
 
 The first cargo-fuzz campaign against `PolicyEngine::from_yaml` (plus one
 `evaluate` on successful parse) recorded no crash. From the
-[campaign log](../fuzz/README.md): 2026-08-07, target `policy_yaml`, 10m 30s
+[campaign log](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md): 2026-08-07, target `policy_yaml`, 10m 30s
 (30s smoke + 2×5m sessions), no crash across 5,893,498 campaign runs (final
 coverage 4244, corpus 2817), on the hardware cited in that log.
 `Err(PolicyError)` on malformed YAML is the parser doing its job, not a finding.
 
-- Files: [`fuzz/README.md`](../fuzz/README.md) (harness, seed corpus, campaign log)
+- Files: [`fuzz/README.md`](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md) (harness, seed corpus, campaign log)
 - Command (optional, bounded — requires nightly + cargo-fuzz; not part of the
   default evidence bundle):
 
@@ -257,7 +257,7 @@ signature check over that record file:
 - A recording is committed at
   [`docs/demos/mcp-live-deny.cast`](demos/mcp-live-deny.cast) — replay it with
   `asciinema play docs/demos/mcp-live-deny.cast`, or see
-  [`docs/demos/README.md`](demos/README.md) for what each beat shows.
+  [`docs/demos/README.md`](demos/) for what each beat shows.
 
 ---
 
@@ -265,14 +265,14 @@ signature check over that record file:
 
 No raw number in this report originates here; each is a citation:
 
-- **Latency numbers** come from [`benches/results/hot_path.md`](../benches/results/hot_path.md):
+- **Latency numbers** come from [`benches/results/hot_path.md`](guide/benchmarks.md):
   `policy_eval/allow_all` 13.4 ns median, `policy_eval/multi_rule` 31.8 ns,
   `hot_path/multi_rule` 2.71 µs — against targets of <100 µs for policy eval
   alone and <1 ms for the combined policy + capability hot path. Recorded on the
   hardware cited in that file (WSL2 Linux, AMD Ryzen AI 5 340, rustc 1.96.0,
   Criterion 0.5.1, dated 2026-07-09).
 - **Instantiation and audit-emission numbers** come from
-  [`benches/results/cell_and_audit.md`](../benches/results/cell_and_audit.md):
+  [`benches/results/cell_and_audit.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/cell_and_audit.md):
   `instantiation/warm` 49.339 µs median against a <0.5 ms target, and
   `instantiation/cold` 39.490 ms against a <5 ms target — **the cold target is
   missed**, with engine construction only ~1–2% of it and component
@@ -287,7 +287,7 @@ No raw number in this report originates here; each is a citation:
   results file publishes the cross-run table and the verdicts hold in every run.
   Recorded on the same machine but the repo-pinned rustc 1.86.0, dated
   2026-08-10.
-- **Fuzz campaign numbers** come from the [`fuzz/README.md`](../fuzz/README.md)
+- **Fuzz campaign numbers** come from the [`fuzz/README.md`](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md)
   campaign log, which cites its own hardware and nightly rustc per row.
 
 Numbers reproduced on different hardware will differ; the targets, not the

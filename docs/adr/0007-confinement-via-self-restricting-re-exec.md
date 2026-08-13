@@ -2,6 +2,14 @@
 
 **Status:** accepted (2026-08-10) · lands in AILAB-628 · deletes a clause from Execution Report §5
 
+> **Not implemented.** This is an accepted design decision, not a description of
+> shipped behaviour. No confinement is in `v0.3.0` or current `main`: there is
+> no `aegis __confine-exec` subcommand, and no Landlock or seccomp code in the
+> workspace. [`aegis wrap`](../guide/wrap.md) records each single `tools/call`
+> and **does not confine** the child. The present-tense body below records the
+> decision as written on 2026-08-10; it is not a product claim. Lands in
+> AILAB-628 as ticketed.
+
 Native MCP servers are confined by re-executing `aegis` as a hidden subcommand (`aegis __confine-exec -- <target>`). That process applies Landlock and seccomp **to itself** using safe wrapper APIs, then replaces its own image with the target. Landlock domains and seccomp filters are preserved across `execve`, so the target runs confined. Nothing in the workspace needs `unsafe`, and `unsafe_code = forbid` stays workspace-wide.
 
 ## The mechanism both documents missed

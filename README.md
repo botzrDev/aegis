@@ -11,6 +11,10 @@ The goal is not to assert that agent tools are safe. It is to make the isolation
 claims **falsifiable**: a pipeline you can run, a malicious guest you can point at it,
 benchmarks you can reproduce, and a threat model that names its own gaps.
 
+**Docs.** The stranger-facing hub is the [mdBook](docs/intro.md) under
+`docs/`. From a clone: `cd docs && mdbook serve`. CI builds it on every PR.
+GitHub Pages deploy is a maintainer step, not yet live.
+
 ## Hypothesis
 
 The instrument tests a single claim:
@@ -73,8 +77,9 @@ Runtime crates (Cargo workspace, `unsafe_code = forbid` workspace-wide):
 | `botzr-aegis-sandbox` | wasmtime component-model host; cap-std preopens; resource limits |
 | `botzr-aegis-audit` | Schema-versioned audit records, always emitted |
 | `botzr-aegis-runtime` | Orchestrator — walks the pipeline (`Runtime::execute_tool_call`) |
-| `botzr-aegis-mcp` | Phase 2 [MCP stdio gateway](crates/botzr-aegis-mcp/README.md) |
-| `botzr-aegis-cli` | Binary `aegis` — `aegis run` registers a WASM tool and executes through the pipeline |
+| `botzr-aegis-mcp` | Phase 2 [MCP stdio gateway](crates/botzr-aegis-mcp/README.md) — Aegis's own catalog, not an interposer |
+| `botzr-aegis-wrap` | Transparent stdio MCP interposer — **records; does not confine.** No policy, no sandbox, no OS restriction on the child. In-tree; not on crates.io at `0.3.0`. See [`aegis wrap`](crates/botzr-aegis-cli/README.md#aegis-wrap--interpose-and-record) |
+| `botzr-aegis-cli` | Binary `aegis` — `run`, plus `keygen` / `verify` / `recheck` / `wrap` on `main` |
 
 `governance/` is a **separate Python (Layer 2) service** — audit ingest, narrow-only
 policy proposals, drift findings, and versioned policy packs. It is not a workspace
@@ -160,6 +165,7 @@ containment cases and measured costs — they do not certify the instrument.
 
 | Artifact | What it shows |
 |---|---|
+| [Docs book](docs/intro.md) | Stranger-facing hub (mdBook). `cd docs && mdbook build` — CI fails the PR if the book does not compile |
 | [Threat model](docs/threat-model.md) | Scope, trust boundaries, named non-goals, residual risks |
 | [Findings report](docs/findings.md) | What isolation is measured to guarantee — and not; five reproducible case studies, bundled via [`scripts/evidence-bundle.sh`](scripts/evidence-bundle.sh) |
 | [OQ-15 Part B review](https://github.com/botzrDev/aegis/issues/19) | Structured packaging peer review (solo-maintainer exception logged) |
@@ -179,8 +185,15 @@ model, and the [findings report](docs/findings.md) are published. The current re
 [**`v0.3.0`**](https://github.com/botzrDev/aegis/releases/tag/v0.3.0) — the first
 lockstep release, in which all eight crates carry the same version. It adds a fuzz
 harness over the policy YAML parse surface, a stress suite proving audit exactly-once
-under concurrency, and supply-chain gates. The `aegis` CLI supports `aegis run` for
-one-shot WASM execution through the pipeline.
+under concurrency, and supply-chain gates. The published `0.3.0` CLI has one
+subcommand, `aegis run`, for one-shot WASM execution through the pipeline.
+
+Four more verbs exist on `main` and reach the registry with the next cut:
+`aegis keygen` (mint a signing key), `aegis verify` (walk a record chain,
+labelled pinned or unpinned), `aegis recheck` (re-evaluate recorded outcomes
+against a different policy — it executes nothing), and `aegis wrap` (interpose
+on a stdio MCP server and **record** every `tools/call`). Wrap does not
+confine, evaluate policy, or restrict the child.
 
 Eight crates are published on [crates.io](https://crates.io/search?q=botzr-aegis) at
 `0.3.0` — `core`, `policy`, `capability`, `sandbox`, `runtime`, `audit`, `mcp`, `cli` —
@@ -190,13 +203,17 @@ and the dependency graph resolves, so the CLI installs directly:
 cargo install botzr-aegis-cli
 ```
 
-Building from [`main`](https://github.com/botzrDev/aegis) or the tag still works, and is
-what you want for the in-repo demos and benchmark harnesses.
+`botzr-aegis-wrap` is a ninth in-tree crate and is **not** on crates.io at `0.3.0`;
+it first appears on the next cut. Until then, build wrap from
+[`main`](https://github.com/botzrDev/aegis). Building from `main` or the tag is
+also what you want for the in-repo demos and benchmark harnesses.
 
 Earlier releases were a split set — `core` at 0.2.0, `sandbox` at 0.1.1, the other six at
 0.1.0. From 0.3.0 the whole workspace moves as one version; see the versioning note in
-the [CHANGELOG](CHANGELOG.md). A ninth name, `botzr-aegis-sidecar`, is yanked and
-retired: the Phase 2 gateway is MCP over stdio, so use `botzr-aegis-mcp` instead.
+the [CHANGELOG](CHANGELOG.md). A retired name, `botzr-aegis-sidecar`, is yanked:
+the Phase 2 gateway is MCP over stdio, so use `botzr-aegis-mcp` instead. Do not
+confuse that gateway (Aegis's own catalog) with `aegis wrap` (an interposer in
+front of someone else's server).
 
 ## License
 

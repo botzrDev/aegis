@@ -1,0 +1,49 @@
+[package]
+name = "botzr-aegis-wrap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
+rust-version.workspace = true
+description = "Transparent stdio MCP interposer for Aegis — relays a child server frame-verbatim and records each single (non-batched) tools/call."
+readme = "README.md"
+keywords = ["aegis", "agent", "security", "mcp"]
+categories = ["development-tools"]
+# The one bin target is declared, not inferred: `src/bin/mirror_child.rs` has to
+# be reachable as `CARGO_BIN_EXE_aegis-wrap-mirror-child`, and leaving
+# autodiscovery on would additionally infer a second `mirror_child` target from
+# the same file.
+autobins = false
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-audit = { workspace = true }
+botzr-aegis-core = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Already a normal dependency above; repeated here because an integration test
+# is a separate crate and can only name the crate under test plus its dev-deps.
+# The relay tests recompute `RequestDigest`/`ResponseDigest` over the exact
+# frame bytes they sent, which is the only way to prove *which* bytes a record
+# committed to — a hex string alone cannot be argued with.
+botzr-aegis-core = { workspace = true }
+criterion = { workspace = true }
+# The relay tests mint a real signing key into a throwaway directory: a
+# persistent audit sink has no dev-key fallback (AILAB-620).
+tempfile = { workspace = true }
+
+# Test fixture, not a product surface. It is a `[[bin]]` rather than a test-only
+# helper because `CARGO_BIN_EXE_*` only resolves declared bin targets, and the
+# relay has to be exercised against a *real* child process.
+[[bin]]
+name = "aegis-wrap-mirror-child"
+path = "src/bin/mirror_child.rs"
+
+[[bench]]
+name = "overhead"
+harness = false

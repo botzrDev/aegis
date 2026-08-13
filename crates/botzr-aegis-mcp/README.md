@@ -23,7 +23,7 @@ Do not re-wire dreamd through this binary.
 
 ## Install (crates.io)
 
-Binary, from the `botzr-aegis-*` namespace (v0.1.0):
+Binary, from the `botzr-aegis-*` namespace (`0.3.0`):
 
 ```bash
 cargo install botzr-aegis-mcp
@@ -33,7 +33,7 @@ Library mode does not need this binary — depend on the runtime directly:
 
 ```toml
 [dependencies]
-botzr-aegis-runtime = "0.1.0"
+botzr-aegis-runtime = "0.3.0"
 ```
 
 To build from this checkout instead, see below.

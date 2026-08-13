@@ -2,6 +2,7 @@
 
 mod recheck;
 mod verify;
+mod wrap;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -55,6 +56,19 @@ pub enum Command {
         policy: PathBuf,
         path: PathBuf,
     },
+    /// Interpose on an existing stdio MCP server and record each single
+    /// `tools/call` it carries (AILAB-625).
+    ///
+    /// "Single" is load-bearing: a `tools/call` sent inside a JSON-RPC **batch
+    /// array** is relayed and **not** recorded. Wrap names that bypass on
+    /// stderr when it happens rather than hiding it — see
+    /// `crates/botzr-aegis-wrap/README.md`.
+    ///
+    /// Its own verb rather than a mode of `Run`: `run` executes a WASM component
+    /// through POLICY → CAPABILITY → SANDBOX → AUDIT, while `wrap` relays an
+    /// ordinary OS process and its only station is AUDIT. One verb spanning both
+    /// trust models is how "Aegis ran it" comes to mean two incompatible things.
+    Wrap(WrapArgs),
     Help,
 }
 
@@ -72,6 +86,23 @@ pub struct RunArgs {
     pub base_dir: Option<PathBuf>,
     pub sha256: Option<String>,
     pub version: String,
+}
+
+/// `aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]`.
+///
+/// Both paths are required, unlike `run`'s optional pair, because wrap has no
+/// temp-sink mode: the only thing an interposer produces is its record, so a
+/// wrap session writing to a throwaway file signed by the dev key would be a
+/// process that stood in the middle and proved nothing (AILAB-620).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrapArgs {
+    pub audit: PathBuf,
+    /// Path to the ed25519 seed file signing this Session. Required here rather
+    /// than conditional, for the reason above.
+    pub signing_key: PathBuf,
+    /// Everything after the literal `--`: `[0]` is the program, the rest are its
+    /// arguments. Never empty — `parse_wrap` refuses an argv with nothing in it.
+    pub child_argv: Vec<String>,
 }
 
 pub fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -103,6 +134,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         "keygen" => match parse_keygen(&args[2..]) {
             Ok(cmd) => Ok(cmd),
             Err(e) if e == "__help_keygen__" => Ok(Command::Help),
+            Err(e) => Err(e),
+        },
+        "wrap" => match parse_wrap(&args[2..]) {
+            Ok(wrap) => Ok(Command::Wrap(wrap)),
+            Err(e) if e == "__help_wrap__" => Ok(Command::Help),
             Err(e) => Err(e),
         },
         other if other.starts_with('-') => {
@@ -401,6 +437,76 @@ fn parse_recheck(args: &[String]) -> Result<Command, String> {
     })
 }
 
+/// Parse `aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]`.
+///
+/// The literal `--` ends *wrap's* parsing and takes everything after it verbatim
+/// as the child's argv. That is load-bearing rather than conventional: the child
+/// is a foreign program whose flags Aegis does not control, so
+/// `aegis wrap … -- npx some-server --help` has to hand `--help` to npx instead
+/// of printing this CLI's usage, and `--audit` after the separator has to reach
+/// the child rather than silently redirect Aegis's own record file. Nothing
+/// after `--` is inspected, reordered, or shell-split.
+///
+/// Both paths are required here, unlike `run`'s. [`check_audit_key_pair`] still
+/// runs first so the pairing mistake keeps its shared wording, but its
+/// "neither was given" arm — legal for `run`, whose default sink is a temp file
+/// — is a usage error for this verb.
+fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
+    let mut audit = None;
+    let mut signing_key = None;
+    let mut child_argv: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--audit" => {
+                i += 1;
+                let v = args.get(i).ok_or("--audit needs a value")?;
+                audit = Some(PathBuf::from(v));
+            }
+            "--signing-key" => {
+                i += 1;
+                let v = args.get(i).ok_or("--signing-key needs a value")?;
+                signing_key = Some(PathBuf::from(v));
+            }
+            "--help" | "-h" => return Err("__help_wrap__".into()),
+            "--" => {
+                child_argv = args[i + 1..].to_vec();
+                break;
+            }
+            // A bare word before the separator is a forgotten `--`, not a flag.
+            // Reporting it as `unknown flag: npx` would name the child program
+            // as the mistake and hide the one character that is actually
+            // missing.
+            other if !other.starts_with('-') => {
+                return Err(format!(
+                    "wrap takes no positional arguments; put the child command after `--` (got `{other}`)"
+                ))
+            }
+            other => return Err(format!("unknown flag: {other}")),
+        }
+        i += 1;
+    }
+
+    check_audit_key_pair(audit.as_deref(), signing_key.as_deref())?;
+    let audit = audit.ok_or("wrap requires --audit <PATH>")?;
+    let signing_key = signing_key.ok_or(
+        "wrap requires --signing-key <PATH>; generate one with `aegis keygen --out <PATH>`",
+    )?;
+    // An empty argv is refused here rather than passed on: relaying a client's
+    // stdin to a child that was never named would look like a working session
+    // that records nothing.
+    if child_argv.is_empty() {
+        return Err("wrap requires a child command after `--`".into());
+    }
+
+    Ok(WrapArgs {
+        audit,
+        signing_key,
+        child_argv,
+    })
+}
+
 pub fn usage_text() -> String {
     format!(
         "aegis {} — research runtime for secure agent tool execution\n\
@@ -408,6 +514,7 @@ pub fn usage_text() -> String {
          Usage:\n\
            aegis [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]\n\
            aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]\n\
+           aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]\n\
            aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>\n\
            aegis recheck --policy <YAML> <PATH>\n\
            aegis keygen --out <PATH> [--force]\n\
@@ -425,6 +532,15 @@ pub fn usage_text() -> String {
            --sha256 <HEX>              Optional component digest pin (G10)\n\
            --version <VER>             Tool version in manifest (default: 0.1.0)\n\
            --help, -h                  Print this help\n\
+         \n\
+         Wrap options:\n\
+           --audit <PATH>              Record file for the wrapped session (required)\n\
+           --signing-key <PATH>        ed25519 seed file signing the Session (required)\n\
+           --                          End of wrap's flags; the rest is the child argv\n\
+           --help, -h                  Print this help\n\
+         \n\
+         Wrap records; it does not confine. The child is an ordinary OS process\n\
+         with the authority of the account that started it.\n\
          \n\
          Keygen options:\n\
            --out <PATH>                Write a new signing key here (mode 0600)\n\
@@ -617,6 +733,7 @@ pub fn dispatch(cmd: Command) -> ExitCode {
             trust_store,
         } => verify::run(&path, &keys, trust_store.as_deref()),
         Command::Recheck { policy, path } => recheck::run(&policy, &path),
+        Command::Wrap(args) => wrap::run(&args),
         Command::Run(args) => match execute_run(&args) {
             Ok(out) => {
                 if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), &out) {
@@ -924,7 +1041,7 @@ mod tests {
         ] {
             assert!(usage.contains(flag), "usage missing {flag}");
         }
-        for command in ["verify", "recheck", "keygen"] {
+        for command in ["verify", "recheck", "keygen", "wrap"] {
             assert!(
                 usage.contains(command),
                 "usage missing the {command} command"
@@ -1148,6 +1265,140 @@ mod tests {
         ] {
             assert!(usage.contains(code), "usage missing exit code line {code}");
         }
+    }
+
+    /// LOAD-BEARING: `--` ends *wrap's* parsing. The child is a foreign program
+    /// whose flags Aegis does not own, so a `--help` or an `--audit` after the
+    /// separator belongs to it — otherwise wrap cannot interpose on any server
+    /// whose CLI happens to overlap with this one.
+    #[test]
+    fn parse_wrap_takes_everything_after_the_separator_verbatim() {
+        match parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--",
+            "npx",
+            "-y",
+            "some-server",
+            "--help",
+            "--audit",
+            "childs-own.jsonl",
+        ]))
+        .unwrap()
+        {
+            Command::Wrap(w) => {
+                assert_eq!(w.audit, PathBuf::from("a.jsonl"));
+                assert_eq!(w.signing_key, PathBuf::from("k.key"));
+                assert_eq!(
+                    w.child_argv,
+                    sv(&[
+                        "npx",
+                        "-y",
+                        "some-server",
+                        "--help",
+                        "--audit",
+                        "childs-own.jsonl"
+                    ]),
+                    "the child's argv must survive byte for byte"
+                );
+            }
+            other => panic!("expected Wrap, got {other:?}"),
+        }
+
+        // Flag order does not matter, and a lone program is a complete argv.
+        match parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--signing-key",
+            "k.key",
+            "--audit",
+            "a.jsonl",
+            "--",
+            "some-server",
+        ]))
+        .unwrap()
+        {
+            Command::Wrap(w) => assert_eq!(w.child_argv, sv(&["some-server"])),
+            other => panic!("expected Wrap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_wrap_usage_errors() {
+        // Help *before* the separator is still wrap's own.
+        for args in [
+            sv(&["aegis", "wrap", "--help"]),
+            sv(&["aegis", "wrap", "-h"]),
+        ] {
+            assert_eq!(parse_args(&args).unwrap(), Command::Help);
+        }
+
+        // LOAD-BEARING (AILAB-620): no temp-sink mode. An interposer's only
+        // product is its record, so both paths are required rather than
+        // defaulted.
+        assert!(parse_args(&sv(&["aegis", "wrap", "--", "cat"]))
+            .unwrap_err()
+            .contains("--audit"));
+        assert!(
+            parse_args(&sv(&["aegis", "wrap", "--audit", "a.jsonl", "--", "cat"]))
+                .unwrap_err()
+                .contains("--signing-key")
+        );
+        assert!(parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--signing-key",
+            "k.key",
+            "--",
+            "cat"
+        ]))
+        .unwrap_err()
+        .contains("--audit"));
+
+        // A child command is not optional — whether the separator is missing…
+        assert!(parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key"
+        ]))
+        .unwrap_err()
+        .contains("child command"));
+        // …or present with nothing after it.
+        assert!(parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--"
+        ]))
+        .unwrap_err()
+        .contains("child command"));
+
+        // Missing values and unknown flags, as everywhere else.
+        assert!(parse_args(&sv(&["aegis", "wrap", "--audit"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&["aegis", "wrap", "--signing-key"]))
+            .unwrap_err()
+            .contains("needs a value"));
+        assert!(parse_args(&sv(&["aegis", "wrap", "--bogus", "--", "cat"]))
+            .unwrap_err()
+            .contains("unknown flag"));
+
+        // A forgotten `--` names the missing separator rather than blaming the
+        // child program for being an unknown flag.
+        assert!(parse_args(&sv(&["aegis", "wrap", "npx", "some-server"]))
+            .unwrap_err()
+            .contains("after `--`"));
     }
 
     #[test]

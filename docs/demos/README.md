@@ -6,10 +6,10 @@ want to watch before running anything, not a substitute for running it.
 
 ## `mcp-live-deny.cast` — MCP live deny
 
-Recorded from [`scripts/mcp-live-deny-demo.sh`](../../scripts/mcp-live-deny-demo.sh).
+Recorded from [`scripts/mcp-live-deny-demo.sh`](https://github.com/botzrDev/aegis/blob/main/scripts/mcp-live-deny-demo.sh).
 Four beats:
 
-1. [`scripts/mcp-stdio-smoke.sh --deny`](../../scripts/mcp-stdio-smoke.sh) — the
+1. [`scripts/mcp-stdio-smoke.sh --deny`](https://github.com/botzrDev/aegis/blob/main/scripts/mcp-stdio-smoke.sh) — the
    assertion gate. It spawns the MCP stdio gateway over the real pipeline,
    allows an `echo` call, refuses an `exfil` call, and checks the resulting
    records. The demo exits 0 only when this exits 0.

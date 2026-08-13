@@ -4,7 +4,7 @@
 MIT-only 2026-07-05, AILAB-132)
 
 `[workspace.package] license` is `Apache-2.0 OR MIT`, and
-[`spec/SPEC.md`](../../spec/SPEC.md) carries the same terms. A recipient picks a
+[`spec/SPEC.md`](../guide/spec.md) carries the same terms. A recipient picks a
 branch; nobody has to ask.
 
 OQ-1 closed MIT-only when Aegis was a runtime and the only thing being handed to
@@ -26,7 +26,7 @@ MIT.
 **The eight crates published to crates.io at `0.3.0` are MIT as published and
 stay that way.** A registry tarball is immutable; its `license` metadata cannot
 be edited after upload, and republishing a spent version number is forbidden by
-the [standing rules](../release-checklist.md). Nothing was retagged and nothing
+the [standing rules](https://github.com/botzrDev/aegis/blob/main/docs/release-checklist.md). Nothing was retagged and nothing
 was republished for this decision. The dual license covers this repository from
 the AILAB-634 commit onward and reaches the registry with the **next** release
 cut.

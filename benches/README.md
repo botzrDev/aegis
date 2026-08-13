@@ -24,6 +24,7 @@ cargo bench -p botzr-aegis-sandbox -p botzr-aegis-audit
 | `botzr-aegis-runtime` | `hot_path` | `allow_all`, `multi_rule` |
 | `botzr-aegis-sandbox` | `instantiation` | `warm`, `cold`, `cold_engine_only` (info), `cold_compile_only` (info) |
 | `botzr-aegis-audit` | `emission` | `begin_complete`, `serialize_only` (info) |
+| `botzr-aegis-wrap` | `overhead` | `tools_call_recorded`, `ping_relayed_only` (info) |
 
 ## Latency targets
 
@@ -37,6 +38,7 @@ cargo bench -p botzr-aegis-sandbox -p botzr-aegis-audit
 | Capability alone | `capability_resolve/registered_tool` | no hard gate |
 | Attribution splits | `instantiation/cold_engine_only`, `instantiation/cold_compile_only`, `audit_emission/serialize_only` | informational only |
 | Audit emission | `audit_emission/begin_complete` | no target set (fsync-bound) |
+| Wrap relay per recorded `tools/call` | `wrap_relay/tools_call_recorded` | **0.5–2 ms** — *informational; missed at 4.371 ms, two fsyncs per call, see [`results/wrap_overhead.md`](results/wrap_overhead.md)* |
 
 Do **not** conflate these targets into a single threshold.
 

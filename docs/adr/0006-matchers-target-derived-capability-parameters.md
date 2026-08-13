@@ -2,6 +2,14 @@
 
 **Status:** accepted (2026-08-10) · lands in AILAB-626, changes [ADR-0001](./0001-aar-chain-and-envelope.md)
 
+> **Not implemented.** This is an accepted design decision, not a description of
+> shipped behaviour. Argument matchers are **not** in `v0.3.0` or current
+> `main`: the policy parser accepts `tool`, `capability`, and `role` matchers
+> only, and `path_under` does not exist anywhere in the engine — see
+> [Policy YAML](../guide/policy.md) for what evaluates today. The present-tense
+> body below records the decision as written on 2026-08-10; it is not a product
+> claim. Lands in AILAB-626 as ticketed.
+
 Report §6.2's "structured matchers over JSON arguments" is implemented as matchers over the **capability parameters the runtime derives from a call** — an `fs` path, a `net` host and port — not over raw JSON argument trees. A rule reads `deny fs.read path_under: ~/.ssh` and covers every tool regardless of whether that tool names its argument `path`, `file_path`, or `params.target.location`.
 
 Turning arguments into axes requires a **Binding** per tool. For unmodified third-party servers, Bindings are proposed from the tool's declared schema, confirmed by a human once at first call, and pinned — with a small curated table shipped for the servers that carry the D4 demo, so the flagship path does not depend on inference quality. **The authority is the approval and the pin, never the schema.**

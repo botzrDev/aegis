@@ -242,6 +242,7 @@ dependencies = [
  "botzr-aegis-core",
  "botzr-aegis-policy",
  "botzr-aegis-runtime",
+ "botzr-aegis-wrap",
  "serde_json",
  "tempfile",
 ]
@@ -263,6 +264,7 @@ dependencies = [
  "botzr-aegis-capability",
  "botzr-aegis-core",
  "botzr-aegis-runtime",
+ "botzr-aegis-wrap",
  "serde",
  "serde_json",
  "tempfile",
@@ -313,6 +315,18 @@ dependencies = [
  "tokio",
  "wasmtime",
  "wasmtime-wasi",
+]
+
+[[package]]
+name = "botzr-aegis-wrap"
+version = "0.3.0"
+dependencies = [
+ "botzr-aegis-audit",
+ "botzr-aegis-core",
+ "criterion",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
