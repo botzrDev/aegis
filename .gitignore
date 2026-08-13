@@ -12,9 +12,6 @@ tests/fixtures/**/src/bindings.rs
 # evidence-bundle.sh output (generated, stamped per run)
 /evidence/
 
-# mdBook render of docs/; CI builds it and Pages deploys it
-/docs/book/
-
 # Python governance service
 governance/.venv/
 **/__pycache__/

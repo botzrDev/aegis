@@ -22,10 +22,15 @@ Full flag tables: [`crates/botzr-aegis-cli/README.md`](https://github.com/botzrD
 
 ## `aegis keygen`
 
-Writes a fresh ed25519 seed to `--out` as 64 lowercase hex characters,
-mode `0600`. Prints `public_key` and `key_id`. Generation is never
-implicit — a key minted on the emit path would silently invalidate every
-pin held against the old one.
+Writes a fresh ed25519 seed to `--out` as 64 lowercase hex characters.
+Prints `public_key` and `key_id`. Generation is never implicit — a key
+minted on the emit path would silently invalidate every pin held against
+the old one.
+
+On Unix the file is created `0600`, and `aegis` refuses to *load* a key
+readable by group or others. Elsewhere the mode is neither set nor
+checked: there is no portable equivalent, and claiming one would be a
+guarantee the code cannot keep.
 
 ## `aegis run`
 
@@ -60,7 +65,7 @@ Reads one Chain file and reports a verdict. Exit codes are API
 | `2` | Could not read the record or the trust store |
 | `3` | `Indeterminate` |
 
-Two success labels ([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
+Two trust states ([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
 
 - **`Verified (unpinned)`** — every signature checks out against the key
   the file itself published. Internal consistency only. An attacker who
@@ -68,6 +73,11 @@ Two success labels ([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
   out clean.
 - **`Verified (pinned to <fp>)`** — same walk, plus every `open` key was
   one you supplied out of band. That is the provenance claim.
+
+A pinned file that legally rotates across several anchored keys has no
+single fingerprint to name, so it prints bare **`Verified (pinned)`** —
+still the provenance claim, just over more than one key ([SPEC.md
+§8.4](spec.md)).
 
 A quickstart that prints bare `Verified` without saying which is an
 overclaim.

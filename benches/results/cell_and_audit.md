@@ -2,7 +2,8 @@
 
 Covers the two AEG-005 rows `hot_path.md` deliberately does not: wasmtime
 instantiation (warm and cold) and audit record emission. Policy and capability
-numbers stay in [`hot_path.md`](hot_path.md).
+numbers stay in
+[`hot_path.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/hot_path.md).
 
 ## Hardware / OS
 
@@ -86,7 +87,8 @@ comparatively stable — engine construction 412–456 µs, compile/link
 29.4–29.8 ms. In run 4 the components sum to ~29.8 ms against a 39.5 ms `cold`
 median, i.e. **the splits do not reconcile with `cold` run-for-run**; only the
 per-component medians are stable enough to attribute with. Both verdicts hold in
-every run regardless: warm clears 0.5 ms by 9–10×, cold misses 5 ms by 5.6–7.9×.
+every run regardless: warm clears 0.5 ms by 8.6–10.1×, cold misses 5 ms by
+5.6–7.9×.
 
 ## What each group actually measures
 

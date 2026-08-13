@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use Aegis in academic or published work, please cite it as below."
+title: "Aegis: a reproducible runtime for testing what agent tool isolation actually guarantees"
+abstract: >-
+  Aegis is a research instrument for secure agent tool execution. Every tool
+  call walks a fixed enforcement pipeline — policy evaluation, capability
+  resolution, sandboxed execution — with audit wrapping all three, so that
+  denials, traps, resource-cap trips, and panics all produce records. It
+  distinguishes two trust models explicitly: Model A, where tool logic runs
+  inside a wasmtime WebAssembly component with cap-std filesystem scoping and
+  per-call resource ceilings, and Model B, where the effect runs in host Rust
+  and receives a capability check and an audit record but no sandbox
+  isolation. The project's purpose is to make isolation claims falsifiable
+  rather than assumed: it ships a threat model with named non-goals, an
+  adversarial test suite, hash-chained signed audit records with a documented
+  wire format, and benchmarks reported with hardware and toolchain
+  attribution.
+type: software
+authors:
+  - family-names: Green
+    given-names: Austin
+    email: austin@botzr.com
+    affiliation: Botzr AI Labs
+version: 0.3.0
+date-released: "2026-08-09"
+license:
+  - Apache-2.0
+  - MIT
+repository-code: "https://github.com/botzrDev/aegis"
+url: "https://botzrdev.github.io/aegis/"
+keywords:
+  - agent security
+  - capability-based security
+  - sandboxing
+  - WebAssembly
+  - wasmtime
+  - policy enforcement
+  - audit logging
+  - Rust
+  - Model Context Protocol

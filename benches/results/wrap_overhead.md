@@ -9,7 +9,10 @@ child spawned, 50 scripted JSON-RPC lines relayed and answered, child reaped,
 **What it deliberately does not cover.** This is not a confinement cost: wrap
 records, it does not confine, and the capability/sandbox stations never run here
 (AILAB-626/628). It is not a policy or wasmtime number either — those live in
-[`hot_path.md`](hot_path.md) and [`cell_and_audit.md`](cell_and_audit.md). It is
+[`hot_path.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/hot_path.md)
+and
+[`cell_and_audit.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/cell_and_audit.md).
+It is
 not a portable figure: a recorded call is two JSONL lines and therefore two
 `sync_all` calls, so the median is dominated by this filesystem. And it is not a
 measure of any real MCP server's work — the child is the in-repo mirror fixture,

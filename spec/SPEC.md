@@ -413,10 +413,18 @@ grant naming several roots has not resolved the Call to *a* path, and the axis i
 evidence that reads as fact and is not.
 
 Both `path_raw` and `path_canonical` are recorded because a difference between
-them is itself evidence. In this version they carry the same string, because the
-capability resolver canonicalizes at mint time; the pair exists now so that
-AILAB-626 resolving a caller-supplied path against a root is not a breaking
-change to the shape.
+them is itself evidence. The pair exists now so that AILAB-626 resolving a
+caller-supplied path against a root is not a breaking change to the shape.
+
+**The two are independent fields, and a verifier MUST NOT assume they are
+equal.** The *shipped emitter* in this version always writes the same string
+into both, because the capability resolver canonicalizes at mint time and the
+grant therefore only ever holds the canonical form
+([`crates/botzr-aegis-runtime/src/pipeline.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-runtime/src/pipeline.rs),
+`fs_axis`). That is a property of this emitter, not a constraint of the format:
+the test vector in §11.2 deliberately carries divergent values so that an
+implementation built from this document handles the post-AILAB-626 shape today
+rather than hard-coding today's equality and breaking later.
 
 #### `decision`
 
@@ -857,6 +865,13 @@ This is the vector that matters for ADR-0001's claim that a recorded deny can
 explain itself: `role`, `capability`, `session` and `matched_rule` are all on the
 Line, so the verdict can be reconstructed from the record alone without the
 request payload.
+
+Note that its `fs` axis carries `path_raw` `./notes.md` and `path_canonical`
+`/fixtures/notes.md` — **two different strings, on purpose**. The shipped
+emitter writes the same string into both today (§5.3); the vector diverges so
+that an implementation built from this document is exercised on the general
+case rather than on today's coincidence. Do not read it as a sample of runtime
+output.
 
 The remaining Lines — including `session_close.json`, and `decision.json` with an
 approved scope — are in the same directory and chain in the order listed above.

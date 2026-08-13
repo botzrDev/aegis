@@ -5,7 +5,7 @@ This folder is the source of the Aegis documentation book. Navigation lives in
 tells you nothing and the table of contents tells you everything.
 
 ```bash
-cd docs && mdbook serve    # http://localhost:3000
+cd docs && mdbook serve    # http://localhost:3000, output in target/book/
 ```
 
 Start at [Introduction](intro.md).
@@ -42,7 +42,7 @@ Start at [Introduction](intro.md).
 | [Threat model](threat-model.md) | Scope, trust boundaries, named non-goals, residual risks |
 | [Findings](findings.md) | What isolation is measured to guarantee — and not |
 | [Record format](spec.md) | The Agent Action Record wire contract (includes `spec/SPEC.md`) |
-| [Benchmarks](benchmarks.md) | Published numbers on cited hardware |
+| [Benchmarks](benchmarks.md) | Published numbers on cited hardware, including both missed targets |
 | [Demos](demos/) | Watchable reproductions |
 
 ## Reference

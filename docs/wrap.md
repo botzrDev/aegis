@@ -77,5 +77,19 @@ OS confinement (Landlock / seccomp on Linux, Seatbelt on macOS) is
 Backlog, not shipped. Do not lead with a capability the reader may not
 have.
 
+## What recording costs
+
+Interposing is not free, and the number **misses its target**:
+`wrap_relay/tools_call_recorded` measures **4.371 ms per recorded
+`tools/call`** against an informational 0.5–2 ms budget — ~2.19× over. A
+relayed message that is *not* recorded costs 136.05 µs, so essentially the
+whole difference is the recording itself: an `intent` and an `outcome` line,
+each flushed and `sync_all`'d under the shipped G3 durability default. Two
+fsyncs cost ~4.2 ms on the reference filesystem on their own, which is why no
+arrangement of wrap code reaches 2 ms while durability stays where it is.
+
+Expect a different figure on a different filesystem, and see
+[Benchmarks](benchmarks.md) for the hardware and the full attribution.
+
 The library crate is
 [`botzr-aegis-wrap`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-wrap/README.md).

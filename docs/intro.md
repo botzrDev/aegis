@@ -53,8 +53,12 @@ From the repository root:
 
 ```bash
 cd docs && mdbook serve    # http://localhost:3000
-cd docs && mdbook build --dest-dir ../target/book
+cd docs && mdbook build
 ```
+
+Both write to `target/book/`. That is `build-dir` in `book.toml`, not a
+default: the book's `src` is `docs/` itself, so an output directory inside
+`docs/` would be copied back into the next build as a nested duplicate.
 
 mdBook 0.5.4 is what CI pins, and the same pinned build publishes this book
 to <https://botzrdev.github.io/aegis/> on every push to `main`.

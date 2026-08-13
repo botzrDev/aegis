@@ -30,11 +30,19 @@ recorded no axes". Every Decision Axis lives in the Chain, because
 itself, next to the verdict, so it is not repeated.
 
 `fs` and `net` are recorded today, but they describe the **grant the call
-resolved under**, not a caller-supplied argument: `fs` carries the grant's
-single preopen root, and is omitted entirely when a grant names more than
-one. `path_raw` and `path_canonical` hold the same string for now — the
-pair exists because the two diverge once a caller path is resolved
-*against* that root. *Matching* on these axes is not shipped
+resolved under**, not a caller-supplied argument. Both follow the same
+exactly-one-or-omit rule: `fs` carries the grant's single preopen root and is
+omitted when a grant names more than one; `net` carries a single host and port
+and is omitted when the grant holds more than one HTTP entry *or* that entry
+names more than one port. An arbitrary one of N would be evidence that reads
+as fact and is not.
+
+The shipped emitter writes the same string into `path_raw` and
+`path_canonical` — the pair exists because the two diverge once a caller path
+is resolved *against* that root. That is a property of this emitter, not of
+the format: [SPEC.md §5.3](spec.md) states them as independent fields, and its
+test vector carries divergent values deliberately. *Matching* on these axes is
+not shipped
 ([ADR-0006](adr/0006-matchers-target-derived-capability-parameters.md)).
 *Avoid:* policy inputs, request context, arguments.
 

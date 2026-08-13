@@ -5,6 +5,15 @@ description = "A reproducible runtime for testing what agent tool isolation actu
 language = "en"
 src = "."
 
+# LOAD-BEARING, because `src = "."`. mdBook's default build dir is `book/`
+# relative to this file — i.e. *inside* the source tree — and every later build
+# then copies that whole output back in as a static asset, producing a nested
+# `book/book/` duplicate. Pointing it outside `docs/` makes a bare
+# `mdbook serve` safe and lands output where CI already puts it, so the
+# documented command and the published artifact agree.
+[build]
+build-dir = "../target/book"
+
 [output.html]
 git-repository-url = "https://github.com/botzrDev/aegis"
 edit-url-template = "https://github.com/botzrDev/aegis/edit/main/docs/{path}"

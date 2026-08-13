@@ -1,0 +1,82 @@
+name: Proposal
+description: Suggest a change to behaviour, scope, or documentation.
+labels: ["proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        The v1 runtime scope is deliberately locked to five components: policy,
+        capability, sandbox, audit, and resource accounting. Multi-agent
+        orchestration, dashboards, cryptographic transparency logs, and hosted
+        services are named non-goals. Proposals in those areas will be
+        declined regardless of quality — please read
+        [the threat model](https://botzrdev.github.io/aegis/threat-model.html)
+        first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: >-
+        Describe the situation you hit, not the solution you have in mind. If
+        you can point at a concrete case where Aegis gives a wrong or
+        unverifiable answer today, lead with that.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part does it touch?
+      options:
+        - Policy (station 1)
+        - Capability (station 2)
+        - Sandbox (station 3)
+        - Audit / record format
+        - Resource accounting
+        - CLI
+        - MCP gateway or wrap
+        - Documentation only
+        - Something outside the locked v1 scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: guarantee
+    attributes:
+      label: What does it change about what Aegis can claim?
+      description: >-
+        Does it make an existing guarantee stronger, cheaper to verify, or
+        honestly narrower? Does it weaken one? A change that adds capability
+        without changing what can be claimed is a hard sell here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: >-
+        Including doing nothing. If this warrants an ADR, note what the
+        rejected options were.
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before submitting
+      options:
+        - label: >-
+            I have read the threat model and this is not one of the named
+            non-goals.
+          required: true
+        - label: >-
+            This does not require `unsafe` code, ambient authority, or
+            reordering the POLICY → CAPABILITY → SANDBOX pipeline.
+          required: true

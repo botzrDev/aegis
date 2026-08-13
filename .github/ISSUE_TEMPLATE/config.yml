@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/botzrDev/aegis/security/advisories/new
+    about: >-
+      Do not open a public issue for a vulnerability. Use private reporting, or
+      email support@botzr.com. See SECURITY.md for the disclosure process.
+  - name: Documentation
+    url: https://botzrdev.github.io/aegis/
+    about: >-
+      The docs book covers install, the enforcement pipeline, the two trust
+      models, policy YAML, and the record format spec.
+  - name: Threat model and named non-goals
+    url: https://botzrdev.github.io/aegis/threat-model.html
+    about: >-
+      Read this before filing a gap as a bug. Several things Aegis does not do
+      are deliberate and documented.

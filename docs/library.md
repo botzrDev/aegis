@@ -9,7 +9,7 @@ use std::path::Path;
 use botzr_aegis_runtime::{BuildError, RuntimeBuilder};
 
 fn main() -> Result<(), BuildError> {
-    let mut rt = RuntimeBuilder::new()
+    let _rt = RuntimeBuilder::new()
         .policy_file(Path::new("policy.yaml"))?
         .audit_file(Path::new("/tmp/audit.jsonl"), Path::new("/tmp/aegis-signing.key"))?
         .build()?;
@@ -18,7 +18,9 @@ fn main() -> Result<(), BuildError> {
 ```
 
 Each builder step returns `Result`, so the chain needs a `Result`-returning
-scope — the `?`s above do not work at the top level of a snippet.
+scope — the `?`s above do not work at the top level of a snippet. The binding
+is `_rt` because this snippet only shows construction; name it `rt` once you
+call something on it.
 
 `audit_file` takes the signing key's path and it is **not** optional. A
 persistent record file is one somebody will later pin a

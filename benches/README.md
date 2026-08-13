@@ -1,12 +1,21 @@
 # Aegis benchmarks (AEG-16 / OQ-15 T5 · AEG-005 / AILAB-683)
 
-Two independent scopes, published to two separate results files:
+Three independent scopes, published to three separate results files:
 
-- **Library-mode hot path** — policy evaluation and capability resolution.
-  Sandbox, audit, and wasmtime are intentionally **not** timed in the
-  `hot_path` bench, and that non-goal still stands.
-- **Cell + audit** — wasmtime warm/cold instantiation and audit record
-  emission, added by AILAB-683 in their own bench targets.
+- **Library-mode hot path** ([`results/hot_path.md`](results/hot_path.md)) —
+  policy evaluation and capability resolution. Sandbox, audit, and wasmtime are
+  intentionally **not** timed in the `hot_path` bench, and that non-goal still
+  stands.
+- **Cell + audit** ([`results/cell_and_audit.md`](results/cell_and_audit.md)) —
+  wasmtime warm/cold instantiation, audit record emission, and isolated ed25519
+  line signing, added by AILAB-683 / AILAB-620 in their own bench targets.
+- **Wrap relay** ([`results/wrap_overhead.md`](results/wrap_overhead.md)) —
+  what it costs to put `aegis wrap` between an MCP client and a stdio child,
+  added by AILAB-625.
+
+All three are `{{#include}}`d verbatim into the book's
+[Benchmarks](../docs/benchmarks.md) chapter, so anything added here is
+published there. Keep the targets table below in sync with that page.
 
 ## Run
 
@@ -18,6 +27,15 @@ cargo bench -p botzr-aegis-sandbox -p botzr-aegis-audit
 cargo bench -p botzr-aegis-wrap
 ```
 
+`botzr-aegis-audit` declares two bench targets, `emission` and `sign`; the
+package line above runs both. To run just the signing group — which is how
+`results/cell_and_audit.md` records it, because it was measured on its own
+day:
+
+```bash
+cargo bench -p botzr-aegis-audit --bench sign
+```
+
 | Package | Bench target | Groups |
 |---|---|---|
 | `botzr-aegis-policy` | `policy_eval` | `allow_all`, `multi_rule`, `rate_limit` (info) |
@@ -25,6 +43,7 @@ cargo bench -p botzr-aegis-wrap
 | `botzr-aegis-runtime` | `hot_path` | `allow_all`, `multi_rule` |
 | `botzr-aegis-sandbox` | `instantiation` | `warm`, `cold`, `cold_engine_only` (info), `cold_compile_only` (info) |
 | `botzr-aegis-audit` | `emission` | `begin_complete`, `serialize_only` (info) |
+| `botzr-aegis-audit` | `sign` | `sign_outcome_line` |
 | `botzr-aegis-wrap` | `overhead` | `tools_call_recorded`, `ping_relayed_only` (info) |
 
 ## Latency targets
@@ -35,6 +54,7 @@ cargo bench -p botzr-aegis-wrap
 | Combined policy + capability | `hot_path/multi_rule` | **&lt; 1 ms** |
 | Warm cell instantiation | `instantiation/warm` | **&lt; 0.5 ms** |
 | Cold instantiation | `instantiation/cold` | **&lt; 5 ms** — *missed; target under review, see below* |
+| ed25519 line signing | `audit_signing/sign_outcome_line` | **&lt; 50 µs** (AILAB-620) — *met at 13.765 µs* |
 | Rate-limit path | `policy_eval/rate_limit` | informational only (mutex) |
 | Capability alone | `capability_resolve/registered_tool` | no hard gate |
 | Attribution splits | `instantiation/cold_engine_only`, `instantiation/cold_compile_only`, `audit_emission/serialize_only` | informational only |

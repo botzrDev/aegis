@@ -216,6 +216,18 @@ the Phase 2 gateway is MCP over stdio, so use `botzr-aegis-mcp` instead. Do not
 confuse that gateway (Aegis's own catalog) with `aegis wrap` (an interposer in
 front of someone else's server).
 
+## Contributing
+
+Setup, the gates CI enforces, and the invariants a reviewer will check are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Participation is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+**Security vulnerabilities do not go in the issue tracker** — follow
+[`SECURITY.md`](SECURITY.md).
+
+If you cite Aegis in published work, [`CITATION.cff`](CITATION.cff) carries the
+metadata; GitHub renders it as a "Cite this repository" button in the sidebar.
+
 ## License
 
 Dual licensed under either of

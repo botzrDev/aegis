@@ -158,6 +158,8 @@ Schema drift fails CI. Cite these fixtures:
 
 **Unit / crate goldens —** `crates/botzr-aegis-audit/tests/golden/`
 
+The eight outcome-class goldens this freeze covers:
+
 - `policy_deny.json`
 - `capability_denied.json`
 - `rate_limit.json`
@@ -166,6 +168,13 @@ Schema drift fails CI. Cite these fixtures:
 - `resource_exceeded.json`
 - `panic.json` — `Drop` panic-guard outcome (default-deny seeds + host-panic trap)
 - `abandoned_session.json` — begun-but-never-completed outcome (default-deny seeds + `host_denied` `session abandoned`)
+
+> **That directory now holds twelve files, not eight.** Schema v2 added
+> `session_open.json`, `session_close.json` and `decision.json` for the three
+> line types v1 had no concept of, and `intent.json` for the pre-work line this
+> page documents but never froze. The four are outside this freeze; they are
+> specified, with their canonical bytes and chain hashes, in
+> [`spec/SPEC.md`](spec.md) §11.2.
 
 **Deny-suite goldens —** `tests/deny-suite/tests/golden/`
 

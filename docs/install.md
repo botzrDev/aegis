@@ -43,11 +43,18 @@ and every release cut after `0.3.0` are dual `Apache-2.0 OR MIT`
 ```bash
 git clone https://github.com/botzrDev/aegis
 cd aegis
-rustup target add wasm32-wasip2
 cargo build -p botzr-aegis-cli
 ```
 
 `main` is where `keygen`, `verify`, `recheck`, and `wrap` live. MSRV is 1.86.
+
+The binary itself needs no WASM target — it depends on no fixture crate. Add
+one before running the test suite or the [quickstart](quickstart.md), which do
+build `wasm32-wasip2` guests:
+
+```bash
+rustup target add wasm32-wasip2
+```
 
 ## MCP gateway
 
@@ -61,4 +68,6 @@ It is not an interposer in front of someone else's server. For that, see
 
 The published `0.3.0` gateway takes `--policy` and `--audit` only. It has
 no `--signing-key`, so the signed-record workflow in the
-[MCP gateway chapter](mcp.md#what-030-does-instead) needs a source build.
+[MCP gateway chapter](mcp.md#run) needs a source build — that chapter's
+[What `0.3.0` does instead](mcp.md#what-030-does-instead) spells out the
+difference.

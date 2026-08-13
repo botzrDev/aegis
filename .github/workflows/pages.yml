@@ -7,7 +7,11 @@ on:
       - 'docs/**'
       - 'spec/SPEC.md'
       - 'SECURITY.md'
-      - 'benches/results/hot_path.md'
+      # Every file under results/ is `{{#include}}`d by docs/benchmarks.md, so
+      # each one is a book page. Globbed rather than listed: a new results file
+      # that silently stops republishing the book is how a missed target ends up
+      # documented everywhere except the site.
+      - 'benches/results/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

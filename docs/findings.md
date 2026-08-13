@@ -257,7 +257,7 @@ signature check over that record file:
 - A recording is committed at
   [`docs/demos/mcp-live-deny.cast`](demos/mcp-live-deny.cast) — replay it with
   `asciinema play docs/demos/mcp-live-deny.cast`, or see
-  [`docs/demos/README.md`](demos/) for what each beat shows.
+  [Demos](demos/) for what each beat shows.
 
 ---
 
@@ -272,7 +272,7 @@ No raw number in this report originates here; each is a citation:
   hardware cited in that file (WSL2 Linux, AMD Ryzen AI 5 340, rustc 1.96.0,
   Criterion 0.5.1, dated 2026-07-09).
 - **Instantiation and audit-emission numbers** come from
-  [`benches/results/cell_and_audit.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/cell_and_audit.md):
+  [`benches/results/cell_and_audit.md`](benchmarks.md):
   `instantiation/warm` 49.339 µs median against a <0.5 ms target, and
   `instantiation/cold` 39.490 ms against a <5 ms target — **the cold target is
   missed**, with engine construction only ~1–2% of it and component

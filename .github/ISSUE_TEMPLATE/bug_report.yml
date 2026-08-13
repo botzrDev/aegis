@@ -1,0 +1,101 @@
+name: Bug report
+description: Something behaves differently than documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **Not for security vulnerabilities.** If this is an isolation bypass, a
+        capability escape, or anything that lets a tool call do something the
+        grant should have prevented, close this and follow
+        [SECURITY.md](https://github.com/botzrDev/aegis/blob/main/SECURITY.md)
+        instead.
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: How did you install it?
+      description: >-
+        This matters more than usual. The published 0.3.0 crates predate
+        several features documented in the book — signing, the schema v2 audit
+        chain, and the keygen / verify / recheck / wrap subcommands are all
+        `main` only.
+      options:
+        - crates.io (0.3.0)
+        - Built from source on main
+        - Built from source on a tag or branch other than main
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit SHA
+      placeholder: "0.3.0, or a commit SHA if built from source"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: trust-model
+    attributes:
+      label: Which execution path?
+      description: >-
+        Model A runs tool logic inside wasmtime. Model B runs the effect in
+        host Rust with a capability check and audit only, and no sandbox
+        isolation. `aegis wrap` records an external MCP server without
+        confining it.
+      options:
+        - Model A (WASM tool)
+        - Model B (host function)
+        - aegis wrap (MCP interposer)
+        - MCP gateway (botzr-aegis-mcp)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and where is that documented?
+      description: >-
+        Link the doc, README line, or spec section that led you to expect it.
+        If the documentation is what is wrong, say so — that is a valid bug
+        here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >-
+        Exact commands. A failing test is ideal. Include the policy YAML and
+        tool manifest if the behaviour depends on them.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: audit
+    attributes:
+      label: Relevant audit records
+      description: >-
+        The JSONL lines for the affected call, if you have them. Redact
+        anything sensitive — note that records carry digests rather than raw
+        payloads, but paths and tool identifiers are in the clear.
+      render: json
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Rust version
+      placeholder: "Ubuntu 24.04 (WSL2), rustc 1.86.0"
+    validations:
+      required: true
