@@ -20,14 +20,17 @@ mod error;
 mod profile;
 
 pub use error::ConfineError;
-pub use profile::{ConfinementProfile, EnforcedConfinement, NetAllow, PROFILE_ENV, REPORT_ENV};
+pub use profile::{
+    exec_support_paths, ConfinementProfile, EnforcedConfinement, NetAllow, EXEC_SUPPORT_PATHS,
+    PROFILE_ENV, REPORT_ENV,
+};
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
     apply_landlock, apply_seccomp, load_profile_from_env, open_report, probe_landlock_abi,
-    restrict_self, write_report, LandlockOutcome,
+    restrict_self, write_report, LandlockOutcome, SeccompOutcome,
 };
 
 #[cfg(not(target_os = "linux"))]

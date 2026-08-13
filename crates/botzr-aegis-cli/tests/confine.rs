@@ -12,6 +12,15 @@ use tempfile::TempDir;
 
 const HANG_GUARD: Duration = Duration::from_secs(30);
 
+/// Opt-out for a host with no Landlock. Anything else is a failure — a suite
+/// that reports `ok` on zero coverage is worse than a red one (AILAB-628
+/// verification, 2026-08-13).
+const NO_LANDLOCK: &str = "AEGIS_ALLOW_NO_LANDLOCK";
+
+fn no_landlock_opt_out() -> bool {
+    std::env::var(NO_LANDLOCK).as_deref() == Ok("1")
+}
+
 fn aegis() -> Command {
     Command::new(env!("CARGO_BIN_EXE_aegis"))
 }
@@ -22,16 +31,14 @@ fn sibling_bin(name: &str) -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
+/// The product's loader set, plus the directory the test binaries live in.
+///
+/// Deliberately **not** a local list: the shipped `--allow-exec-support` and
+/// this must be the same set, or the suite goes green on a profile no
+/// operator can build (AILAB-628 verification, 2026-08-13).
 fn exec_support_paths() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for p in [
-        "/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc", "/dev", "/proc", "/tmp",
-    ] {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            out.push(path);
-        }
-    }
+    let mut out = botzr_aegis_confine::exec_support_paths();
+    out.push(std::env::temp_dir());
     if let Some(parent) = PathBuf::from(env!("CARGO_BIN_EXE_aegis")).parent() {
         out.push(parent.to_path_buf());
     }
@@ -80,8 +87,8 @@ fn confine_exec_through_the_aegis_binary() {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("Landlock is not available") {
-            eprintln!("skip: kernel does not support Landlock ({stderr})");
+        if stderr.contains("Landlock is not available") && no_landlock_opt_out() {
+            eprintln!("skip: {NO_LANDLOCK}=1 and this kernel has no Landlock");
             return;
         }
         panic!(
@@ -97,12 +104,19 @@ fn confine_exec_through_the_aegis_binary() {
         "shape: an ABI was recorded, got {enforced}"
     );
     assert_eq!(enforced["seccomp_applied"], true, "{enforced}");
+    // A filter was installed *and* it denies something. The pair is the
+    // point: `seccomp_applied` alone is true for an empty rule set.
+    assert_eq!(enforced["seccomp_network_denied"], true, "{enforced}");
 }
 
 #[test]
 fn wrap_confine_end_to_end_with_botzr_aegis_mcp() {
+    // A missing sibling binary is a real skip: `cargo test -p botzr-aegis-cli`
+    // does not build the gateway. It is announced on stdout, which the harness
+    // shows for a passing test only under --nocapture, so it is also asserted
+    // by the workspace run where the binary is always present.
     let Some(mcp) = sibling_bin("botzr-aegis-mcp") else {
-        eprintln!(
+        println!(
             "skip: botzr-aegis-mcp binary is not next to aegis \
              (build the workspace, not -p botzr-aegis-cli alone)"
         );
@@ -121,9 +135,17 @@ fn wrap_confine_end_to_end_with_botzr_aegis_mcp() {
         .arg(&audit)
         .arg("--signing-key")
         .arg(&key)
-        .arg("--confine");
-    for p in exec_support_paths() {
-        cmd.arg("--allow-read").arg(&p);
+        .arg("--confine")
+        // The shipped flag, not a hand-rolled list of loader paths. This is
+        // the exact invocation `docs/wrap.md` documents; if it stops being
+        // enough to start a dynamically linked child, this test is where that
+        // shows up rather than in an operator's terminal.
+        .arg("--allow-exec-support");
+    // The directory the binaries live in is not part of the loader set — the
+    // child is `botzr-aegis-mcp` sitting in `target/debug`, which no shipped
+    // default should be granting.
+    if let Some(parent) = PathBuf::from(env!("CARGO_BIN_EXE_aegis")).parent() {
+        cmd.arg("--allow-read").arg(parent);
     }
     cmd.arg("--allow-read")
         .arg(dir.path())
@@ -161,10 +183,12 @@ fn wrap_confine_end_to_end_with_botzr_aegis_mcp() {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("Landlock is not available")
-            || stderr.contains("cannot be fully enforced")
-        {
-            eprintln!("skip: kernel cannot enforce confinement ({stderr})");
+        // Only a kernel with no Landlock at all is skippable, and only on the
+        // explicit opt-in. "Cannot be fully enforced" used to skip here too,
+        // which meant a profile this build cannot apply — the exact regression
+        // worth catching — reported green.
+        if stderr.contains("Landlock is not available") && no_landlock_opt_out() {
+            eprintln!("skip: {NO_LANDLOCK}=1 and this kernel has no Landlock");
             return;
         }
         panic!(
@@ -195,4 +219,7 @@ fn wrap_confine_end_to_end_with_botzr_aegis_mcp() {
         "shape: ABI recorded, got {enforced}"
     );
     assert_eq!(enforced["seccomp_applied"], true, "{enforced}");
+    // A filter was installed *and* it denies something. The pair is the
+    // point: `seccomp_applied` alone is true for an empty rule set.
+    assert_eq!(enforced["seccomp_network_denied"], true, "{enforced}");
 }

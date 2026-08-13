@@ -19,6 +19,36 @@ pub const PROFILE_ENV: &str = "AEGIS_CONFINE_PROFILE";
 /// Also stripped before `exec`.
 pub const REPORT_ENV: &str = "AEGIS_CONFINE_REPORT";
 
+/// Read-only paths a dynamically linked child needs before its own `main`
+/// runs: the loader, libc, and the interpreter's own installation.
+///
+/// **This is a named hole, not a rounding error.** A profile carrying these
+/// can still read `/etc/passwd` and walk `/proc`. It is not granted by
+/// default and never inferred from a grant — `aegis wrap` adds it only when
+/// the operator passes `--allow-exec-support`, so the widening is a decision
+/// somebody made rather than one Aegis made for them.
+///
+/// Without it, confinement is only usable for a static binary: Landlock is
+/// deny-by-default, so a profile of `--allow-read /var/data` alone means the
+/// loader cannot map libc and `execve` fails with `EACCES` before the child
+/// exists (AILAB-628 verification, 2026-08-13).
+pub const EXEC_SUPPORT_PATHS: &[&str] = &[
+    "/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc", "/dev", "/proc",
+];
+
+/// [`EXEC_SUPPORT_PATHS`] filtered to those that exist on this host.
+///
+/// A path that is not there cannot be opened for a Landlock rule, and under
+/// the fail-closed default an unopenable granted path refuses the exec — so
+/// a `/lib32`-less distro must not be handed a profile naming it.
+pub fn exec_support_paths() -> Vec<PathBuf> {
+    EXEC_SUPPORT_PATHS
+        .iter()
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+        .collect()
+}
+
 /// One host:port the grant named. An empty [`ConfinementProfile::net`] means
 /// deny every network syscall — that is seccomp's job, not Landlock's.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -73,6 +103,20 @@ impl ConfinementProfile {
         self.best_effort = best_effort;
         self
     }
+
+    /// Add [`exec_support_paths`] as reads. Operator opt-in
+    /// (`--allow-exec-support`), never inferred from the grant — see the
+    /// constant's docs for what it opens up.
+    pub fn with_exec_support(mut self, enabled: bool) -> Self {
+        if enabled {
+            for path in exec_support_paths() {
+                if !self.read_paths.contains(&path) {
+                    self.read_paths.push(path);
+                }
+            }
+        }
+        self
+    }
 }
 
 /// What the kernel actually gave us. Distinct type from the request, on purpose:
@@ -81,7 +125,19 @@ impl ConfinementProfile {
 pub struct EnforcedConfinement {
     pub landlock_abi: i32,
     pub landlock_fully_enforced: bool,
+    /// A filter was installed. **Not** the same as "syscalls were denied":
+    /// when the grant carries network authority the filter is installed with
+    /// an empty rule set and denies nothing. Read this with
+    /// [`Self::seccomp_network_denied`], never alone.
     pub seccomp_applied: bool,
+    /// The installed filter kills the network syscalls on `SIGSYS`. False
+    /// when the grant carried a `NetGrant`, because then nothing is denied.
+    ///
+    /// Separate field rather than a richer `seccomp_applied`, because
+    /// ADR-0007's rule is that the record states what was *enforced*: a bool
+    /// that is true for a filter denying nothing is precisely the overclaim
+    /// that rule exists to prevent (AILAB-628 verification, 2026-08-13).
+    pub seccomp_network_denied: bool,
 }
 
 #[cfg(test)]
@@ -127,6 +183,46 @@ mod tests {
                 ports: vec![443, 80],
             }]
         );
+    }
+
+    /// The loader set is an operator decision, never something a grant can
+    /// imply. A grant that names no paths must not acquire `/etc` and `/proc`
+    /// because the child happened to be dynamically linked.
+    #[test]
+    fn exec_support_is_opt_in_and_never_inferred_from_the_grant() {
+        let bare = ConfinementProfile::from_grant(&grant());
+        assert!(bare.read_paths.is_empty(), "no grant, no paths");
+        assert!(
+            ConfinementProfile::from_grant(&grant())
+                .with_exec_support(false)
+                .read_paths
+                .is_empty(),
+            "opt-out must stay empty"
+        );
+
+        let opted_in = ConfinementProfile::from_grant(&grant()).with_exec_support(true);
+        assert!(
+            !opted_in.read_paths.is_empty(),
+            "opt-in must grant the loader set on any host this can run on"
+        );
+        for path in exec_support_paths() {
+            assert!(opted_in.read_paths.contains(&path), "missing {path:?}");
+        }
+        // Idempotent: two opt-ins are one grant, not a duplicated rule set.
+        assert_eq!(
+            opted_in.clone().with_exec_support(true).read_paths,
+            opted_in.read_paths
+        );
+    }
+
+    /// Every advertised support path that exists resolves; a host missing one
+    /// (no `/lib32`) must not be handed a profile naming it, because an
+    /// unopenable granted path refuses the exec under the fail-closed default.
+    #[test]
+    fn exec_support_paths_are_filtered_to_what_exists() {
+        for path in exec_support_paths() {
+            assert!(path.exists(), "{path:?} was offered but does not exist");
+        }
     }
 
     #[test]

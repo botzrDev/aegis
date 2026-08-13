@@ -65,6 +65,18 @@ pub(crate) fn run(child_argv: &[String]) -> ExitCode {
         .env_remove(botzr_aegis_confine::REPORT_ENV)
         .exec();
     eprintln!("aegis __confine-exec: exec {}: {err}", child_argv[0]);
+    // The overwhelmingly common cause, and one an operator cannot guess from
+    // `Permission denied`: the confinement is working, and the loader is on
+    // the wrong side of it. Landlock is deny-by-default, so a dynamically
+    // linked child cannot even start without read on /lib, /usr and friends.
+    if err.kind() == std::io::ErrorKind::PermissionDenied {
+        eprintln!(
+            "aegis __confine-exec: the profile may not cover the dynamic loader. \
+             A dynamically linked program needs read on {}. \
+             Pass `--allow-exec-support` to `aegis wrap` to grant them.",
+            botzr_aegis_confine::EXEC_SUPPORT_PATHS.join(" ")
+        );
+    }
     ExitCode::from(1)
 }
 

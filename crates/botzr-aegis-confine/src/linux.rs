@@ -31,12 +31,20 @@ const ABI_PROBE_MAX: i32 = 9;
 /// full profile, this is an error and the caller must not exec.
 pub fn restrict_self(profile: &ConfinementProfile) -> Result<EnforcedConfinement, ConfineError> {
     let landlock = apply_landlock(profile)?;
-    let seccomp_applied = apply_seccomp(profile)?;
+    let seccomp = apply_seccomp(profile)?;
     Ok(EnforcedConfinement {
         landlock_abi: landlock.abi,
         landlock_fully_enforced: landlock.fully,
-        seccomp_applied,
+        seccomp_applied: seccomp.applied,
+        seccomp_network_denied: seccomp.network_denied,
     })
+}
+
+/// What the installed seccomp filter actually does, kept apart from the fact
+/// that one was installed at all.
+pub struct SeccompOutcome {
+    pub applied: bool,
+    pub network_denied: bool,
 }
 
 pub struct LandlockOutcome {
@@ -165,12 +173,20 @@ fn openable_paths(
 /// (`socket`/`connect`/`bind`/…); a non-empty grant leaves them allowed.
 /// Default action is Allow so `execve` and the dynamic loader's syscalls
 /// pass (ADR-0007 unverified fact 4).
-pub fn apply_seccomp(profile: &ConfinementProfile) -> Result<bool, ConfineError> {
+///
+/// **The default action is Allow, so this is a deny-list of network syscalls
+/// and nothing more.** It is not a general syscall sandbox: `ptrace`,
+/// `unshare`, `mount` and everything else this list does not name are
+/// permitted. The ticket's requirement is that network syscalls are denied
+/// without a `NetGrant`, and that is exactly what this does — the returned
+/// [`SeccompOutcome`] says so rather than letting a caller read more into it.
+pub fn apply_seccomp(profile: &ConfinementProfile) -> Result<SeccompOutcome, ConfineError> {
     let arch = std::env::consts::ARCH
         .try_into()
         .map_err(|e| ConfineError::Seccomp(format!("{e:?}")))?;
 
-    let rules: BTreeMap<i64, Vec<seccompiler::SeccompRule>> = if profile.net.is_empty() {
+    let network_denied = profile.net.is_empty();
+    let rules: BTreeMap<i64, Vec<seccompiler::SeccompRule>> = if network_denied {
         network_syscalls()
             .into_iter()
             .map(|n| (n, Vec::new()))
@@ -194,7 +210,10 @@ pub fn apply_seccomp(profile: &ConfinementProfile) -> Result<bool, ConfineError>
         .map_err(|e| ConfineError::Seccomp(format!("{e:?}")))?;
 
     seccompiler::apply_filter(&bpf).map_err(|e| ConfineError::Seccomp(e.to_string()))?;
-    Ok(true)
+    Ok(SeccompOutcome {
+        applied: true,
+        network_denied,
+    })
 }
 
 fn network_syscalls() -> Vec<i64> {

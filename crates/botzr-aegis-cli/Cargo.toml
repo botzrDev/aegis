@@ -33,6 +33,11 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Already a dependency above; named again so `tests/confine.rs` can build its
+# profile JSON from `exec_support_paths()` — the *product's* loader set, not a
+# copy. A private copy in the tests is what let the suite pass while shipped
+# `--confine` could not exec anything (AILAB-628).
+botzr-aegis-confine = { workspace = true }
 
 [[bin]]
 name = "aegis"

@@ -12,19 +12,15 @@ pub fn probe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_aegis-confine-probe"))
 }
 
-/// Prefixes a dynamically linked binary needs to exec: the loader, libc, and
-/// the probe itself. Tests add the grant paths on top. Missing prefixes are
-/// skipped — a path that does not exist cannot be canonicalized into a rule.
+/// Prefixes a dynamically linked binary needs to exec, plus the probe itself.
+///
+/// The loader set comes from the product
+/// (`botzr_aegis_confine::exec_support_paths`) rather than a copy local to the
+/// tests. A private copy is how the suite passed while the shipped
+/// `--confine` could not exec anything (AILAB-628 verification, 2026-08-13):
+/// the tests granted the loader and the product had no way to.
 pub fn exec_support_paths() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for p in [
-        "/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc", "/dev", "/proc",
-    ] {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            out.push(path);
-        }
-    }
+    let mut out = botzr_aegis_confine::exec_support_paths();
     if let Some(parent) = probe().parent() {
         out.push(parent.to_path_buf());
     }
@@ -83,12 +79,33 @@ pub fn restrict_exec_with_report(
     (output, enforced)
 }
 
+/// Environment opt-out for a host that genuinely has no Landlock.
+///
+/// Set `AEGIS_ALLOW_NO_LANDLOCK=1` to turn the confinement suites into
+/// announced skips. Anything else is a failure.
+pub const NO_LANDLOCK_OPT_OUT: &str = "AEGIS_ALLOW_NO_LANDLOCK";
+
+/// True when the kernel can enforce Landlock; **panics** when it cannot,
+/// unless the operator opted out.
+///
+/// Fail closed, for the same reason the product does. The first cut returned
+/// `false` and let each test `return`, so a kernel without Landlock produced
+/// eleven green tests that asserted nothing — the reason lived on stderr,
+/// which the harness hides unless a test fails. A suite that reports `ok` on
+/// zero coverage is worse than a red one (AILAB-628 verification,
+/// 2026-08-13).
 pub fn landlock_available() -> bool {
     match botzr_aegis_confine::probe_landlock_abi() {
         Ok(_) => true,
         Err(e) => {
-            eprintln!("skip: kernel does not support Landlock ({e})");
-            false
+            if std::env::var(NO_LANDLOCK_OPT_OUT).as_deref() == Ok("1") {
+                eprintln!("skip: {NO_LANDLOCK_OPT_OUT}=1 and this kernel has no Landlock ({e})");
+                return false;
+            }
+            panic!(
+                "this kernel cannot enforce Landlock ({e}), so nothing in this suite is \
+                 actually tested. Set {NO_LANDLOCK_OPT_OUT}=1 to skip it on purpose."
+            );
         }
     }
 }

@@ -118,8 +118,15 @@ fn build_confinement(args: &WrapArgs) -> Result<Option<ConfinementProfile>, Stri
         }
 
         match CapabilityResolver::new().resolve_manifest(&manifest) {
+            // `with_exec_support` is applied to the *profile*, after the grant,
+            // deliberately. The loader paths are not authority the tool asked
+            // for and must never enter the manifest — a need is a claim the
+            // resolver mints from, and minting them would make the widening
+            // look like something the grant justified.
             CapabilityOutcome::Granted { grant } => Ok(Some(
-                ConfinementProfile::from_grant(&grant).with_best_effort(args.best_effort),
+                ConfinementProfile::from_grant(&grant)
+                    .with_best_effort(args.best_effort)
+                    .with_exec_support(args.allow_exec_support),
             )),
             CapabilityOutcome::Denied { reason, .. } => {
                 Err(format!("could not mint a confinement grant: {reason}"))

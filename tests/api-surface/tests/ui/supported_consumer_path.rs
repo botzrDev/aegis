@@ -3,8 +3,8 @@
 //!
 //! `t.pass()` compiles *and runs* the case, so `main` stays trivial and the
 //! API exercise lives in never-called functions.
-use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
-use botzr_aegis_core::{AegisError, AuditIntent, PrevHash, RequestDigest, ToolId};
+use botzr_aegis_capability::{CapabilityResolver, ToolInfo, ToolKind, ToolManifest};
+use botzr_aegis_core::{AegisError, AuditIntent, CapabilityOutcome, PrevHash, RequestDigest, ToolId};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest, SUPPORTED_POLICY_VERSION};
 use botzr_aegis_runtime::{HostCallRequest, Runtime, RuntimeBuilder, ToolExecutable};
 
@@ -19,6 +19,21 @@ fn manifest(id: &str, kind: ToolKind) -> ToolManifest {
         },
         std::env::temp_dir(),
     )
+}
+
+/// AILAB-628: minting a grant from a manifest **without** registering it, for
+/// a surface that is not the WASM tool registry — `aegis wrap --confine`
+/// derives its Landlock/seccomp profile from the grant this returns, so the
+/// same authority source drives the cell and the native child.
+///
+/// This moved out from behind `test-utils` in AILAB-628. The case lives here
+/// so that promotion is contracted rather than incidental: `register` next
+/// door is `#[deprecated]` and has its own `compile_fail` case, and the
+/// difference between the two is the whole point — mint without a registry
+/// entry is supported, registering a manifest with no executable is not.
+#[allow(dead_code)]
+fn mint_without_registering(manifest: &ToolManifest) -> CapabilityOutcome {
+    CapabilityResolver::new().resolve_manifest(manifest)
 }
 
 /// The builder is the sanctioned way to assemble a configured runtime.

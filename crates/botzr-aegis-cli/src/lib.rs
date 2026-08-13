@@ -122,6 +122,15 @@ pub struct WrapArgs {
     pub allow_net: Vec<(String, u16)>,
     /// Operator opt-in to partial enforcement. Meaningless without `--confine`.
     pub best_effort: bool,
+    /// Grant read on the loader/libc paths a dynamically linked child needs to
+    /// exec at all (`botzr_aegis_confine::EXEC_SUPPORT_PATHS`).
+    ///
+    /// Off by default and deliberately not implied by `--confine`: it opens
+    /// `/etc` and `/proc` to the child, which is a decision an operator makes
+    /// out loud. Without it, `--confine` is usable only for a static binary —
+    /// Landlock is deny-by-default, so `--allow-read /var/data` alone means the
+    /// loader cannot map libc and the exec fails with `EACCES`.
+    pub allow_exec_support: bool,
 }
 
 pub fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -477,6 +486,7 @@ fn parse_recheck(args: &[String]) -> Result<Command, String> {
 fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
     let mut audit = None;
     let mut signing_key = None;
+    let mut allow_exec_support = false;
     let mut child_argv: Vec<String> = Vec::new();
     let mut confine = false;
     let mut allow_read = Vec::new();
@@ -499,6 +509,7 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
             }
             "--confine" => confine = true,
             "--best-effort" => best_effort = true,
+            "--allow-exec-support" => allow_exec_support = true,
             "--allow-read" => {
                 i += 1;
                 let v = args.get(i).ok_or("--allow-read needs a value")?;
@@ -551,10 +562,12 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
         && (!allow_read.is_empty()
             || !allow_write.is_empty()
             || !allow_net.is_empty()
-            || best_effort)
+            || best_effort
+            || allow_exec_support)
     {
         return Err(
-            "--allow-read, --allow-write, --allow-net and --best-effort require --confine".into(),
+            "--allow-read, --allow-write, --allow-net, --allow-exec-support and --best-effort require --confine"
+                .into(),
         );
     }
 
@@ -567,6 +580,7 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
         allow_write,
         allow_net,
         best_effort,
+        allow_exec_support,
     })
 }
 
@@ -635,6 +649,10 @@ pub fn usage_text() -> String {
            --allow-read <PATH>         Grant read (repeatable; requires --confine)\n\
            --allow-write <PATH>        Grant write (repeatable; requires --confine)\n\
            --allow-net <HOST:PORT>     Grant network (repeatable; requires --confine)\n\
+           --allow-exec-support        Grant read on /usr /lib /lib64 /bin /sbin\n\
+                                       /etc /dev /proc — a dynamically linked\n\
+                                       child cannot exec without it, and it is a\n\
+                                       named hole (requires --confine)\n\
            --best-effort               Opt in to partial enforcement (requires --confine)\n\
            --                          End of wrap's flags; the rest is the child argv\n\
            --help, -h                  Print this help\n\

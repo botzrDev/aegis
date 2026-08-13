@@ -23,9 +23,19 @@ aegis wrap \
 aegis wrap \
   --audit /tmp/wrap-audit.jsonl \
   --signing-key /tmp/aegis-signing.key \
-  --confine --allow-read /var/data --allow-net example.com:443 \
+  --confine --allow-exec-support \
+  --allow-read /var/data --allow-net example.com:443 \
   -- npx -y some-mcp-server
 ```
+
+`--allow-exec-support` is not decoration. Landlock is deny-by-default, so a
+profile of `--allow-read /var/data` alone means the dynamic loader cannot map
+libc and the child fails with `Permission denied` **before its own `main`
+runs**. The flag grants read on `/usr /lib /lib64 /bin /sbin /etc /dev /proc`
+— enough to start a dynamically linked program, and a **named hole**: a child
+holding it can still read `/etc/passwd` and walk `/proc`. It is deliberately
+not implied by `--confine`, because a widening that large should be something
+an operator typed. A statically linked server does not need it.
 
 Then pin the record. `aegis verify` distinguishes **pinned** from
 **unpinned** ([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
@@ -62,6 +72,13 @@ list before describing wrap as a sandbox, a firewall, or a guard:
   `--allow-*` is deny-everything. `--best-effort` is an explicit opt-in
   to partial enforcement; without it, a kernel that cannot honour the
   full profile refuses to exec.
+- **The seccomp filter is a network deny-list, not a syscall sandbox.**
+  Its default action is *allow*. With no `--allow-net` it kills the
+  socket/connect/bind family on `SIGSYS`; everything it does not name —
+  `ptrace`, `unshare`, `mount` — is permitted. With `--allow-net` the
+  filter is installed and denies nothing, which is why the enforcement
+  record carries `seccomp_network_denied` alongside `seccomp_applied`.
+  Read the pair, never `seccomp_applied` alone.
 - **Not Model A isolation.** Nothing runs inside wasmtime here. This is
   closer to Model B than to Model A, and weaker than either unless
   `--confine` is also given. See
