@@ -18,6 +18,13 @@ aegis wrap \
   --audit /tmp/wrap-audit.jsonl \
   --signing-key /tmp/aegis-signing.key \
   -- npx -y some-mcp-server
+
+# Opt-in OS confinement (Linux). Without --confine, wrap only records.
+aegis wrap \
+  --audit /tmp/wrap-audit.jsonl \
+  --signing-key /tmp/aegis-signing.key \
+  --confine --allow-read /var/data --allow-net example.com:443 \
+  -- npx -y some-mcp-server
 ```
 
 Then pin the record. `aegis verify` distinguishes **pinned** from
@@ -38,22 +45,26 @@ neither is the `keygen` you need to mint its signing key.
 
 ## What this is not
 
-**Wrap records; it does not confine.** Read this list before describing
-wrap as a sandbox, a firewall, or a guard:
+**Wrap confines only when `--confine` is given, on Linux, and records
+what was enforced.** Without `--confine` the child is an ordinary OS
+process with the authority of the account that started it. Read this
+list before describing wrap as a sandbox, a firewall, or a guard:
 
 - **No policy evaluation.** No `PolicyEngine`, no rules, no allow/deny
   decision. Every `tools/call` is relayed. Nothing is ever blocked at
   this layer.
 - **No argument matching.** Wrap does not look at `params.arguments` at
   all.
-- **No filesystem or network restriction on the child.** The child is an
-  ordinary OS process running under the operator's own account, with the
-  operator's own authority. There is no Landlock, no seccomp, no cap-std
-  preopen.
+- **No filesystem or network restriction unless `--confine`.** Default
+  wrap is an ordinary OS process under the operator's account. `--confine`
+  applies Landlock and seccomp derived from `--allow-read` /
+  `--allow-write` / `--allow-net` (Linux). `--confine` with no
+  `--allow-*` is deny-everything. `--best-effort` is an explicit opt-in
+  to partial enforcement; without it, a kernel that cannot honour the
+  full profile refuses to exec.
 - **Not Model A isolation.** Nothing runs inside wasmtime here. This is
-  closer to Model B than to Model A, and weaker than either: wrap does
-  not even enforce a grant before an effect, because the effect happens
-  inside a process it does not control. See
+  closer to Model B than to Model A, and weaker than either unless
+  `--confine` is also given. See
   [trust models](trust-models.md) and
   [threat model §3](threat-model.md#3-trust-boundaries-model-a-vs-model-b).
 
@@ -73,9 +84,8 @@ prints a diagnostic on the child's stderr sink naming the gap. Treat a
 wrap chain as complete evidence **only** for clients that send one
 request per message.
 
-OS confinement (Landlock / seccomp on Linux, Seatbelt on macOS) is
-Backlog, not shipped. Do not lead with a capability the reader may not
-have.
+macOS Seatbelt confinement is a later ticket (AILAB-630), not this one.
+`--confine` is Linux-only.
 
 ## What recording costs
 

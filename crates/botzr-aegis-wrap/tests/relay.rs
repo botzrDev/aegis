@@ -166,6 +166,7 @@ fn drive_client(client_in: Box<dyn Read + Send>) -> Driven {
         child_argv: vec![env!("CARGO_BIN_EXE_aegis-wrap-mirror-child").to_owned()],
         audit_path: audit_path.clone(),
         signing_key_path: key_path,
+        confinement: None,
     };
 
     let client_out = Sink::default();

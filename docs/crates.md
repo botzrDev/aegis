@@ -1,8 +1,8 @@
 # Crate map
 
-Nine crates in the workspace. **Eight** are on crates.io at `0.3.0`.
-`botzr-aegis-wrap` is in-tree and first appears on the registry with the
-next cut.
+Ten crates in the workspace. **Eight** are on crates.io at `0.3.0`.
+`botzr-aegis-wrap` and `botzr-aegis-confine` are in-tree and first appear
+on the registry with the next cut.
 
 | Crate | Responsibility | `0.3.0` |
 |---|---|---|
@@ -14,7 +14,8 @@ next cut.
 | `botzr-aegis-runtime` | Orchestrator — `Runtime::execute_tool_call` | published |
 | `botzr-aegis-mcp` | MCP stdio gateway for Aegis's own catalog | published |
 | `botzr-aegis-cli` | Binary `aegis` | published |
-| `botzr-aegis-wrap` | Stdio MCP interposer — records, does not confine | in-tree only |
+| `botzr-aegis-wrap` | Stdio MCP interposer — records; confines only with `--confine` | in-tree only |
+| `botzr-aegis-confine` | Linux Landlock + seccomp from a grant (AILAB-628) | in-tree only |
 
 `governance/` is a separate Python (Layer 2) service — not a workspace
 member, never writes into the Rust runtime.

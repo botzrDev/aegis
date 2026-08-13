@@ -22,6 +22,7 @@ workspace = true
 [dependencies]
 botzr-aegis-audit = { workspace = true }
 botzr-aegis-core = { workspace = true }
+botzr-aegis-confine = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

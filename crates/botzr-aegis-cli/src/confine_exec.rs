@@ -1,0 +1,75 @@
+//! `aegis __confine-exec` — internal re-exec target (ADR-0007).
+//!
+//! Not operator surface: dispatched first in `parse_args`, kept out of
+//! `usage_text()`. Applies the profile from `AEGIS_CONFINE_PROFILE` to this
+//! process, writes [`botzr_aegis_confine::EnforcedConfinement`] to the path in
+//! `AEGIS_CONFINE_REPORT` (a file, never stdin/stdout/stderr), strips both
+//! variables, and `exec`s the target.
+//!
+//! Never `pre_exec`: it is unsafe. Use `CommandExt::exec` instead of it
+//! (allocating in a forked child of a multithreaded process can deadlock
+//! on the allocator lock).
+
+use std::process::ExitCode;
+
+#[cfg(unix)]
+pub(crate) fn run(child_argv: &[String]) -> ExitCode {
+    use std::os::unix::process::CommandExt;
+
+    if child_argv.is_empty() {
+        eprintln!("aegis __confine-exec: missing command after `--`");
+        return ExitCode::from(1);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let profile = match botzr_aegis_confine::load_profile_from_env() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("aegis __confine-exec: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        // Open before restrict_self: Landlock does not revoke already-open fds.
+        let mut report = match botzr_aegis_confine::open_report() {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("aegis __confine-exec: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        let enforced = match botzr_aegis_confine::restrict_self(&profile) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("aegis __confine-exec: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        if let Some(file) = report.as_mut() {
+            if let Err(e) = botzr_aegis_confine::write_report(file, &enforced) {
+                eprintln!("aegis __confine-exec: {e}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        eprintln!("aegis __confine-exec: confinement is only implemented on Linux");
+        return ExitCode::from(1);
+    }
+
+    let err = std::process::Command::new(&child_argv[0])
+        .args(&child_argv[1..])
+        .env_remove(botzr_aegis_confine::PROFILE_ENV)
+        .env_remove(botzr_aegis_confine::REPORT_ENV)
+        .exec();
+    eprintln!("aegis __confine-exec: exec {}: {err}", child_argv[0]);
+    ExitCode::from(1)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn run(_child_argv: &[String]) -> ExitCode {
+    eprintln!("aegis __confine-exec: confinement is only implemented on Linux");
+    ExitCode::from(1)
+}

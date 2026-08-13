@@ -1,0 +1,40 @@
+[package]
+name = "botzr-aegis-confine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://github.com/botzrDev/aegis"
+rust-version.workspace = true
+description = "Linux Landlock + seccomp confinement derived from a CapabilityGrant. Authority-reducing only."
+readme = "README.md"
+keywords = ["aegis", "agent", "security", "landlock", "seccomp"]
+categories = ["development-tools"]
+autobins = false
+
+[lints]
+workspace = true
+
+[dependencies]
+botzr-aegis-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Syscall numbers for the seccomp deny-list. landlock/seccompiler are Linux-only.
+libc = { workspace = true }
+landlock = { workspace = true }
+seccompiler = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# SIGSYS in escape tests (`ExitStatus::signal()` compared against libc::SIGSYS).
+libc = { workspace = true }
+
+# Test fixture, not a product surface. `CARGO_BIN_EXE_*` only resolves declared
+# bin targets, and escape tests have to spawn a real process (MSRV 1.86 has no
+# `std::io::pipe`).
+[[bin]]
+name = "aegis-confine-probe"
+path = "src/bin/probe.rs"

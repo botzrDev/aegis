@@ -165,7 +165,7 @@ fn wrap_requires_both_the_record_file_and_its_key() {
 fn the_usage_text_names_wrap_and_its_flags() {
     let usage = botzr_aegis_cli::usage_text();
     for token in [
-        "aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD>",
+        "aegis wrap --audit <PATH> --signing-key <PATH> [--confine] -- <CMD>",
         "Wrap options:",
         "--audit",
         "--signing-key",

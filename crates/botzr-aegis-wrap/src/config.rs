@@ -16,6 +16,11 @@ pub struct WrapConfig {
     pub child_argv: Vec<String>,
     pub audit_path: PathBuf,
     pub signing_key_path: PathBuf,
+    /// When `Some`, the child is spawned as
+    /// `current_exe() __confine-exec -- <original argv>` with the profile in
+    /// `AEGIS_CONFINE_PROFILE` (AILAB-628). Off unless the operator passed
+    /// `--confine`.
+    pub confinement: Option<botzr_aegis_confine::ConfinementProfile>,
 }
 
 /// The client-facing ends of a wrap session.

@@ -18,17 +18,17 @@ client ◀─stdout── aegis wrap ◀─stdout── child MCP server
 
 ## What this is not
 
-**Wrap records; it does not confine.** Read this list before describing wrap as
-a sandbox, a firewall, or a guard:
+**Wrap confines only when `--confine` is given, on Linux.** Without it the
+child is an ordinary OS process with the authority of the account that
+started it. Read this list before describing wrap as a sandbox by default:
 
 - **No policy evaluation.** No `PolicyEngine`, no rules, no allow/deny decision.
   Every `tools/call` is relayed. Nothing is ever blocked at this layer.
 - **No argument matching.** Wrap does not look at `params.arguments` at all
   (AILAB-626).
-- **No filesystem or network restriction on the child.** The child is an
-  ordinary OS process running under the operator's own account, with the
-  operator's own authority. There is no Landlock, no seccomp, no cap-std preopen
-  (AILAB-628).
+- **No filesystem or network restriction unless `--confine`.** Default wrap is
+  the operator's own account. `--confine` (AILAB-628) applies Landlock and
+  seccomp from `--allow-read` / `--allow-write` / `--allow-net`.
 - **No approval parking, no schema pinning** (AILAB-629 / AILAB-627).
 - **No record for a batched `tools/call`.** A JSON-RPC **batch** — a top-level
   array — is relayed like anything else, and *nothing inside it is recorded*.

@@ -91,6 +91,7 @@ fn wrap_relays_a_real_catalog_gateway_and_records_only_the_tools_call() {
         ],
         audit_path: wrap_audit.clone(),
         signing_key_path: wrap_key,
+        confinement: None,
     };
 
     let script = [

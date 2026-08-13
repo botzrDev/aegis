@@ -93,6 +93,7 @@ fn wrap_session(
         child_argv: vec![child.to_owned()],
         audit_path: audit_path.clone(),
         signing_key_path: key_path.to_path_buf(),
+        confinement: None,
     };
     let streams = WrapStreams {
         // Owned because `Box<dyn Read + Send>` is `'static`; a few KB of memcpy

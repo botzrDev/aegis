@@ -130,16 +130,7 @@ pub fn run_wrap_with_streams(config: &WrapConfig, streams: WrapStreams) -> Resul
     let signing_key = load_signing_key(&config.signing_key_path)?;
     let writer = AuditWriter::open(&config.audit_path, signing_key)?;
 
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|source| WrapError::Spawn {
-            program: program.clone(),
-            source,
-        })?;
+    let mut child = spawn_child(program, args, config)?;
 
     // `Stdio::piped()` on all three was just requested, so these are present.
     let child_stdin = child.stdin.take().expect("child stdin was piped");
@@ -325,6 +316,46 @@ fn write_frame(sink: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 /// module's framing note.
 fn is_blank(frame: &[u8]) -> bool {
     frame.iter().all(u8::is_ascii_whitespace)
+}
+
+/// Spawn the child, re-execing through `aegis __confine-exec` when a
+/// confinement profile is set. The profile travels in the environment, never
+/// argv (`/proc/<pid>/cmdline` is world-readable). Enforcement facts come back
+/// on `AEGIS_CONFINE_REPORT`, a file next to the audit path — not stdin/stdout
+/// (MCP) and not stderr (the tee).
+fn spawn_child(program: &str, args: &[String], config: &WrapConfig) -> Result<Child, WrapError> {
+    let mut cmd = if let Some(profile) = &config.confinement {
+        let exe = std::env::current_exe().map_err(|source| WrapError::Spawn {
+            program: program.to_string(),
+            source,
+        })?;
+        let mut report = config.audit_path.as_os_str().to_os_string();
+        report.push(".enforced.json");
+        let json = serde_json::to_string(profile).map_err(|e| WrapError::Spawn {
+            program: program.to_string(),
+            source: io::Error::new(io::ErrorKind::InvalidData, e),
+        })?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("__confine-exec")
+            .arg("--")
+            .arg(program)
+            .args(args)
+            .env(botzr_aegis_confine::PROFILE_ENV, json)
+            .env(botzr_aegis_confine::REPORT_ENV, report);
+        cmd
+    } else {
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd
+    };
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|source| WrapError::Spawn {
+            program: program.to_string(),
+            source,
+        })
 }
 
 fn spawn_client_reader(client_in: Box<dyn Read + Send>, tx: Sender<Event>) {

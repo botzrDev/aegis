@@ -1,5 +1,10 @@
 //! `aegis` CLI library — argument parsing and `run` pipeline wiring.
+//!
+//! `aegis __confine-exec` is an internal re-exec target (ADR-0007 / AILAB-628),
+//! not operator surface: it is the first match arm in [`parse_args`] and is
+//! kept out of [`usage_text()`].
 
+mod confine_exec;
 mod recheck;
 mod verify;
 mod wrap;
@@ -66,9 +71,15 @@ pub enum Command {
     ///
     /// Its own verb rather than a mode of `Run`: `run` executes a WASM component
     /// through POLICY → CAPABILITY → SANDBOX → AUDIT, while `wrap` relays an
-    /// ordinary OS process and its only station is AUDIT. One verb spanning both
-    /// trust models is how "Aegis ran it" comes to mean two incompatible things.
+    /// ordinary OS process. Wrap's only *always-on* station is AUDIT; Landlock
+    /// and seccomp apply only when `--confine` is given (AILAB-628). One verb
+    /// spanning both trust models is how "Aegis ran it" comes to mean two
+    /// incompatible things.
     Wrap(WrapArgs),
+    /// Internal re-exec target. Not operator surface (ADR-0007).
+    ConfineExec {
+        child_argv: Vec<String>,
+    },
     Help,
 }
 
@@ -103,6 +114,14 @@ pub struct WrapArgs {
     /// Everything after the literal `--`: `[0]` is the program, the rest are its
     /// arguments. Never empty — `parse_wrap` refuses an argv with nothing in it.
     pub child_argv: Vec<String>,
+    /// Opt-in OS confinement (AILAB-628). Off unless asked for.
+    pub confine: bool,
+    pub allow_read: Vec<PathBuf>,
+    pub allow_write: Vec<PathBuf>,
+    /// `(host, port)` from `--allow-net HOST:PORT`.
+    pub allow_net: Vec<(String, u16)>,
+    /// Operator opt-in to partial enforcement. Meaningless without `--confine`.
+    pub best_effort: bool,
 }
 
 pub fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -115,6 +134,10 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
     }
 
     match args[1].as_str() {
+        // Internal re-exec target (ADR-0007). First so it cannot be shadowed
+        // by `--help` or an unknown-command path, and so it stays reachable
+        // before any heavier dispatch.
+        "__confine-exec" => parse_confine_exec(&args[2..]),
         "--help" | "-h" | "help" => Ok(Command::Help),
         "run" => match parse_run(&args[2..]) {
             Ok(run) => Ok(Command::Run(run)),
@@ -455,6 +478,11 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
     let mut audit = None;
     let mut signing_key = None;
     let mut child_argv: Vec<String> = Vec::new();
+    let mut confine = false;
+    let mut allow_read = Vec::new();
+    let mut allow_write = Vec::new();
+    let mut allow_net = Vec::new();
+    let mut best_effort = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -468,6 +496,23 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
                 i += 1;
                 let v = args.get(i).ok_or("--signing-key needs a value")?;
                 signing_key = Some(PathBuf::from(v));
+            }
+            "--confine" => confine = true,
+            "--best-effort" => best_effort = true,
+            "--allow-read" => {
+                i += 1;
+                let v = args.get(i).ok_or("--allow-read needs a value")?;
+                allow_read.push(PathBuf::from(v));
+            }
+            "--allow-write" => {
+                i += 1;
+                let v = args.get(i).ok_or("--allow-write needs a value")?;
+                allow_write.push(PathBuf::from(v));
+            }
+            "--allow-net" => {
+                i += 1;
+                let v = args.get(i).ok_or("--allow-net needs a value")?;
+                allow_net.push(parse_allow_net(v)?);
             }
             "--help" | "-h" => return Err("__help_wrap__".into()),
             "--" => {
@@ -500,11 +545,61 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
         return Err("wrap requires a child command after `--`".into());
     }
 
+    // `--allow-*` / `--best-effort` without `--confine` is a usage error, not
+    // a silent no-op — same pairing shape as `check_audit_key_pair`.
+    if !confine
+        && (!allow_read.is_empty()
+            || !allow_write.is_empty()
+            || !allow_net.is_empty()
+            || best_effort)
+    {
+        return Err(
+            "--allow-read, --allow-write, --allow-net and --best-effort require --confine".into(),
+        );
+    }
+
     Ok(WrapArgs {
         audit,
         signing_key,
         child_argv,
+        confine,
+        allow_read,
+        allow_write,
+        allow_net,
+        best_effort,
     })
+}
+
+/// `HOST:PORT`, split on the last colon so a v6 literal can wait for a later
+/// ticket. Empty host or a non-u16 port is a usage error.
+fn parse_allow_net(value: &str) -> Result<(String, u16), String> {
+    let (host, port) = value
+        .rsplit_once(':')
+        .ok_or_else(|| format!("--allow-net needs HOST:PORT, got `{value}`"))?;
+    if host.is_empty() {
+        return Err(format!("--allow-net needs a host, got `{value}`"));
+    }
+    let port: u16 = port
+        .parse()
+        .map_err(|_| format!("--allow-net needs a port 0–65535, got `{value}`"))?;
+    Ok((host.to_string(), port))
+}
+
+/// Parse `aegis __confine-exec -- <CMD> [ARGS…]`.
+fn parse_confine_exec(args: &[String]) -> Result<Command, String> {
+    match args.first().map(String::as_str) {
+        Some("--") => {
+            let child_argv = args[1..].to_vec();
+            if child_argv.is_empty() {
+                return Err("__confine-exec requires a child command after `--`".into());
+            }
+            Ok(Command::ConfineExec { child_argv })
+        }
+        Some(other) => Err(format!(
+            "__confine-exec takes no flags; put the child command after `--` (got `{other}`)"
+        )),
+        None => Err("__confine-exec requires a child command after `--`".into()),
+    }
 }
 
 pub fn usage_text() -> String {
@@ -514,7 +609,7 @@ pub fn usage_text() -> String {
          Usage:\n\
            aegis [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]\n\
            aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]\n\
-           aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]\n\
+           aegis wrap --audit <PATH> --signing-key <PATH> [--confine] -- <CMD> [ARGS…]\n\
            aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>\n\
            aegis recheck --policy <YAML> <PATH>\n\
            aegis keygen --out <PATH> [--force]\n\
@@ -536,10 +631,16 @@ pub fn usage_text() -> String {
          Wrap options:\n\
            --audit <PATH>              Record file for the wrapped session (required)\n\
            --signing-key <PATH>        ed25519 seed file signing the Session (required)\n\
+           --confine                   Apply Landlock + seccomp from --allow-* (Linux)\n\
+           --allow-read <PATH>         Grant read (repeatable; requires --confine)\n\
+           --allow-write <PATH>        Grant write (repeatable; requires --confine)\n\
+           --allow-net <HOST:PORT>     Grant network (repeatable; requires --confine)\n\
+           --best-effort               Opt in to partial enforcement (requires --confine)\n\
            --                          End of wrap's flags; the rest is the child argv\n\
            --help, -h                  Print this help\n\
          \n\
-         Wrap records; it does not confine. The child is an ordinary OS process\n\
+         Wrap confines only when --confine is given, on Linux, and records what\n\
+         was enforced. Without --confine the child is an ordinary OS process\n\
          with the authority of the account that started it.\n\
          \n\
          Keygen options:\n\
@@ -734,6 +835,7 @@ pub fn dispatch(cmd: Command) -> ExitCode {
         } => verify::run(&path, &keys, trust_store.as_deref()),
         Command::Recheck { policy, path } => recheck::run(&policy, &path),
         Command::Wrap(args) => wrap::run(&args),
+        Command::ConfineExec { child_argv } => confine_exec::run(&child_argv),
         Command::Run(args) => match execute_run(&args) {
             Ok(out) => {
                 if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), &out) {
@@ -1038,6 +1140,11 @@ mod tests {
             "--signing-key",
             "--out",
             "--force",
+            "--confine",
+            "--allow-read",
+            "--allow-write",
+            "--allow-net",
+            "--best-effort",
         ] {
             assert!(usage.contains(flag), "usage missing {flag}");
         }
@@ -1399,6 +1506,97 @@ mod tests {
         assert!(parse_args(&sv(&["aegis", "wrap", "npx", "some-server"]))
             .unwrap_err()
             .contains("after `--`"));
+
+        // `--allow-*` without `--confine` is a usage error, not a silent no-op.
+        let err = parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--allow-read",
+            "/tmp",
+            "--",
+            "cat",
+        ]))
+        .unwrap_err();
+        assert!(err.contains("--confine"), "{err}");
+    }
+
+    #[test]
+    fn parse_wrap_confine_flags() {
+        match parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--confine",
+            "--allow-read",
+            "/tmp/r",
+            "--allow-write",
+            "/tmp/w",
+            "--allow-net",
+            "example.com:443",
+            "--best-effort",
+            "--",
+            "npx",
+            "some-server",
+        ]))
+        .unwrap()
+        {
+            Command::Wrap(w) => {
+                assert!(w.confine);
+                assert!(w.best_effort);
+                assert_eq!(w.allow_read, vec![PathBuf::from("/tmp/r")]);
+                assert_eq!(w.allow_write, vec![PathBuf::from("/tmp/w")]);
+                assert_eq!(w.allow_net, vec![("example.com".into(), 443)]);
+                assert_eq!(w.child_argv, sv(&["npx", "some-server"]));
+            }
+            other => panic!("expected Wrap, got {other:?}"),
+        }
+
+        // `--confine` with no `--allow-*` is legal (deny everything).
+        match parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--confine",
+            "--",
+            "cat",
+        ]))
+        .unwrap()
+        {
+            Command::Wrap(w) => {
+                assert!(w.confine);
+                assert!(w.allow_read.is_empty());
+                assert!(w.allow_net.is_empty());
+            }
+            other => panic!("expected Wrap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_confine_exec_is_first_and_hidden_from_usage() {
+        match parse_args(&sv(&["aegis", "__confine-exec", "--", "/bin/true"])).unwrap() {
+            Command::ConfineExec { child_argv } => {
+                assert_eq!(child_argv, sv(&["/bin/true"]))
+            }
+            other => panic!("expected ConfineExec, got {other:?}"),
+        }
+        assert!(
+            !usage_text().contains("__confine-exec"),
+            "internal re-exec target must stay out of usage_text"
+        );
+        assert!(
+            !usage_text().contains("does not confine"),
+            "old absolute claim must be gone"
+        );
     }
 
     #[test]

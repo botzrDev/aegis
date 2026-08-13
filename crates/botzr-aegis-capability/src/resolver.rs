@@ -90,9 +90,13 @@ impl CapabilityResolver {
         mint_grant(manifest, next_grant_id(tool_id), ceiling)
     }
 
-    /// Resolve a manifest directly (used for tests and one-off minting).
-    /// Requires the `test-utils` feature.
-    #[cfg(feature = "test-utils")]
+    /// Resolve a manifest directly without registering it.
+    ///
+    /// One-off minting for surfaces that are not the WASM tool registry —
+    /// `aegis wrap --confine` builds a `ToolManifest` from CLI flags and needs
+    /// the same grant path the pipeline uses (AILAB-628). Registering that
+    /// manifest would be the split-authority state `register` is deprecated
+    /// against: there is no executable to pair it with.
     #[must_use = "capability resolution must be handled — denial never reaches sandbox"]
     pub fn resolve_manifest(&self, manifest: &ToolManifest) -> CapabilityOutcome {
         match mint_grant(manifest, next_grant_id(&manifest.tool.id), self.ceiling) {

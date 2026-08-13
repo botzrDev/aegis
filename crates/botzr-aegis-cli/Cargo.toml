@@ -28,6 +28,7 @@ botzr-aegis-runtime = { workspace = true }
 # second thing to keep deadlock-free, and the one in the library is the one
 # under test.
 botzr-aegis-wrap = { workspace = true }
+botzr-aegis-confine = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

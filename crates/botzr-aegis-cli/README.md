@@ -279,7 +279,8 @@ aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]
 
 Sits in the middle of an existing MCP session — client ↔ `aegis wrap` ↔ child
 server — relays JSON-RPC byte-faithfully, and writes a schema-v2 chained, signed
-record for every `tools/call`. **Wrap records; it does not confine.**
+record for every `tools/call`. **Wrap confines only when `--confine` is
+given, on Linux, and records what was enforced.**
 
 Read this list before describing wrap as a sandbox, a firewall, or a guard:
 

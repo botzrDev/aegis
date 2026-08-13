@@ -13,6 +13,7 @@ members = [
     "crates/botzr-aegis-mcp",
     "crates/botzr-aegis-cli",
     "crates/botzr-aegis-wrap",
+    "crates/botzr-aegis-confine",
     "tests/integration",
     "tests/deny-suite",
     "tests/api-surface",
@@ -47,6 +48,7 @@ botzr-aegis-runtime = { path = "crates/botzr-aegis-runtime", version = "0.3.0" }
 botzr-aegis-sandbox = { path = "crates/botzr-aegis-sandbox", version = "0.3.0" }
 botzr-aegis-mcp = { path = "crates/botzr-aegis-mcp", version = "0.3.0" }
 botzr-aegis-wrap = { path = "crates/botzr-aegis-wrap", version = "0.3.0" }
+botzr-aegis-confine = { path = "crates/botzr-aegis-confine", version = "0.3.0" }
 anyhow = "1"
 arc-swap = "1"
 cap-std = "3"
@@ -61,6 +63,16 @@ ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 # Already in the tree transitively (via rand_core); this makes the audit crate's
 # use of it a declared, direct dependency rather than a borrowed one.
 getrandom = "0.3"
+# AILAB-628: Landlock LSM helpers for `botzr-aegis-confine`. MIT OR Apache-2.0,
+# both already in deny.toml's allow list; MSRV 1.71 <= 1.86.
+landlock = "0.4.4"
+# AILAB-628: syscall numbers for the seccomp filter (SYS_socket etc.).
+# MIT OR Apache-2.0, both already in deny.toml's allow list; MSRV ancient.
+libc = "0.2"
+# AILAB-628: seccomp-bpf via a safe wrapper. Apache-2.0 OR BSD-3-Clause, both
+# already in deny.toml's allow list. No json feature — filters are built in
+# Rust, not loaded from a file.
+seccompiler = { version = "0.5", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"

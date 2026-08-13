@@ -50,8 +50,8 @@ together, or neither is given.
 ## `aegis wrap`
 
 Interpose on a child stdio MCP server and **record** every `tools/call`.
-Does not confine, evaluate policy, or inspect arguments. See
-[Wrapping an MCP server](wrap.md).
+Confines only when `--confine` is given, on Linux. Does not evaluate
+policy or inspect arguments. See [Wrapping an MCP server](wrap.md).
 
 ## `aegis verify`
 

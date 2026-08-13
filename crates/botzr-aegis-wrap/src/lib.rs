@@ -16,12 +16,12 @@
 //! recorded.** Wrap says so on the child-stderr sink when it happens; the
 //! README's "What this is not" carries the whole of it.
 //!
-//! **This records; it does not confine.** There is no policy evaluation, no
-//! argument matching, and no filesystem or network restriction on the child —
-//! the child is an ordinary OS process with whatever authority the operator's
-//! own account has. Confinement is AILAB-626 (argument matchers) and AILAB-628
-//! (Landlock/seccomp). Read `README.md` before describing this crate as a
-//! sandbox, because it is not one.
+//! **Wrap confines only when `WrapConfig::confinement` is `Some`**, which the
+//! CLI sets from `--confine` (AILAB-628). Without it there is no policy
+//! evaluation, no argument matching, and no filesystem or network restriction
+//! on the child — the child is an ordinary OS process with whatever authority
+//! the operator's own account has. Read `README.md` before describing this
+//! crate as a sandbox by default, because it is not one.
 //!
 //! Nothing here drives the enforcement pipeline. Wrap's only station is AUDIT:
 //! do not reach for `PolicyEngine`, `RuntimeBuilder`, or `execute_tool_call`
