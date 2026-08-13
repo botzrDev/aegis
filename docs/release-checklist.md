@@ -44,6 +44,21 @@ next cut.
   live at the repo root, not inside each crate directory, so they are not in the
   tarballs — same as `0.3.0`. Changing that means adding per-crate license files,
   which is not part of AILAB-634.)
+- **[`CITATION.cff`](../CITATION.cff) tracks the release, not `main`.** Bump its
+  `version` and `date-released` to the version being cut, and set `license` to
+  what *that* cut actually publishes. It currently reads `MIT` because it cites
+  `0.3.0`; the first cut after `0.3.0` is the one that becomes a two-entry list:
+
+  ```yaml
+  license:
+    - Apache-2.0
+    - MIT
+  ```
+
+  Leaving it stale makes the repository's own citation metadata assert a license
+  the released artifact does not carry — the exact claim ADR-0011 exists to keep
+  precise. Validate after editing: `python3 -c "import yaml;
+  yaml.safe_load(open('CITATION.cff'))"`.
 
 ## 2. Full CI-equivalent locally
 

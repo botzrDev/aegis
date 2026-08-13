@@ -23,9 +23,13 @@ authors:
     affiliation: Botzr AI Labs
 version: 0.3.0
 date-released: "2026-08-09"
-license:
-  - Apache-2.0
-  - MIT
+# MIT, not the repository's current `Apache-2.0 OR MIT`. This block cites the
+# released 0.3.0, and the eight crates published to crates.io at that version
+# carry MIT in their registry metadata and stay that way — a registry tarball is
+# immutable (ADR-0011). Dual covers the repository from the AILAB-634 commit
+# onward and reaches the registry with the next cut; flip this to a two-entry
+# list in the same commit that bumps `version` above.
+license: MIT
 repository-code: "https://github.com/botzrDev/aegis"
 url: "https://botzrdev.github.io/aegis/"
 keywords:
