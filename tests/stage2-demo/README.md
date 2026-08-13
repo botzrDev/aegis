@@ -17,7 +17,7 @@ cargo test -p aegis-stage2-demo
 | Test | Claim |
 |---|---|
 | `equivalence_native_matches_wasm` | Native reference findings **==** wasm findings on a shared fixture tree (D10) |
-| `happy_path_audit_two_lines` | A successful run emits an `intent` + `outcome` audit line with `status: success` |
+| `happy_path_audit_one_call_per_session` | A successful run emits three lines — `open` + `intent` + `outcome` — with `status: success` on the outcome |
 | `write_escape_denied` | An out-of-grant `fs.write` under the read-only preopen traps — never a silent success |
 | `http_probe_denied` | The Model B `http` import with no net grant denies — never a silent success |
 | `wall_clock_cap_trips` | A tight epoch/wall-clock cap trips with an audit `ResourceExceeded{wall_clock}` |

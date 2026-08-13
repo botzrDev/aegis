@@ -4,10 +4,13 @@
 >
 > **Real crate publishing is AEG-31**, done with `cargo publish -p <crate>` from the workspace root — not with the script in this directory.
 
-## Current reality (2026-07-16)
+## Current reality
 
-- `botzr-aegis-core 0.2.0` and `botzr-aegis-sandbox 0.1.0` are published as **real crates** from the workspace.
-- The other reserved names still sit at their `0.0.0` reservation stubs.
+- All eight runtime crates are published as **real crates** from the workspace,
+  in lockstep at `0.3.0`. (The `0.2.0` / `0.1.0` split this section described
+  as of 2026-07-16 was unwound by the `v0.3.0` cut.)
+- `botzr-aegis-wrap` is a ninth in-tree crate, not yet on the registry, and was
+  never a reserved name — it needs no stub.
 - `botzr-aegis-sidecar` is **retired** in favor of `botzr-aegis-mcp` (MCP stdio gateway, D17). Its stub dir now carries a `0.0.1` retirement redirect, published **by hand from its own directory** — `reserve.sh` does not publish it.
 
 ## What AEG-7 did (for the record)

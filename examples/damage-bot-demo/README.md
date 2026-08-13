@@ -5,7 +5,7 @@ through the full Aegis enforcement pipeline.
 
 ## Prerequisites
 
-- Rust 1.80+ with `wasm32-wasip2` target
+- Rust 1.86+ (the workspace MSRV) with the `wasm32-wasip2` target
 - [`cargo-component`](https://github.com/bytecodealliance/cargo-component)
 
 ```bash

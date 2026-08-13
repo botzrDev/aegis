@@ -1,11 +1,17 @@
 # Quickstart
 
-Requires Rust (MSRV 1.86) with the `wasm32-wasip2` target and
-[`cargo-component`](https://github.com/bytecodealliance/cargo-component) for
-the in-repo WASM fixtures.
+Requires Rust (MSRV 1.86) with the `wasm32-wasip2` target:
 
 ```bash
 rustup target add wasm32-wasip2
+```
+
+The WASM fixtures used below are committed, so you do not need
+[`cargo-component`](https://github.com/bytecodealliance/cargo-component) to
+run the pipeline. You need it only to *rebuild* fixtures, which the
+[adversarial demo](#adversarial-demo) does:
+
+```bash
 cargo install cargo-component
 ```
 

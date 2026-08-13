@@ -1,6 +1,6 @@
 # Aegis findings report
 
-> **Status:** v0.3 findings synthesis (AILAB-606) · **Last updated:** 2026-08-07  
+> **Status:** v0.3 findings synthesis (AILAB-606) · **Last updated:** 2026-08-13 (audit references moved from schema v1 to the shipped schema v2 record format)  
 > **Related:** [Threat model](threat-model.md) · [Audit schema freeze](audit-schema.md) · [SECURITY.md](security.md) · [Benchmarks](benchmarks.md) · [Fuzz campaign log](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md)
 
 Aegis is a **research instrument**: the point is not to assert that agent tool
@@ -45,7 +45,7 @@ pipeline and exercised by in-repo tests:
   effects execute with host privileges; the runtime enforces the grant before
   context-owned effects and audits the outcome, nothing more.
 - **Audit on every exit path.** Denials, traps, resource caps, and panics all
-  produce schema-versioned records ([audit schema](audit-schema.md)); there is
+  produce schema-versioned records ([record format](spec.md)); there is
   no silent exit.
 - **Resource ceilings per call.** Epoch-based wall-clock deadline and a memory
   limiter are configured per call from the grant; tripping either produces a
@@ -161,7 +161,7 @@ audit wire shape so a drift in the record format is itself a test failure.
   cargo test -p aegis-deny-suite
   ```
 
-- Expected observation: denial and resource-cap paths produce schema v1 outcome
+- Expected observation: denial and resource-cap paths produce schema v2 outcome
   records; representative paths are frozen against golden snapshots (trap
   coverage lives in the adversarial demo and stress suite); no exit path is
   silent.

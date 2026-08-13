@@ -59,9 +59,10 @@ fabric read `batch.outcomes`. Skipped lines are reported, not analysed.
 `signature` and `key_id` are validated as *present* on lines the spec signs,
 because ingest fails closed on missing required fields. Nothing here checks an
 ed25519 signature, walks `prev_hash`, or recomputes a `line_hash` — a line with
-a present-but-forged signature parses cleanly. Verification is `aegis verify`
-(AILAB-621); until it lands, nothing downstream of ingest may be called
-verified.
+a present-but-forged signature parses cleanly. Verification is `aegis verify`,
+which ships in `botzr-aegis-cli`; run it against the JSONL before or after
+ingest. Nothing governance derives from an ingested record may be called
+verified on the strength of ingest alone.
 
 Policy packs (slice 3) are versioned, floor-checked policy snapshots minted
 `pending_human`. They live **in-process** on `GovernanceState` (no DB). A human

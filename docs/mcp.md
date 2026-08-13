@@ -22,6 +22,9 @@ Both tools use the same Model A WASM fixture. Arguments: `{ "text": "..." }`.
 
 ## Run
 
+This book documents `main`. The published `0.3.0` gateway differs — see
+[below](#what-030-does-instead).
+
 ```bash
 cargo run -p botzr-aegis-cli -- keygen --out /tmp/aegis-signing.key
 cargo run -p botzr-aegis-mcp -- \
@@ -30,6 +33,22 @@ cargo run -p botzr-aegis-mcp -- \
 
 `--audit` requires `--signing-key`. Omit both and the sink is a temp file
 signed by the compiled-in dev key.
+
+### What `0.3.0` does instead
+
+If you installed from crates.io, the commands above fail. At the `v0.3.0`
+tag the gateway parses `--policy` and `--audit` only — there is no
+`--signing-key` — and `aegis keygen` does not exist, so there is no key to
+pass. Records at that version are `schema_version: 1`: unsigned, with no
+`seq` or `prev_hash` chain, so `aegis verify` has nothing to walk.
+
+```bash
+# crates.io 0.3.0
+botzr-aegis-mcp --audit /tmp/aegis-mcp-audit.jsonl
+```
+
+Signing, chaining, and schema v2 arrive with the next registry cut. Until
+then, build from [`main`](https://github.com/botzrDev/aegis) for them.
 
 Watchable reproduction: [Demos](demos/) (`mcp-live-deny.cast`).
 

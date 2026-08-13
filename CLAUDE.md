@@ -113,4 +113,4 @@ Commit signing uses SSH (`id_ed25519`). If commit fails on signing, unlock with 
 
 ## North star for planning
 
-**Credible runtime path (largely landed):** enforcement pipeline → real tool E2E → published findings (demo + benchmarks + threat model). Remaining M5: cut `v0.3.0` + MCP live-deny cast. Research instrument — not a commercial product; no marketing/sales gates in the engineering track.
+**Credible runtime path (landed):** enforcement pipeline → real tool E2E → published findings (demo + benchmarks + threat model) → `v0.3.0` cut and published, MCP live-deny cast recorded. Research instrument — not a commercial product; no marketing/sales gates in the engineering track.

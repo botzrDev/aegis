@@ -1,7 +1,9 @@
 # Wrapping an MCP server
 
 `aegis wrap` sits in the middle of an existing MCP session and writes a
-schema-v2 chained, signed audit record for every `tools/call` it carries.
+schema-v2 chained, signed audit record for every **single** `tools/call`
+it carries. Calls sent inside a JSON-RPC batch array are relayed but
+**not** recorded — see [the recording gap](#the-batch-recording-gap).
 
 ```
 client ──stdin──▶ aegis wrap ──stdin──▶ child MCP server
@@ -58,6 +60,18 @@ wrap as a sandbox, a firewall, or a guard:
 What wrap does buy is **evidence**: a hash-chained, signed record of
 which tools were called, with digests of the exact request and response
 bytes, that survives the session and can be verified with `aegis verify`.
+
+## The batch recording gap
+
+A `tools/call` sent inside a **JSON-RPC batch array** is relayed to the
+child and executed, but no audit record is written for it. The chain
+stays internally valid and `aegis verify` still passes — it simply has no
+line for that call, and nothing in the record says one is missing.
+
+Wrap says so out loud rather than hiding it: the first batch of a session
+prints a diagnostic on the child's stderr sink naming the gap. Treat a
+wrap chain as complete evidence **only** for clients that send one
+request per message.
 
 OS confinement (Landlock / seccomp on Linux, Seatbelt on macOS) is
 Backlog, not shipped. Do not lead with a capability the reader may not

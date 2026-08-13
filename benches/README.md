@@ -15,6 +15,7 @@ From the repository root:
 ```bash
 cargo bench -p botzr-aegis-policy -p botzr-aegis-capability -p botzr-aegis-runtime
 cargo bench -p botzr-aegis-sandbox -p botzr-aegis-audit
+cargo bench -p botzr-aegis-wrap
 ```
 
 | Package | Bench target | Groups |

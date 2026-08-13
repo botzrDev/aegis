@@ -6,13 +6,19 @@ in one place.
 
 ```rust
 use std::path::Path;
-use botzr_aegis_runtime::RuntimeBuilder;
+use botzr_aegis_runtime::{BuildError, RuntimeBuilder};
 
-let mut rt = RuntimeBuilder::new()
-    .policy_file(Path::new("policy.yaml"))?
-    .audit_file(Path::new("/tmp/audit.jsonl"), Path::new("/tmp/aegis-signing.key"))?
-    .build()?;
+fn main() -> Result<(), BuildError> {
+    let mut rt = RuntimeBuilder::new()
+        .policy_file(Path::new("policy.yaml"))?
+        .audit_file(Path::new("/tmp/audit.jsonl"), Path::new("/tmp/aegis-signing.key"))?
+        .build()?;
+    Ok(())
+}
 ```
+
+Each builder step returns `Result`, so the chain needs a `Result`-returning
+scope — the `?`s above do not work at the top level of a snippet.
 
 `audit_file` takes the signing key's path and it is **not** optional. A
 persistent record file is one somebody will later pin a

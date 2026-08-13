@@ -106,7 +106,10 @@ commands). Optional: add `"--policy", "/path/to/policy.yaml"` to `args`.
 
 ## Tool catalog
 
-Both tools use the same Model A WASM fixture (`tests/fixtures/echo-tool/`). Arguments:
+Both tools register the same Model A WASM component, vendored into the crate at
+`fixtures/echo.wasm` and embedded with `include_bytes!` so a published tarball
+builds without the monorepo test tree. It is a copy of the fixture built from
+`tests/fixtures/echo-tool/`. Arguments:
 `{ "text": "..." }`. No ambient `net` grants.
 
 | Tool | Default policy | Purpose |

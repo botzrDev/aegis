@@ -7,10 +7,16 @@ Policies are parsed once at startup into an `Arc<PolicySet>`. Evaluation is sync
 ## Features
 
 - **Default-deny or default-allow** per-policy-set
-- **Rate limiting** with fixed-window counters and injectable `Clock`
+- **Rate limiting** with fixed-window counters; time is injectable through
+  `RateLimiter::check_at(key, spec, now: Instant)` for deterministic tests
 - **Pending approval** flow with minted approval IDs
 - **Hot reload** via `ArcSwap` — swap the active set without restarting
-- **Sha-256 digest** (FNV-1a) for policy set identity in audit records
+- **SHA-256 `content_hash()`** over the set's canonical bytes — this is the
+  `policy_set_hash` an audit record carries, so a verdict can be rechecked
+  against the rules that produced it
+- **FNV-1a `digest()`** over the YAML *text* — change detection for the
+  `old → new` reload trail only. Deliberately not a security digest; never
+  record it as `policy_set_hash`
 
 ## Policy format
 
@@ -35,3 +41,4 @@ of the docs book.
 - `botzr-aegis-core` for shared types (`PolicyAction`, `ToolId`)
 - `serde` / `serde_norway` for YAML deserialization
 - `arc-swap` for lock-free hot reload
+- `thiserror` for the `PolicyError` surface

@@ -35,6 +35,9 @@ rules:
     limits: { max_memory_bytes: 33554432, max_wall_ms: 5000 }
 ```
 
+`limits` accepts a third key the example above omits, `max_output_bytes`,
+which caps a single call's returned bytes.
+
 Unknown fields are rejected. Duplicate `id` values are rejected.
 `rate_limit` requires a `rate` block with `max > 0` and `per_seconds > 0`.
 `rate` is invalid on any other action.

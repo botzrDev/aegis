@@ -79,7 +79,7 @@ integrity, or availability of the enforcement pipeline:
 | `botzr-aegis-policy` | Policy evaluation bypass, silent widening |
 | `botzr-aegis-capability` | Grant minting, default-deny bypass |
 | `botzr-aegis-sandbox` | WASM isolation, cap-std preopens, host-function grant enforcement |
-| `botzr-aegis-audit` | Record emission gaps, secret leakage in audit fields (v0.1: JSONL + `input_digest` only; no `output_digest` / OTel — see [audit schema](https://github.com/botzrDev/aegis/blob/main/docs/audit-schema.md)) |
+| `botzr-aegis-audit` | Record emission gaps, secret leakage in audit fields, chain or signature forgery (schema v2 JSONL: `request_digest` plus optional `response_digest`, hash-chained and ed25519-signed; no raw payloads, no OTel export — see the [record format spec](https://github.com/botzrDev/aegis/blob/main/spec/SPEC.md)) |
 | `botzr-aegis-runtime` | Pipeline ordering, audit-on-all-exits |
 
 Also in scope:

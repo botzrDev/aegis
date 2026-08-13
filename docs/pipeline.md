@@ -9,7 +9,7 @@ POLICY → CAPABILITY → SANDBOX → AUDIT
 
 | Station | Role |
 |---|---|
-| **Policy** | Role gate, approval gate, rate limits — sync eval over a parsed-once `Arc<PolicySet>` |
+| **Policy** | Role gate, approval gate, rate limits — sync eval over a parsed-once, immutable `PolicySet` the engine holds in an `ArcSwap` for hot reload |
 | **Capability** | Default-deny manifest resolution → minted grant; a denial never reaches the sandbox |
 | **Sandbox** | Configure a **per-call** wasmtime `Store` **from the grant**, then run (cap-std preopens; epoch + memory limits) |
 | **Audit** | Schema-versioned record emitted on **every** exit — allow, deny, trap, resource cap, or panic — with no raw secret payloads |

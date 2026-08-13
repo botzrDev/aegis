@@ -1,6 +1,6 @@
 # Aegis threat model
 
-> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-08-12 (narrowed the “tamper-evident log” non-goal: schema v2 is a signed hash chain over a file, not a public transparency log)  
+> **Status:** v0.1 draft (AEG-17 / OQ-15 T6) · **Last updated:** 2026-08-13 (exfiltration mitigations restated in schema v2 field names — `request_digest` / `response_digest` — with the published-`0.3.0` caveat noted)  
 > **Related:** [SECURITY.md](security.md) · [Audit schema freeze](audit-schema.md) · [DamageBot demo](https://github.com/botzrDev/aegis/blob/main/examples/damage-bot-demo/README.md) · [Benchmarks](benchmarks.md)  
 > **Part B review:** [OQ-15 peer review (#19)](https://github.com/botzrDev/aegis/issues/19)
 
@@ -199,12 +199,17 @@ Partial mitigations that exist today:
 | Mitigation | Effect |
 |---|---|
 | `max_output_bytes` | Caps single-call return size, runtime-enforced on returned bytes (default 1 MiB) |
-| `input_digest` in audit | Forensic trail of call **input** without storing raw args (Intent + Outcome); derived by the runtime from the call's own bytes, so a caller cannot record a digest that does not match the payload |
+| `request_digest` in audit | Forensic trail of call **input** without storing raw args (Intent + Outcome); derived by the runtime from the call's own bytes, so a caller cannot record a digest that does not match the payload |
+| `response_digest` in audit | Forensic trail of call **output** without storing the returned bytes. `Option` on `AuditRecord` — present when the runtime produced a response, absent on denial and trap paths |
 | Policy rate limits | Friction on bulk read patterns |
 
-**Not shipped (deferred):** `output_digest` is **absent** from `AuditIntent` /
-`AuditRecord` in schema v1 — do not treat it as a current mitigation. Adding it
-end-to-end (types + goldens + writer) is future work, not a v0.1 claim.
+A digest detects that returned bytes *changed*; it does not reveal or restrict
+what they contained. `response_digest` is evidence, not a control — it cannot
+stop exfiltration through a return value, only make a later comparison possible.
+
+**Published-release caveat:** the `0.3.0` crates on crates.io emit
+`schema_version: 1`, which has `input_digest` and **no** `output_digest`. The
+field names above are schema v2, on `main`.
 
 Full output DLP / content filtering is a candidate for a future enterprise tier
 (Layer 2 guardian), not v1.
