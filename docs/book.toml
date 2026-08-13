@@ -8,6 +8,9 @@ src = "."
 [output.html]
 git-repository-url = "https://github.com/botzrDev/aegis"
 edit-url-template = "https://github.com/botzrDev/aegis/edit/main/docs/{path}"
+# Project Pages serve under /aegis/, not the domain root. Without this the
+# generated 404 page loads its assets from the wrong prefix.
+site-url = "/aegis/"
 
 # The eleven ADRs would otherwise be a third of the sidebar.
 [output.html.fold]
