@@ -35,7 +35,7 @@ single preopen root, and is omitted entirely when a grant names more than
 one. `path_raw` and `path_canonical` hold the same string for now — the
 pair exists because the two diverge once a caller path is resolved
 *against* that root. *Matching* on these axes is not shipped
-([ADR-0006](../adr/0006-matchers-target-derived-capability-parameters.md)).
+([ADR-0006](adr/0006-matchers-target-derived-capability-parameters.md)).
 *Avoid:* policy inputs, request context, arguments.
 
 **Binding.** A per-tool declaration of which argument position supplies

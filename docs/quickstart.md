@@ -35,7 +35,7 @@ cargo run -p botzr-aegis-cli -- \
 
 Then pin the record. `aegis verify` distinguishes **pinned** from
 **unpinned** — a bare “Verified” without saying which is an overclaim
-([ADR-0004](../adr/0004-embedded-key-with-labelled-trust.md)):
+([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
 
 ```bash
 cargo run -p botzr-aegis-cli -- \

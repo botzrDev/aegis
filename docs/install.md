@@ -30,7 +30,7 @@ See [`INTEGRATION.md`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-
 
 The `0.3.0` tarballs on crates.io are **MIT as published**. The repository
 and every release cut after `0.3.0` are dual `Apache-2.0 OR MIT`
-([ADR-0011](../adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md)).
+([ADR-0011](adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md)).
 
 ## From source
 

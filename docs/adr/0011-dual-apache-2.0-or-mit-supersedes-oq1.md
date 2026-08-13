@@ -4,7 +4,7 @@
 MIT-only 2026-07-05, AILAB-132)
 
 `[workspace.package] license` is `Apache-2.0 OR MIT`, and
-[`spec/SPEC.md`](../guide/spec.md) carries the same terms. A recipient picks a
+[`spec/SPEC.md`](../spec.md) carries the same terms. A recipient picks a
 branch; nobody has to ask.
 
 OQ-1 closed MIT-only when Aegis was a runtime and the only thing being handed to

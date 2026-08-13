@@ -6,7 +6,7 @@
 > shipped behaviour. Argument matchers are **not** in `v0.3.0` or current
 > `main`: the policy parser accepts `tool`, `capability`, and `role` matchers
 > only, and `path_under` does not exist anywhere in the engine — see
-> [Policy YAML](../guide/policy.md) for what evaluates today. The present-tense
+> [Policy YAML](../policy.md) for what evaluates today. The present-tense
 > body below records the decision as written on 2026-08-10; it is not a product
 > claim. Lands in AILAB-626 as ticketed.
 

@@ -5,4 +5,4 @@ Examples write `session.<ext>`.
 
 Where this document and the code disagree, the code is the defect report.
 
-{{#include ../../spec/SPEC.md}}
+{{#include ../spec/SPEC.md}}

@@ -4,7 +4,7 @@
 > `AUDIT_SCHEMA_VERSION` to `2`: `phase` became `line_type` with six values,
 > `input_digest` became `request_digest`, and every line gained chain
 > (`seq`, `prev_hash`) and signature (`signature`, `key_id`) fields.
-> **The current wire contract is [`spec/SPEC.md`](guide/spec.md).** This page
+> **The current wire contract is [`spec/SPEC.md`](spec.md).** This page
 > is kept as the v1 record; do not implement against it.
 
 > **Status:** Frozen at `schema_version: 1` for v0.1 (OQ-15 T7 / AEG-34)  

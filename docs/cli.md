@@ -51,7 +51,7 @@ Does not confine, evaluate policy, or inspect arguments. See
 ## `aegis verify`
 
 Reads one Chain file and reports a verdict. Exit codes are API
-([ADR-0002](../adr/0002-verify-reports-coverage-not-pass-fail.md)):
+([ADR-0002](adr/0002-verify-reports-coverage-not-pass-fail.md)):
 
 | Exit | Meaning |
 |---|---|
@@ -60,7 +60,7 @@ Reads one Chain file and reports a verdict. Exit codes are API
 | `2` | Could not read the record or the trust store |
 | `3` | `Indeterminate` |
 
-Two success labels ([ADR-0004](../adr/0004-embedded-key-with-labelled-trust.md)):
+Two success labels ([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
 
 - **`Verified (unpinned)`** — every signature checks out against the key
   the file itself published. Internal consistency only. An attacker who
@@ -76,7 +76,7 @@ overclaim.
 
 Re-evaluates every recorded outcome against a *new* Policy Set and prints
 a would-block diff. **Nothing is executed.** The command is `recheck`,
-never `replay` ([ADR-0008](../adr/0008-d2-re-evaluation-is-recheck-not-replay.md)).
+never `replay` ([ADR-0008](adr/0008-d2-re-evaluation-is-recheck-not-replay.md)).
 
 `--policy` is required. An implicit allow-all set would answer a question
 nobody asked.

@@ -1,7 +1,7 @@
 # Aegis findings report
 
 > **Status:** v0.3 findings synthesis (AILAB-606) · **Last updated:** 2026-08-07  
-> **Related:** [Threat model](threat-model.md) · [Audit schema freeze](audit-schema.md) · [SECURITY.md](guide/security.md) · [Benchmarks](guide/benchmarks.md) · [Fuzz campaign log](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md)
+> **Related:** [Threat model](threat-model.md) · [Audit schema freeze](audit-schema.md) · [SECURITY.md](security.md) · [Benchmarks](benchmarks.md) · [Fuzz campaign log](https://github.com/botzrDev/aegis/blob/main/fuzz/README.md)
 
 Aegis is a **research instrument**: the point is not to assert that agent tool
 execution is safe, but to make isolation claims falsifiable and then attack them.
@@ -78,11 +78,11 @@ Explicit gaps, stated so a reviewer does not have to discover them:
 - **No Miri on upstream unsafe code.** The workspace forbids `unsafe`, so there
   is no first-party unsafe for Miri to check; wasmtime and cap-std own their own
   unsafe surface. We track RUSTSEC advisories via cargo-deny instead — see the
-  verification posture in [SECURITY.md](guide/security.md).
+  verification posture in [SECURITY.md](security.md).
 
 **Supply-chain posture:** cargo-deny runs in CI (full `cargo deny check`) plus a
 weekly advisory workflow; scope and the one recorded advisory ignore are in
-`deny.toml`. Details in [SECURITY.md](guide/security.md).
+`deny.toml`. Details in [SECURITY.md](security.md).
 
 **Layer 2 / governance findings are out of scope** of this runtime findings
 document; `governance/` is a separate service with its own evidence trail.
@@ -265,7 +265,7 @@ signature check over that record file:
 
 No raw number in this report originates here; each is a citation:
 
-- **Latency numbers** come from [`benches/results/hot_path.md`](guide/benchmarks.md):
+- **Latency numbers** come from [`benches/results/hot_path.md`](benchmarks.md):
   `policy_eval/allow_all` 13.4 ns median, `policy_eval/multi_rule` 31.8 ns,
   `hot_path/multi_rule` 2.71 µs — against targets of <100 µs for policy eval
   alone and <1 ms for the combined policy + capability hot path. Recorded on the

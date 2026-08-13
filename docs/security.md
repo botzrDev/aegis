@@ -8,9 +8,9 @@ versions, in-scope crates, and the Verification posture (cargo-deny,
 `deny.toml`, and why Miri is not a v1 gate) — not just the disclosure
 SLA.
 
-Read the [threat model](../threat-model.md) first. Scope of protection
+Read the [threat model](threat-model.md) first. Scope of protection
 and scope of disclosure are one story.
 
 ---
 
-{{#include ../../SECURITY.md}}
+{{#include ../SECURITY.md}}

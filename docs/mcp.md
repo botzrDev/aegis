@@ -31,7 +31,7 @@ cargo run -p botzr-aegis-mcp -- \
 `--audit` requires `--signing-key`. Omit both and the sink is a temp file
 signed by the compiled-in dev key.
 
-Watchable reproduction: [Demos](../demos/) (`mcp-live-deny.cast`).
+Watchable reproduction: [Demos](demos/) (`mcp-live-deny.cast`).
 
 Full protocol notes:
 [`crates/botzr-aegis-mcp/README.md`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-mcp/README.md).

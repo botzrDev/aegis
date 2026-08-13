@@ -16,12 +16,15 @@ support.
 
 ### Added
 
-- **Docs book** — mdBook hub under `docs/` (`book.toml`, `SUMMARY.md`,
-  `docs/guide/`). Stranger-facing chapters for the pipeline, trust models,
-  CLI, wrap (records, does not confine), and policy YAML as it ships.
-  Evidence pages (threat model, findings, SPEC, ADRs) are listed in the
-  book rather than copied. CI job `docs` pins mdBook 0.5.4 and fails the
-  PR if `mdbook build` fails. GitHub Pages deploy is a maintainer step.
+- **Docs book** — mdBook hub under `docs/` (`book.toml`, `SUMMARY.md`, and
+  flat chapter files). Stranger-facing chapters for the pipeline, trust
+  models, CLI, wrap (records, does not confine), and policy YAML as it
+  ships. Evidence pages (threat model, findings, SPEC, ADRs) are listed in
+  the book rather than copied, so their canonical paths do not move.
+  Chapter files are flat and grouped only by `SUMMARY.md`;
+  [`docs/README.md`](docs/README.md) is the same index for people browsing
+  the folder on GitHub. CI job `docs` pins mdBook 0.5.4 and fails the PR if
+  `mdbook build` fails. GitHub Pages deploy is a maintainer step.
 
 ### Changed
 

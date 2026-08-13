@@ -19,7 +19,7 @@ aegis wrap \
 ```
 
 Then pin the record. `aegis verify` distinguishes **pinned** from
-**unpinned** ([ADR-0004](../adr/0004-embedded-key-with-labelled-trust.md)):
+**unpinned** ([ADR-0004](adr/0004-embedded-key-with-labelled-trust.md)):
 
 ```bash
 aegis verify --key <public_key printed by keygen> /tmp/wrap-audit.jsonl
@@ -53,7 +53,7 @@ wrap as a sandbox, a firewall, or a guard:
   not even enforce a grant before an effect, because the effect happens
   inside a process it does not control. See
   [trust models](trust-models.md) and
-  [threat model §3](../threat-model.md#3-trust-boundaries-model-a-vs-model-b).
+  [threat model §3](threat-model.md#3-trust-boundaries-model-a-vs-model-b).
 
 What wrap does buy is **evidence**: a hash-chained, signed record of
 which tools were called, with digests of the exact request and response

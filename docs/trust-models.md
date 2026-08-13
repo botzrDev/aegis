@@ -2,7 +2,7 @@
 
 Aegis supports two execution models with **different blast radii**. Conflating
 them is the primary way a sandbox becomes decorative. Details:
-[threat model §3](../threat-model.md#3-trust-boundaries-model-a-vs-model-b).
+[threat model §3](threat-model.md#3-trust-boundaries-model-a-vs-model-b).
 
 ## Model A — WASM tool
 

@@ -27,7 +27,7 @@ Worked examples:
 `pending_approval` is reject-with-resume-token: the call is not executed and no
 grant is minted. It is not a parked in-flight call.
 
-The full language is documented in the [policy YAML chapter](../../docs/guide/policy.md)
+The full language is documented in the [policy YAML chapter](../../docs/policy.md)
 of the docs book.
 
 ## Dependencies

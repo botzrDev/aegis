@@ -11,7 +11,7 @@ The goal is not to assert that agent tools are safe. It is to make the isolation
 claims **falsifiable**: a pipeline you can run, a malicious guest you can point at it,
 benchmarks you can reproduce, and a threat model that names its own gaps.
 
-**Docs.** The stranger-facing hub is the [mdBook](docs/intro.md) under
+**Docs.** The stranger-facing hub is the [mdBook](docs/) under
 `docs/`. From a clone: `cd docs && mdbook serve`. CI builds it on every PR.
 GitHub Pages deploy is a maintainer step, not yet live.
 
@@ -165,7 +165,7 @@ containment cases and measured costs — they do not certify the instrument.
 
 | Artifact | What it shows |
 |---|---|
-| [Docs book](docs/intro.md) | Stranger-facing hub (mdBook). `cd docs && mdbook build` — CI fails the PR if the book does not compile |
+| [Docs book](docs/) | Stranger-facing hub (mdBook). `cd docs && mdbook build` — CI fails the PR if the book does not compile |
 | [Threat model](docs/threat-model.md) | Scope, trust boundaries, named non-goals, residual risks |
 | [Findings report](docs/findings.md) | What isolation is measured to guarantee — and not; five reproducible case studies, bundled via [`scripts/evidence-bundle.sh`](scripts/evidence-bundle.sh) |
 | [OQ-15 Part B review](https://github.com/botzrDev/aegis/issues/19) | Structured packaging peer review (solo-maintainer exception logged) |

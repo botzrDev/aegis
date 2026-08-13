@@ -25,11 +25,11 @@ not, and where the honesty boundaries are.
 
 ## What this book covers
 
-- How to [install](guide/install.md) and [run](guide/quickstart.md) one Model A call
-- The load-bearing [pipeline](guide/pipeline.md) and the two [trust models](guide/trust-models.md)
-- The CLI, including [`aegis wrap`](guide/wrap.md) — which **records and does not confine**
-- [Policy YAML](guide/policy.md) as it ships today (`tool` / `capability` / `role` matchers only)
-- Evidence: [threat model](threat-model.md), [findings](findings.md), [record format](guide/spec.md)
+- How to [install](install.md) and [run](quickstart.md) one Model A call
+- The load-bearing [pipeline](pipeline.md) and the two [trust models](trust-models.md)
+- The CLI, including [`aegis wrap`](wrap.md) — which **records and does not confine**
+- [Policy YAML](policy.md) as it ships today (`tool` / `capability` / `role` matchers only)
+- Evidence: [threat model](threat-model.md), [findings](findings.md), [record format](spec.md)
 
 It does **not** document a 15-minute path from wrapping a third-party MCP
 server to a policy-blocked call. That is the D4 launch README, and it waits
@@ -45,7 +45,7 @@ newer than that tag and only exist on
 - every `aegis` subcommand except `run` — `keygen`, `verify`, `recheck`, and
   `wrap` all landed after `0.3.0` was cut
 
-Build from source for those. See [Install](guide/install.md).
+Build from source for those. See [Install](install.md).
 
 ## Building this book
 

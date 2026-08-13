@@ -34,4 +34,4 @@ Rust, so there is no sandbox station.
   isolation. Each host function must enforce the grant before the effect.
 - **Audit** is not a public transparency log. It is a hash-chained,
   ed25519-signed JSONL file. Truncation of an unanchored tail is undetectable
-  from the chain alone ([ADR-0002](../adr/0002-verify-reports-coverage-not-pass-fail.md)).
+  from the chain alone ([ADR-0002](adr/0002-verify-reports-coverage-not-pass-fail.md)).
