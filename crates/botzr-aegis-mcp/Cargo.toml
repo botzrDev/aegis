@@ -26,6 +26,10 @@ workspace = true
 [dependencies]
 botzr-aegis-capability = { workspace = true }
 botzr-aegis-core = { workspace = true }
+# Direct: `execute_tool_call` takes a `PolicyRequest`, so the bridge names the
+# Decision Axes it asserts (none beyond tool identity) rather than having them
+# chosen for it (AILAB-708).
+botzr-aegis-policy = { workspace = true }
 botzr-aegis-runtime = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

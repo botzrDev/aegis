@@ -18,6 +18,7 @@ dependencies = [
  "botzr-aegis-audit",
  "botzr-aegis-capability",
  "botzr-aegis-core",
+ "botzr-aegis-policy",
  "botzr-aegis-runtime",
  "serde_json",
  "tempfile",
@@ -54,6 +55,7 @@ version = "0.3.0"
 dependencies = [
  "botzr-aegis-capability",
  "botzr-aegis-core",
+ "botzr-aegis-policy",
  "botzr-aegis-runtime",
 ]
 
@@ -64,6 +66,7 @@ dependencies = [
  "botzr-aegis-audit",
  "botzr-aegis-capability",
  "botzr-aegis-core",
+ "botzr-aegis-policy",
  "botzr-aegis-runtime",
  "serde_json",
  "tempfile",
@@ -278,6 +281,7 @@ dependencies = [
  "botzr-aegis-audit",
  "botzr-aegis-capability",
  "botzr-aegis-core",
+ "botzr-aegis-policy",
  "botzr-aegis-runtime",
  "botzr-aegis-wrap",
  "serde",
@@ -836,6 +840,7 @@ version = "0.1.0"
 dependencies = [
  "botzr-aegis-capability",
  "botzr-aegis-core",
+ "botzr-aegis-policy",
  "botzr-aegis-runtime",
 ]
 

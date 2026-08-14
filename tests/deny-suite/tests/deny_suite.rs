@@ -25,8 +25,8 @@ use botzr_aegis_core::{
     to_canonical_json, AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, GrantId,
     PolicyOutcome, ResourceCeiling, ToolId,
 };
-use botzr_aegis_policy::PolicyEngine;
-use botzr_aegis_runtime::Runtime;
+use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
+use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 // Component fixtures — tiny WAT, no `wasm32-wasip2` toolchain required.
 
@@ -148,8 +148,13 @@ rules:
     reason: "blocked in deny-suite"
 "#;
     let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+    let tool = ToolId::new("exfil");
     let err = rt
-        .execute_tool_call(ToolId::new("exfil"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert_eq!(
         err,
@@ -185,8 +190,13 @@ rules:
     tool: transfer
 "#;
     let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+    let tool = ToolId::new("transfer");
     let err = rt
-        .execute_tool_call(ToolId::new("transfer"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::PendingApproval { .. }),
@@ -214,8 +224,13 @@ rules:
 fn unregistered_tool_is_capability_denied() {
     // allow-all policy, but the tool was never registered with the resolver.
     let rt = Runtime::new();
+    let tool = ToolId::new("ghost");
     let err = rt
-        .execute_tool_call(ToolId::new("ghost"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::CapabilityDenied { ref reason, denied_capability: _ } if reason.contains("tool not registered")),
@@ -254,8 +269,13 @@ fn unresolvable_fs_need_is_capability_denied() {
     // stand-in body that is never reached — the resolver denies at station 2.
     rt.register_fixture(manifest, NOOP.as_bytes().to_vec(), "go")
         .expect("register fs-reader fixture");
+    let tool = ToolId::new("fs-reader");
     let err = rt
-        .execute_tool_call(ToolId::new("fs-reader"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::CapabilityDenied { .. }),
@@ -297,8 +317,13 @@ fn wildcard_net_need_is_capability_denied() {
     // station still refuses before the sandbox ever runs it.
     rt.register_fixture(manifest, NOOP.as_bytes().to_vec(), "go")
         .expect("register net-wildcard fixture");
+    let tool = ToolId::new("net-wildcard");
     let err = rt
-        .execute_tool_call(ToolId::new("net-wildcard"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::CapabilityDenied { .. }),
@@ -335,8 +360,13 @@ fn wall_clock_cap_trips_through_pipeline() {
     let mut rt = Runtime::new();
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
+    let tool = ToolId::new("spin");
     let err = rt
-        .execute_tool_call(ToolId::new("spin"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
@@ -369,8 +399,13 @@ fn memory_cap_trips_through_pipeline() {
     let mut rt = Runtime::new();
     rt.register_fixture(manifest, GROW_TOUCH.as_bytes().to_vec(), "grow-touch")
         .expect("register grow-touch fixture");
+    let tool = ToolId::new("grow-touch");
     let err = rt
-        .execute_tool_call(ToolId::new("grow-touch"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "memory"),

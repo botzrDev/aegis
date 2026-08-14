@@ -7,4 +7,5 @@ publish = false
 [dependencies]
 botzr-aegis-capability = { path = "../../crates/botzr-aegis-capability" }
 botzr-aegis-core = { path = "../../crates/botzr-aegis-core" }
+botzr-aegis-policy = { path = "../../crates/botzr-aegis-policy" }
 botzr-aegis-runtime = { path = "../../crates/botzr-aegis-runtime" }

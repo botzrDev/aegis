@@ -14,8 +14,10 @@ use botzr_aegis_capability::{
 use botzr_aegis_core::{AegisError, AuditRecord, PolicyAction, PolicyOutcome, ToolId};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
 use botzr_aegis_runtime::{
-    HostCallRequest, HostEffectError, Runtime, RuntimeBuilder, ToolExecutable,
+    HostCallRequest, HostEffectError, Runtime, RuntimeBuilder, ToolCallRequest, ToolExecutable,
 };
+
+const ECHO_WASM: &[u8] = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
 
 /// A role gate: `contractor` may not read notes, everybody else may.
 const ROLE_GATED_POLICY: &str = r#"
@@ -38,6 +40,17 @@ fn host_manifest(id: &str) -> ToolManifest {
             kind: ToolKind::Host,
         },
         std::env::temp_dir(),
+    )
+}
+
+fn wasm_manifest(id: &str) -> ToolManifest {
+    ToolManifest::new(
+        ToolInfo {
+            id: ToolId::new(id),
+            version: "0.1.0".into(),
+            kind: ToolKind::Wasm,
+        },
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool"),
     )
 }
 
@@ -158,6 +171,85 @@ fn a_role_gated_deny_is_reconstructable_from_the_record_alone() {
     //    role-gated deny unexplainable.
     let without_role = PolicyRequest::for_tool(&tool_id).with_capability("fs.read");
     assert_eq!(engine.evaluate(&without_role).action, PolicyAction::Allow);
+}
+
+/// AILAB-708 — the Model A twin of the test above, against the *same* policy.
+///
+/// `execute_tool_call` used to build its own `PolicyRequest` from the tool id
+/// alone, so `no-contractor-reads` — gated on `capability` and `role` — could
+/// never match a WASM call. The contractor was allowed on the trust model that
+/// has real sandbox isolation, and the record could not say why. The echo
+/// component is registered under the id the policy already names so that the
+/// only difference between this test and its Model B twin is the trust model.
+#[test]
+fn a_role_gated_deny_fires_for_a_wasm_tool_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit_path = dir.path().join("session.jsonl");
+
+    let mut rt = build(&audit_path, ROLE_GATED_POLICY);
+    // Registered with a component that *would* succeed, so the denial below can
+    // only have come from station 1.
+    let tool = ToolId::new("notes");
+    rt.register_tool(
+        wasm_manifest("notes"),
+        ToolExecutable::WasmComponent(ECHO_WASM.to_vec()),
+    )
+    .expect("register notes");
+
+    // 1. The deny fires — this is the assertion that fails on `main`, where the
+    //    axes could not be supplied at all and the call returned the echo.
+    let err = rt
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool)
+                .with_capability("fs.read")
+                .with_role("contractor")
+                .with_session("sess-42"),
+        ))
+        .expect_err("a contractor must be denied on Model A too");
+    assert_eq!(
+        err,
+        AegisError::PolicyDenied {
+            reason: "contractors may not read notes".into()
+        }
+    );
+
+    // 2. …and the role is what carried it. The same call without that one axis
+    //    runs the component, so the verdict above was the rule firing, not the
+    //    tool id being denied outright.
+    let allowed = rt
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool).with_capability("fs.read"),
+        ))
+        .expect("without the contractor role the same call is allowed");
+    assert_eq!(allowed, b"{}");
+
+    // ——— from here on, only what is on disk ———
+    drop(rt);
+    let records = outcomes(&audit_path);
+    let [denied, allowed_record] = &records[..] else {
+        panic!("expected exactly two outcomes, got {}", records.len())
+    };
+
+    // 3. A Model A record now carries the axes its verdict turned on, so the
+    //    deny can explain itself exactly as the Model B one does.
+    let axes = &denied.decision_axes;
+    assert_eq!(axes.role.as_deref(), Some("contractor"));
+    assert_eq!(axes.capability.as_deref(), Some("fs.read"));
+    assert_eq!(axes.session.as_deref(), Some("sess-42"));
+    assert_eq!(axes.matched_rule.as_deref(), Some("no-contractor-reads"));
+    assert_eq!(denied.tool_id, ToolId::new("notes"));
+    assert!(matches!(denied.policy, PolicyOutcome::Denied { .. }));
+
+    // The allowed call recorded the axes it did assert, and no role.
+    assert_eq!(
+        allowed_record.decision_axes.capability.as_deref(),
+        Some("fs.read")
+    );
+    assert_eq!(allowed_record.decision_axes.role, None);
 }
 
 #[test]

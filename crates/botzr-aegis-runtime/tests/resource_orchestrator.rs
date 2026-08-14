@@ -8,7 +8,8 @@ use botzr_aegis_core::{
     AegisError, AuditRecord, ExecutionOutcome, GrantId, KeyId, PrevHash, PublicKey, RequestDigest,
     Signature, ToolId,
 };
-use botzr_aegis_runtime::Runtime;
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 const SPIN: &str = r#"
 (component
@@ -39,8 +40,13 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
 
+    let tool = ToolId::new("spin");
     let err = rt
-        .execute_tool_call(ToolId::new("spin"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
@@ -86,8 +92,13 @@ fn golden_resource_exceeded_orchestrator_shape() {
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
 
+    let tool = ToolId::new("spin");
     let _ = rt
-        .execute_tool_call(ToolId::new("spin"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
 
     let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())

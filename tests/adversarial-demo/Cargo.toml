@@ -14,6 +14,7 @@ workspace = true
 botzr-aegis-audit = { workspace = true }
 botzr-aegis-capability = { workspace = true }
 botzr-aegis-core = { workspace = true }
+botzr-aegis-policy = { workspace = true }
 botzr-aegis-runtime = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

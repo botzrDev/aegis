@@ -15,7 +15,8 @@ use aegis_stage2_demo::native::scan_native;
 use botzr_aegis_audit::to_json_line;
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditRecord, ExecutionOutcome, ToolId};
-use botzr_aegis_runtime::{sha256_hex, Runtime};
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{sha256_hex, Runtime, ToolCallRequest};
 use serde_json::Value;
 
 /// Checked-in guest component (rebuild via `./scripts/build-fixtures.sh`).
@@ -87,7 +88,12 @@ fn outcome(rt: &Runtime) -> AuditRecord {
 }
 
 fn run_detector(rt: &Runtime, input: &[u8]) -> Result<Vec<u8>, AegisError> {
-    rt.execute_tool_call(ToolId::new("path-detector"), input)
+    let tool = ToolId::new("path-detector");
+    rt.execute_tool_call(ToolCallRequest::new(
+        tool.clone(),
+        input,
+        PolicyRequest::for_tool(&tool),
+    ))
 }
 
 // --- Equivalence -------------------------------------------------------------
@@ -228,8 +234,13 @@ fn wall_clock_cap_trips() {
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
 
+    let tool = ToolId::new("path-detector-spin");
     let err = rt
-        .execute_tool_call(ToolId::new("path-detector-spin"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .unwrap_err();
     assert!(
         matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),

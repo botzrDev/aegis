@@ -28,7 +28,7 @@ use botzr_aegis_core::{
     ExecutionOutcome, PolicyOutcome, PrevHash, ToolId, AUDIT_SCHEMA_VERSION,
 };
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
-use botzr_aegis_runtime::{HostCallRequest, HostHandler, Runtime, ToolExecutable};
+use botzr_aegis_runtime::{HostCallRequest, HostHandler, Runtime, ToolCallRequest, ToolExecutable};
 
 /// LOAD-BEARING: the whole suite drives one `Runtime` by `&self` from many
 /// threads. If this stops compiling, the pipeline lost thread safety — STOP
@@ -185,12 +185,22 @@ fn round_robin(counts: &[(Class, usize)]) -> Vec<Class> {
 fn run_call(rt: &Runtime, class: Class) {
     match class {
         Class::Success => {
-            let out = rt.execute_tool_call(ToolId::new("noop"), b"{}");
+            let tool = ToolId::new("noop");
+            let out = rt.execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                b"{}",
+                PolicyRequest::for_tool(&tool),
+            ));
             assert!(out.is_ok(), "noop must succeed: {out:?}");
         }
         Class::PolicyDenied => {
+            let tool = ToolId::new("denied-tool");
             let err = rt
-                .execute_tool_call(ToolId::new("denied-tool"), b"{}")
+                .execute_tool_call(ToolCallRequest::new(
+                    tool.clone(),
+                    b"{}",
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .unwrap_err();
             assert!(
                 matches!(err, AegisError::PolicyDenied { .. }),
@@ -198,8 +208,13 @@ fn run_call(rt: &Runtime, class: Class) {
             );
         }
         Class::PendingApproval => {
+            let tool = ToolId::new("gated-tool");
             let err = rt
-                .execute_tool_call(ToolId::new("gated-tool"), b"{}")
+                .execute_tool_call(ToolCallRequest::new(
+                    tool.clone(),
+                    b"{}",
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .unwrap_err();
             assert!(
                 matches!(err, AegisError::PendingApproval { .. }),
@@ -207,8 +222,13 @@ fn run_call(rt: &Runtime, class: Class) {
             );
         }
         Class::CapabilityDenied => {
+            let tool = ToolId::new("ghost");
             let err = rt
-                .execute_tool_call(ToolId::new("ghost"), b"{}")
+                .execute_tool_call(ToolCallRequest::new(
+                    tool.clone(),
+                    b"{}",
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .unwrap_err();
             assert!(
                 matches!(err, AegisError::CapabilityDenied { .. }),
@@ -216,8 +236,13 @@ fn run_call(rt: &Runtime, class: Class) {
             );
         }
         Class::GuestTrap => {
+            let tool = ToolId::new("boom");
             let err = rt
-                .execute_tool_call(ToolId::new("boom"), b"{}")
+                .execute_tool_call(ToolCallRequest::new(
+                    tool.clone(),
+                    b"{}",
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .unwrap_err();
             assert!(
                 matches!(err, AegisError::Trap { .. }),
@@ -225,8 +250,13 @@ fn run_call(rt: &Runtime, class: Class) {
             );
         }
         Class::WallClock => {
+            let tool = ToolId::new("spin");
             let err = rt
-                .execute_tool_call(ToolId::new("spin"), b"{}")
+                .execute_tool_call(ToolCallRequest::new(
+                    tool.clone(),
+                    b"{}",
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .unwrap_err();
             assert!(
                 matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "wall_clock"),
@@ -234,8 +264,13 @@ fn run_call(rt: &Runtime, class: Class) {
             );
         }
         Class::Memory => {
+            let tool = ToolId::new("grow-touch");
             let err = rt
-                .execute_tool_call(ToolId::new("grow-touch"), b"{}")
+                .execute_tool_call(ToolCallRequest::new(
+                    tool.clone(),
+                    b"{}",
+                    PolicyRequest::for_tool(&tool),
+                ))
                 .unwrap_err();
             assert!(
                 matches!(err, AegisError::ResourceExceeded { ref kind } if kind == "memory"),

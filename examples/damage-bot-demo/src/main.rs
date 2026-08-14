@@ -2,7 +2,8 @@ use std::path::Path;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::ToolId;
-use botzr_aegis_runtime::Runtime;
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 fn main() -> Result<(), String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -33,8 +34,13 @@ fn main() -> Result<(), String> {
 
     // Execute a benign call (damage-bot behaves unless told to attack).
     // AEG-42 typed surface: render the error for this demo's `String` main.
+    let tool = ToolId::new("damage-bot");
     let output = rt
-        .execute_tool_call(ToolId::new("damage-bot"), b"{}")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ))
         .map_err(|e| format!("execute: {e}"))?;
     println!("damage-bot output: {}", String::from_utf8_lossy(&output));
     println!("audit log at: {}", rt.audit().path().display());

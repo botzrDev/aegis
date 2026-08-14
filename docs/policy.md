@@ -7,6 +7,19 @@ targets <100 µs. The engine never parses at call time.
 **Matchers today are `tool`, `capability`, and `role` only.** Policy does
 not inspect call arguments. Argument-level matching is not shipped.
 
+**Both trust models reach all three.** The caller names the axes it asserts
+on the request it hands to `execute_tool_call` (Model A) or
+`execute_host_call` (Model B). A rule constrained on an axis the caller left
+unset does not match, so a role gate fires only where a role is actually
+claimed. `session` rides along on the request and is recorded on the Agent
+Action Record, but it is not a match axis — no rule can be written against
+it.
+
+Neither `aegis run` nor the MCP gateway claims a role or a capability: both
+pass tool identity and nothing else, because neither has been told who is
+calling. Role-scoped rules are reachable from the library entry points,
+where the embedding application knows.
+
 ## On-disk shape (`version: 1`)
 
 Copied from the parser in `crates/botzr-aegis-policy/src/parse.rs`:

@@ -100,6 +100,33 @@ pub struct Runtime {
     tools: HashMap<ToolId, ToolRegistration>,
 }
 
+/// Policy axes + payload for a Model A WASM tool call.
+///
+/// Mirrors [`HostCallRequest`]: there is deliberately no `request_digest`
+/// field, because the runtime derives it from the raw `input` bytes inside the
+/// pipeline so audit cannot record a digest the caller made up (AEG-44 §3.C).
+///
+/// Before AILAB-708 this entry point built its own `PolicyRequest` from the
+/// tool id alone, so a rule gated on `role` or `capability` could never match a
+/// Model A call — the trust model with real sandbox isolation was the one that
+/// silently ignored those rules.
+#[derive(Debug, Clone)]
+pub struct ToolCallRequest<'a> {
+    pub tool_id: ToolId,
+    pub input: &'a [u8],
+    pub policy: PolicyRequest<'a>,
+}
+
+impl<'a> ToolCallRequest<'a> {
+    pub fn new(tool_id: ToolId, input: &'a [u8], policy: PolicyRequest<'a>) -> Self {
+        Self {
+            tool_id,
+            input,
+            policy,
+        }
+    }
+}
+
 impl Runtime {
     pub fn new() -> Self {
         Self::default()
@@ -285,14 +312,22 @@ impl Runtime {
     /// `request_digest` is derived from the raw `input` bytes inside the
     /// pipeline — callers cannot supply one.
     ///
+    /// The caller supplies the Decision Axes in the request's
+    /// [`PolicyRequest`], so a rule gated on `role` or `capability` reaches a
+    /// Model A call exactly as it reaches a Model B one.
+    ///
     /// A Model B host tool reaching this entry point fails closed: use
     /// [`Runtime::execute_host_call`].
-    pub fn execute_tool_call(&self, tool_id: ToolId, input: &[u8]) -> Result<Vec<u8>, AegisError> {
-        let policy_request = PolicyRequest::for_tool(&tool_id);
+    pub fn execute_tool_call(&self, req: ToolCallRequest<'_>) -> Result<Vec<u8>, AegisError> {
+        let ToolCallRequest {
+            tool_id,
+            input,
+            policy,
+        } = req;
         self.drive_pipeline(
             tool_id.clone(),
             input,
-            &policy_request,
+            &policy,
             // Execution step: run the prepared component or fixture in the
             // wasmtime sandbox. A tool that was never registered here is a host
             // denial. The sandbox reports metrics on every run (success or trap).
@@ -444,8 +479,13 @@ rules:
     reason: "blocked in test"
 "#;
         let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+        let tool = ToolId::new("smoke");
         let err = rt
-            .execute_tool_call(ToolId::new("smoke"), b"{}")
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                b"{}",
+                PolicyRequest::for_tool(&tool),
+            ))
             .unwrap_err();
         // Policy reason surfaces — proves station 1 rejected, not capability.
         assert_eq!(
@@ -477,8 +517,13 @@ rules:
     tool: smoke
 "#;
         let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+        let tool = ToolId::new("smoke");
         let err = rt
-            .execute_tool_call(ToolId::new("smoke"), b"{}")
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                b"{}",
+                PolicyRequest::for_tool(&tool),
+            ))
             .unwrap_err();
         assert!(
             matches!(err, AegisError::PendingApproval { ref approval_id } if approval_id.starts_with("apr-gate-smoke-smoke-")),
@@ -505,8 +550,13 @@ rules:
         rt.register(manifest, wasm.to_vec()).expect("register echo");
 
         let input = b"hello-aegis";
+        let tool = ToolId::new("echo");
         let out = rt
-            .execute_tool_call(ToolId::new("echo"), input)
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                input,
+                PolicyRequest::for_tool(&tool),
+            ))
             .expect("echo run succeeds");
         assert_eq!(out, input);
 
@@ -535,8 +585,13 @@ rules:
         // 11-byte input echoes back 11 bytes > the 8-byte cap.
         let input = b"hello-aegis";
         assert!(input.len() > 8);
+        let tool = ToolId::new("echo");
         let err = rt
-            .execute_tool_call(ToolId::new("echo"), input)
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                input,
+                PolicyRequest::for_tool(&tool),
+            ))
             .unwrap_err();
         assert_eq!(
             err,
@@ -574,8 +629,13 @@ rules:
         let mut rt = Runtime::new();
         rt.register(manifest, wasm.to_vec()).expect("register echo");
 
+        let tool = ToolId::new("echo");
         let out = rt
-            .execute_tool_call(ToolId::new("echo"), input)
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                input,
+                PolicyRequest::for_tool(&tool),
+            ))
             .expect("payload at the cap succeeds");
         assert_eq!(out, input);
     }
@@ -601,8 +661,13 @@ rules:
         rt.register(manifest, wasm.to_vec()).expect("register echo");
 
         let input = b"a normal, well-under-1-MiB tool payload";
+        let tool = ToolId::new("echo");
         let out = rt
-            .execute_tool_call(ToolId::new("echo"), input)
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                input,
+                PolicyRequest::for_tool(&tool),
+            ))
             .expect("normal payload under default cap succeeds");
         assert_eq!(out, input);
     }

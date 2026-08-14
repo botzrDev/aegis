@@ -37,8 +37,10 @@ an error, not a silent replace.
 
 ## Execution
 
-- **Model A:** `execute_tool_call(tool_id, input)` — the caller does not
-  supply a digest. The pipeline hashes the raw input bytes itself.
+- **Model A:** `execute_tool_call(ToolCallRequest { … })` — the caller does
+  not supply a digest. The pipeline hashes the raw input bytes itself. The
+  request carries the Decision Axes (`capability`, `role`, `session`), so a
+  role-gated rule applies to a WASM tool and to a host tool alike.
 - **Model B:** `execute_host_call(HostCallRequest { … })` — the handler
   receives a `HostEffectContext` built from the minted grant. The sandbox
   is not invoked.

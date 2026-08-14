@@ -10,7 +10,8 @@ use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditIntent, RequestDigest, ToolId};
 use botzr_aegis_policy::PolicyRequest;
 use botzr_aegis_runtime::{
-    HostCallRequest, HostEffectError, RegisterError, Runtime, RuntimeBuilder, ToolExecutable,
+    HostCallRequest, HostEffectError, RegisterError, Runtime, RuntimeBuilder, ToolCallRequest,
+    ToolExecutable,
 };
 
 const ECHO_WASM: &[u8] = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
@@ -56,8 +57,13 @@ fn duplicate_registration_is_rejected() {
 
     // The first registration is still intact — a rejected duplicate must not
     // disturb the tool it collided with.
+    let tool = ToolId::new("echo");
     let out = rt
-        .execute_tool_call(ToolId::new("echo"), b"still-here")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"still-here",
+            PolicyRequest::for_tool(&tool),
+        ))
         .expect("original registration survives");
     assert_eq!(out, b"still-here");
 }
@@ -137,8 +143,13 @@ fn audit_intent_digest_is_derived_from_the_input_bytes() {
     .expect("register echo");
 
     let input = b"digest-must-match-these-exact-bytes";
+    let tool = ToolId::new("echo");
     let out = rt
-        .execute_tool_call(ToolId::new("echo"), input)
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            input,
+            PolicyRequest::for_tool(&tool),
+        ))
         .expect("echo run succeeds");
     assert_eq!(out, input);
 
@@ -165,8 +176,13 @@ fn host_tool_via_execute_tool_call_is_denied() {
     rt.register_tool(manifest("host-echo", ToolKind::Host), ok_handler())
         .expect("register host tool");
 
+    let tool = ToolId::new("host-echo");
     let err = rt
-        .execute_tool_call(ToolId::new("host-echo"), b"ping")
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"ping",
+            PolicyRequest::for_tool(&tool),
+        ))
         .expect_err("Model B tool must not run through the Model A entry point");
     assert_eq!(
         err,
@@ -231,8 +247,13 @@ fn failed_registration_leaves_no_partial_state() {
     // runtime" adapter branch. That denial *is* the proof of no partial state —
     // a manifest-only write would have minted a grant here instead.
     for id in ["host-echo", "bad-wasm", "pinned"] {
+        let tool = ToolId::new(id);
         let err = rt
-            .execute_tool_call(ToolId::new(id), b"{}")
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                b"{}",
+                PolicyRequest::for_tool(&tool),
+            ))
             .expect_err("a tool that failed registration must not execute");
         assert!(
             matches!(&err, AegisError::CapabilityDenied { reason, .. } if reason.contains("tool not registered")),

@@ -116,14 +116,22 @@ mutation is deliberately not exposed.
 ## Execution — Model A (WASM)
 
 ```rust
-pub fn execute_tool_call(&self, tool_id: ToolId, input: &[u8]) -> Result<Vec<u8>, AegisError>;
+pub fn execute_tool_call(&self, req: ToolCallRequest<'_>) -> Result<Vec<u8>, AegisError>;
 ```
 
 ```rust
-let output = rt.execute_tool_call(ToolId::new("echo"), b"hello-aegis")?;
+let tool = ToolId::new("echo");
+let output = rt.execute_tool_call(ToolCallRequest::new(
+    tool.clone(),
+    b"hello-aegis",
+    PolicyRequest::for_tool(&tool),
+))?;
 ```
 
-Two arguments. **The caller does not supply a digest.** The pipeline computes
+One request struct, mirroring `HostCallRequest`. The caller names the Decision
+Axes it asserts, so a rule gated on `role` or `capability` reaches a WASM call
+exactly as it reaches a host one; `PolicyRequest::for_tool` asserts tool
+identity and nothing else. **The caller does not supply a digest.** The pipeline computes
 `RequestDigest::of_request_bytes(input)` internally from the exact — raw,
 unreformatted — bytes the execution step will see, and that is what lands in the
 audit record. No public API accepts a caller-supplied `request_digest`, so audit

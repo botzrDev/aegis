@@ -14,7 +14,8 @@ use std::process::ExitCode;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, PublicKey, RequestDigest, ToolId};
-use botzr_aegis_runtime::{Runtime, RuntimeBuilder};
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{Runtime, RuntimeBuilder, ToolCallRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -781,7 +782,15 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
         RequestDigest::of_request_bytes(&input)
     );
 
-    rt.execute_tool_call(ToolId::new(args.id.clone()), &input)
+    // `aegis run` asserts no role, capability or session: nothing on the command
+    // line says who is calling. Tool identity alone is what it can honestly
+    // claim, so that is all it puts on the request (AILAB-708).
+    let tool = ToolId::new(args.id.clone());
+    rt.execute_tool_call(ToolCallRequest::new(
+        tool.clone(),
+        &input,
+        PolicyRequest::for_tool(&tool),
+    ))
 }
 
 fn load_input(args: &RunArgs) -> Result<Vec<u8>, String> {

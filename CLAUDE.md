@@ -125,7 +125,7 @@ The strongest house norm. It governs records, docs, demos and benchmarks alike:
 - **Model A — WASM tool:** logic runs inside wasmtime; strong isolation
 - **Model B — host function:** effect runs in host Rust; capability check + audit only
 
-Docs and marketing must be blunt that Model B is not full sandbox isolation. Note the current asymmetry, tracked as AILAB-708: Model A carries no `role`/`capability` axis, so role-scoped rules silently do not apply to it.
+Docs and marketing must be blunt that Model B is not full sandbox isolation. The former asymmetry is closed (AILAB-708): both entry points now take a request struct carrying a caller-supplied `PolicyRequest`, so `role`/`capability` rules apply to Model A and Model B alike. `session` travels and is recorded, but is not a matcher axis.
 
 ## Development workflow
 

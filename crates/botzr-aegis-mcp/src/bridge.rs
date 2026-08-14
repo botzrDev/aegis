@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_runtime::{sha256_hex, Runtime, RuntimeBuilder};
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{sha256_hex, Runtime, RuntimeBuilder, ToolCallRequest};
 
 /// Allow-path Model A tool on the MCP catalog.
 pub const ECHO_TOOL_ID: &str = "echo";
@@ -114,7 +115,16 @@ pub fn call_tool(rt: &Runtime, tool_id: &str, text: &str) -> Result<Vec<u8>, Aeg
     }
     // The runtime derives the input digest itself; passing one here would be a
     // second source of truth for the same bytes.
-    rt.execute_tool_call(ToolId::new(tool_id), text.as_bytes())
+    //
+    // The gateway asserts no role, capability or session of its own: an MCP
+    // host has not told us who is calling. Tool identity alone is what it can
+    // honestly claim, so that is all it puts on the request (AILAB-708).
+    let tool = ToolId::new(tool_id);
+    rt.execute_tool_call(ToolCallRequest::new(
+        tool.clone(),
+        text.as_bytes(),
+        PolicyRequest::for_tool(&tool),
+    ))
 }
 
 /// Run the echo tool through the full enforcement pipeline.

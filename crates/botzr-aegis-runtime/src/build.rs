@@ -127,6 +127,9 @@ impl std::fmt::Debug for RuntimeBuilder {
 mod tests {
     use super::*;
     use botzr_aegis_core::{AegisError, ToolId};
+    use botzr_aegis_policy::PolicyRequest;
+
+    use crate::ToolCallRequest;
 
     const DENY_YAML: &str = r#"
 version: 1
@@ -146,8 +149,13 @@ rules:
         assert!(rt.audit().path().exists());
         // allow-all policy → an unregistered tool is stopped by capability,
         // never by policy.
+        let tool = ToolId::new("unregistered");
         let err = rt
-            .execute_tool_call(ToolId::new("unregistered"), b"{}")
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                b"{}",
+                PolicyRequest::for_tool(&tool),
+            ))
             .unwrap_err();
         assert!(
             matches!(err, AegisError::CapabilityDenied { .. }),
@@ -162,8 +170,13 @@ rules:
             .expect("valid yaml")
             .build()
             .expect("build");
+        let tool = ToolId::new("smoke");
         let err = rt
-            .execute_tool_call(ToolId::new("smoke"), b"{}")
+            .execute_tool_call(ToolCallRequest::new(
+                tool.clone(),
+                b"{}",
+                PolicyRequest::for_tool(&tool),
+            ))
             .unwrap_err();
         assert_eq!(
             err,
@@ -207,7 +220,12 @@ rules:
             .expect("build");
         assert_eq!(rt.audit().path(), path);
 
-        let _ = rt.execute_tool_call(ToolId::new("unregistered"), b"{}");
+        let tool = ToolId::new("unregistered");
+        let _ = rt.execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            b"{}",
+            PolicyRequest::for_tool(&tool),
+        ));
         let text = std::fs::read_to_string(&path).expect("audit file written");
         // The writer is the Session owner, so the file opens with an `open`
         // line carrying the public key; the Call's intent follows it.

@@ -6,7 +6,9 @@
 use botzr_aegis_capability::{CapabilityResolver, ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditIntent, CapabilityOutcome, PrevHash, RequestDigest, ToolId};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest, SUPPORTED_POLICY_VERSION};
-use botzr_aegis_runtime::{HostCallRequest, Runtime, RuntimeBuilder, ToolExecutable};
+use botzr_aegis_runtime::{
+    HostCallRequest, Runtime, RuntimeBuilder, ToolCallRequest, ToolExecutable,
+};
 
 /// Manifest construction is public: a consumer declares needs in its own code.
 #[allow(dead_code)]
@@ -45,7 +47,12 @@ fn build() -> Runtime {
 #[allow(dead_code)]
 fn model_a(rt: &mut Runtime, manifest: ToolManifest, bytes: Vec<u8>) -> Result<Vec<u8>, AegisError> {
     rt.register(manifest, bytes).expect("register");
-    rt.execute_tool_call(ToolId::new("echo"), b"hello")
+    let tool = ToolId::new("echo");
+    rt.execute_tool_call(ToolCallRequest::new(
+        tool.clone(),
+        b"hello",
+        PolicyRequest::for_tool(&tool),
+    ))
 }
 
 #[allow(dead_code)]

@@ -4,7 +4,8 @@ use std::path::Path;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{ToolId, PIPELINE_STAGES};
-use botzr_aegis_runtime::{sha256_hex, Runtime};
+use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_runtime::{sha256_hex, Runtime, ToolCallRequest};
 
 #[test]
 fn pipeline_order_is_load_bearing() {
@@ -32,8 +33,13 @@ fn echo_tool_e2e_through_pipeline() {
     rt.register(manifest, wasm.to_vec()).expect("register echo");
 
     let input = b"{\"ping\":true}";
+    let tool = ToolId::new("echo");
     let out = rt
-        .execute_tool_call(ToolId::new("echo"), input)
+        .execute_tool_call(ToolCallRequest::new(
+            tool.clone(),
+            input,
+            PolicyRequest::for_tool(&tool),
+        ))
         .expect("pipeline run succeeds");
     assert_eq!(out, input);
 

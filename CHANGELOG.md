@@ -31,6 +31,18 @@ support.
 
 ### Changed
 
+- **A Model A call now carries its Decision Axes** (AILAB-708).
+  `Runtime::execute_tool_call` takes a `ToolCallRequest { tool_id, input,
+  policy }` — the mirror of the `HostCallRequest` Model B has always taken —
+  instead of building a tool-identity-only `PolicyRequest` for itself.
+  **Breaking:** every caller passes the struct. What this fixes: a rule gated
+  on `role` or `capability` could not match a WASM call at all, so one policy
+  file was enforced two different ways depending on the trust model, and the
+  model with real sandbox isolation was the permissive one. The record
+  inherited it — a Model A outcome omitted `role`, `capability` and `session`
+  because none of them ever reached the request. `aegis run` and the MCP
+  gateway still assert tool identity and nothing else; neither has been told
+  who is calling, so the axes are supplied by library callers.
 - **Relicensed to dual `Apache-2.0 OR MIT`** (AILAB-634). `[workspace.package]
   license` now reads `Apache-2.0 OR MIT`, so the eight crates published at
   `0.3.0` (and `botzr-aegis-wrap`, in-tree, unpublished until the next cut)
