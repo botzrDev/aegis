@@ -49,6 +49,10 @@ _Avoid_: payload store, blob store, sidecar
 One writer lifetime over one Chain file — opened when the `AuditWriter` is constructed, closed on its `Drop`. Owns the chain state (`seq`, tail hash) behind the same lock as the file handle. A file may hold many Sessions.
 _Avoid_: run, connection, process
 
+**Sink**:
+Where a Session's Chain bytes land, and whether they are retained — **Durable** (fsynced and still present after the process exits) or **Volatile** (the default temp sink, removed on `Drop`). A Durable Sink requires a provisioned signing key; only a Volatile one may be signed by `insecure_dev_key`.
+_Avoid_: backend, store, destination, output
+
 **Anchor**:
 Any signed line that proves content exists beyond a given point — a close record, a later Session's `prev_session_tail` back-reference, or a Checkpoint. Absence of an Anchor is what makes a tail undecidable.
 
@@ -67,6 +71,7 @@ A verdict meaning the question could not be decided from the evidence — an unv
 - A **Call** produces exactly one **AAR**, on every exit path including deny, trap, and panic
 - An **AAR** links to at most one **Envelope** entry, by `request_digest`
 - A **Session** contains many **Calls**; a Chain file contains many **Sessions**
+- A **Session** writes to exactly one **Sink**; only a Durable Sink can carry an **Anchor** forward, because a later Session's `prev_session_tail` needs the earlier tail to still exist
 - A **Chain** verifies *and replays* without any **Envelope**
 - A **Binding** turns a tool's arguments into **Decision Axes**; without one, a call cannot be resolved to a capability
 - A **Policy Set** governs a **Call**; its hash is recorded in the **AAR** so the verdict is reproducible
@@ -86,4 +91,6 @@ A verdict meaning the question could not be decided from the evidence — an unv
 - **`.aar` is not available as a file extension.** It is the Android Archive format — editors and `file` will misidentify records as zip archives. The prose name "Agent Action Record" is unaffected; the extension is a separate, still-open choice (`.aarl` proposed). "AAR" also softly collides with *after-action report* in audit usage.
 - **"digest" means two different things.** `PolicySet.digest` is FNV-1a over YAML text, self-documented at `policy/src/parse.rs:213` as "not a security digest"; `input_digest` is SHA-256 over raw bytes. The `policy_set_hash` field in the AAR cannot reuse the former. Partly resolved by the proposed newtypes (`PrevHash`, `PolicySetHash`, `RequestDigest`).
 - **"record" is ambiguous between line and decision.** Resolved: the **Chain** covers every appended line (intent, outcome, open, close, and the reserved checkpoint); **AAR** names the signed outcome line. `seq` is per line, not per Call.
+- **"Every Decision Axis lives in the Chain" is not true for Model A.** `execute_tool_call` builds its own `PolicyRequest` (`runtime/src/lib.rs:291`), so a Model A Call carries no `capability`, `role`, or `session`. Two consequences: a **Matcher** axis constrained by a rule but absent from the request does not match (`policy/src/set.rs:62-64`), so a role-scoped `deny` **cannot fire for a Model A Call**; and a Model A AAR records those axes as absent, indistinguishable from "structurally unreachable". Ticketed 2026-08-14, not yet fixed.
+- **"the audit path" implies retention the default Sink does not have.** `aegis` and `aegis run` print `Audit: <path>` for the default Volatile Sink, and that directory is removed when the process exits — verified 2026-08-14 against the shipped `0.3.0` binary (`Audit: /tmp/.tmpF0SEZX/audit.jsonl`, gone on exit). The operator is pointed at a file they cannot read. **Resolved:** the default Sink becomes in-memory and says so — a Volatile Sink names no path, because its bytes are unreachable by construction.
 - **"event" belongs to REPLAY, not to Aegis today.** The REPLAY event journal (`RunStarted`, `ToolRequested`, …) is a different, larger model. Do not call an AAR an event.

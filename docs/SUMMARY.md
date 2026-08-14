@@ -44,5 +44,7 @@
   - [0009 — D4 cross-boundary chain](adr/0009-d4-reproduces-a-cross-boundary-chain.md)
   - [0010 — macOS confinement fast-follows](adr/0010-macos-confinement-fast-follows-m4.md)
   - [0011 — Dual Apache-2.0 / MIT](adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md)
+  - [0012 — The audit sink declares retention](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md)
+  - [0013 — A classifier, not a shared walk](adr/0013-verify-and-recheck-share-a-classifier-not-a-walk.md)
 - [Audit schema v1 (superseded)](audit-schema.md)
 - [Security](security.md)
