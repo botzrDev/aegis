@@ -28,6 +28,21 @@ pub enum AuditError {
     #[error("audit file has a torn final line at line {line}; refusing to chain onto it")]
     TornTail { line: usize },
 
+    /// A [`Durable`](crate::Retention::Durable) Sink was paired with
+    /// [`insecure_dev_key`](crate::insecure_dev_key). Its own variant rather
+    /// than a string because it is a *pairing* fault: the sink is fine, the key
+    /// is fine, and only the combination is refused — so the operator's fix
+    /// (provision a key, or accept a Volatile Sink) does not resemble any other
+    /// failure in this enum. A retained file signed by a seed compiled into
+    /// every published artifact is the one Session `Verified (pinned)` must
+    /// never be able to describe (ADR-0004, ADR-0012).
+    #[error(
+        "a durable audit sink needs a provisioned signing key; \
+         the insecure dev key may only sign a volatile sink \
+         (generate one with `aegis keygen --out <PATH>`)"
+    )]
+    DurableSinkNeedsProvisionedKey,
+
     /// No signing key at that path. Its own variant rather than an `Io` string
     /// because it is the one key-file failure an operator causes by forgetting
     /// `aegis keygen`, and the fix differs from every other read failure.

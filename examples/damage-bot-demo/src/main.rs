@@ -43,6 +43,9 @@ fn main() -> Result<(), String> {
         ))
         .map_err(|e| format!("execute: {e}"))?;
     println!("damage-bot output: {}", String::from_utf8_lossy(&output));
-    println!("audit log at: {}", rt.audit().path().display());
+    match rt.audit().path() {
+        Some(path) => println!("audit log at: {}", path.display()),
+        None => println!("audit log: (volatile sink — records are not retained)"),
+    }
     Ok(())
 }

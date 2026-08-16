@@ -112,12 +112,21 @@ fn outcome(call_id: &str) -> AuditRecord {
     )
 }
 
+/// A fixed seed that is **not** the dev key's.
+///
+/// These fixtures write real Chain files, and a Durable Sink refuses
+/// `insecure_dev_key` (ADR-0012). Fixed rather than random so a failing case
+/// reproduces byte for byte.
+fn provisioned_key() -> SigningKey {
+    SigningKey::from_seed([0x2a; 32])
+}
+
 /// Write one closed Session through the real writer and hand back its text.
 fn written_session(calls: usize) -> String {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
     {
-        let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+        let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
         for call in 0..calls {
             let call_id = format!("call-{call}");
             let mut intent = botzr_aegis_core::AuditIntent::new(
@@ -361,7 +370,7 @@ fn a_trailing_unparseable_line_is_a_torn_write_with_its_own_reason() {
     // from a Session that simply has not closed yet.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
-    let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+    let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
     let mut intent = botzr_aegis_core::AuditIntent::new(
         "call-0",
         ToolId::new("echo"),
@@ -391,14 +400,14 @@ fn a_trailing_unparseable_line_is_a_torn_write_with_its_own_reason() {
     );
     // The writer, a different consumer, refuses to *append* onto this file. The
     // verdict path classifies it instead of refusing to answer.
-    assert!(AuditWriter::open(&path, insecure_dev_key()).is_err());
+    assert!(AuditWriter::open(&path, provisioned_key()).is_err());
 }
 
 #[test]
 fn an_intent_tail_is_indeterminate_and_names_the_calls_in_flight() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
-    let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+    let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
     for call_id in ["call-a", "call-b"] {
         let mut intent = botzr_aegis_core::AuditIntent::new(
             call_id,
@@ -561,14 +570,14 @@ fn the_same_bytes_are_unpinned_without_a_trust_slice_and_pinned_with_the_open_ke
     assert_eq!(unpinned.verdict, Verdict::Verified);
     assert_eq!(unpinned.trust, TrustLabel::Unpinned);
 
-    let pinned = verify_chain_with_trust(&text, Some(&[insecure_dev_key().public_key()]));
+    let pinned = verify_chain_with_trust(&text, Some(&[provisioned_key().public_key()]));
     assert_eq!(pinned.verdict, Verdict::Verified);
     assert_eq!(pinned.trust, TrustLabel::Pinned);
     assert_eq!(pinned.coverage, unpinned.coverage);
     // Observed once, though every signed line carries the same fingerprint.
     assert_eq!(
         pinned.key_ids,
-        vec![insecure_dev_key().key_id()],
+        vec![provisioned_key().key_id()],
         "key_ids records Open keys, not signatures"
     );
 }
@@ -580,7 +589,7 @@ fn a_session_key_outside_the_trust_slice_is_tampering_not_merely_unpinned() {
     // chain pass a `--key` gate by ignoring the key it was gated on.
     let text = written_session(1);
     let foreign = SigningKey::from_seed([9u8; 32]);
-    assert_ne!(foreign.public_key(), insecure_dev_key().public_key());
+    assert_ne!(foreign.public_key(), provisioned_key().public_key());
 
     let result = verify_chain_with_trust(&text, Some(&[foreign.public_key()]));
     assert_eq!(
@@ -591,7 +600,7 @@ fn a_session_key_outside_the_trust_slice_is_tampering_not_merely_unpinned() {
                     session_index: 0,
                     seq: 0
                 },
-                key_id: insecure_dev_key().key_id(),
+                key_id: provisioned_key().key_id(),
             }
         },
         "the reason names the key the file published, not the one that was expected"
@@ -599,7 +608,7 @@ fn a_session_key_outside_the_trust_slice_is_tampering_not_merely_unpinned() {
     // Failing the pin is never `Pinned`, and the observed key is still reported
     // so an operator can compare fingerprints without re-reading the file.
     assert_eq!(result.trust, TrustLabel::Unpinned);
-    assert_eq!(result.key_ids, vec![insecure_dev_key().key_id()]);
+    assert_eq!(result.key_ids, vec![provisioned_key().key_id()]);
 }
 
 // ---- structural rules the chain alone cannot enforce ----------------------
@@ -612,7 +621,7 @@ fn a_second_decision_for_one_approval_id_is_tampering() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
     {
-        let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+        let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
         for _ in 0..2 {
             let mut decision = AuditDecision::new(
                 ApprovalId::new("apr-1"),

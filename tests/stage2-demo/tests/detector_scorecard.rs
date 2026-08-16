@@ -68,7 +68,7 @@ fn seed_fixture_tree(dir: &Path) {
 }
 
 fn audit_lines(rt: &Runtime) -> Vec<String> {
-    std::fs::read_to_string(rt.audit().path())
+    std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
         .expect("audit readable")
         .lines()
         .map(str::to_owned)

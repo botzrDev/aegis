@@ -178,7 +178,11 @@ fn report_read_failure(path: &Path, error: &AuditError) -> ExitCode {
         | AuditError::KeyFilePermissions { .. }
         | AuditError::KeyFileMalformed { .. }
         | AuditError::KeyFileIo { .. }
-        | AuditError::Entropy { .. } => eprintln!("error: {error}"),
+        | AuditError::Entropy { .. }
+        // Also an emit-path variant: a Durable Sink refusing the dev key is
+        // raised when a Session is *opened*, and `verify` opens none. Its
+        // `Display` names no path, so nothing is prefixed here either.
+        | AuditError::DurableSinkNeedsProvisionedKey => eprintln!("error: {error}"),
     }
     ExitCode::from(EXIT_COULD_NOT_READ)
 }

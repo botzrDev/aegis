@@ -203,7 +203,10 @@ mod tests {
     #[test]
     fn panic_emits_trap_outcome() {
         let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let path = writer.path().to_path_buf();
+        let path = writer
+            .path()
+            .expect("open_temp is a file sink")
+            .to_path_buf();
         let result = std::panic::catch_unwind(|| {
             let _session = begin(&writer, "panic-tool").unwrap();
             panic!("simulated host panic");
@@ -221,7 +224,10 @@ mod tests {
     #[test]
     fn abandoned_session_emits_one_fail_closed_outcome() {
         let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let path = writer.path().to_path_buf();
+        let path = writer
+            .path()
+            .expect("open_temp is a file sink")
+            .to_path_buf();
         {
             let _session = begin(&writer, "abandoned-tool").unwrap();
             // No `complete()` — the session is abandoned and dropped here.
@@ -250,7 +256,10 @@ mod tests {
     #[test]
     fn complete_then_drop_emits_exactly_one_outcome() {
         let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let path = writer.path().to_path_buf();
+        let path = writer
+            .path()
+            .expect("open_temp is a file sink")
+            .to_path_buf();
         let mut session = begin(&writer, "ok-tool").unwrap();
         session.set_policy(PolicyOutcome::Allowed);
         session.set_execution(ExecutionOutcome::Success);

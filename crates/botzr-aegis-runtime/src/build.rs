@@ -146,7 +146,11 @@ rules:
         // An empty builder must not change behaviour: allow-all policy and a
         // usable temp audit sink, exactly like `Runtime::new()`.
         let rt = RuntimeBuilder::new().build().expect("default build");
-        assert!(rt.audit().path().exists());
+        assert!(rt
+            .audit()
+            .path()
+            .expect("the default sink is a temp file")
+            .exists());
         // allow-all policy → an unregistered tool is stopped by capability,
         // never by policy.
         let tool = ToolId::new("unregistered");
@@ -218,7 +222,7 @@ rules:
             .expect("open audit")
             .build()
             .expect("build");
-        assert_eq!(rt.audit().path(), path);
+        assert_eq!(rt.audit().path(), Some(path.as_path()));
 
         let tool = ToolId::new("unregistered");
         let _ = rt.execute_tool_call(ToolCallRequest::new(

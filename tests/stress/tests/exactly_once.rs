@@ -19,9 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use botzr_aegis_audit::{
-    insecure_dev_key, verify_chain, verify_line, AuditWriter, Verdict, VerifyError,
-};
+use botzr_aegis_audit::{verify_chain, verify_line, AuditWriter, SigningKey, Verdict, VerifyError};
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{
     AegisError, AuditClose, AuditIntent, AuditLineType, AuditOpen, AuditRecord, CapabilityOutcome,
@@ -394,7 +392,9 @@ fn audit_is_exactly_once_under_concurrency() {
     // one writer means one Session, so `seq` runs 0..=N with no restart.
     let dir = tempfile::tempdir().unwrap();
     let audit_path = dir.path().join("stress.jsonl");
-    let audit = AuditWriter::open(&audit_path, insecure_dev_key()).unwrap();
+    // A fixed seed that is *not* the dev key's: this sink is a real file, and a
+    // Durable Sink refuses `insecure_dev_key` (ADR-0012).
+    let audit = AuditWriter::open(&audit_path, SigningKey::from_seed([0x2a; 32])).unwrap();
     let mut rt = Runtime::new()
         .with_policy(PolicyEngine::from_yaml(POLICY_YAML).unwrap())
         .with_audit(audit);

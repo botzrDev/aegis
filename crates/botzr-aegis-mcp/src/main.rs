@@ -109,7 +109,14 @@ fn main() -> ExitCode {
         env!("CARGO_PKG_VERSION")
     );
     eprintln!("Pipeline: policy → capability → sandbox → audit");
-    eprintln!("Audit: {}", runtime.audit().path().display());
+    // A sink that answers `None` has no path to print. Unreachable today — the
+    // gateway only ever builds file sinks — but naming a file that does not
+    // exist is the overclaim ADR-0012 exists to prevent, so it is a match and
+    // not an `unwrap`.
+    match runtime.audit().path() {
+        Some(path) => eprintln!("Audit: {}", path.display()),
+        None => eprintln!("Audit: (volatile sink — records are not retained)"),
+    }
     eprintln!("Tools: echo (allow) + exfil (policy-denied by default) — Model A WASM");
 
     let stdin = io::stdin();

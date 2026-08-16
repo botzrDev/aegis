@@ -1,12 +1,17 @@
 //! Golden snapshot tests — schema drift fails CI, not Layer 2 in production (OQ-6).
 //!
 //! The snapshots pin the **whole schema v2 wire shape**, not a `to_json_line`
-//! dump. Every case is emitted through the real [`AuditWriter`] into one temp
+//! dump. Every case is emitted through the real [`AuditWriter`] into one
 //! Session signed by the fixed-seed [`insecure_dev_key`], so each file holds the
 //! canonical bytes production actually writes — stamped `seq` and `prev_hash`,
 //! and a real ed25519 `signature` + `key_id`. LOAD-BEARING: that is what makes a
 //! canonicalization change or a change to how the signing input is built fail
 //! here. A snapshot of a serializer dump would still match after either.
+//!
+//! The Session is written to a [`MemoryChainSink`] rather than a file. The
+//! fixture needs the fixed-seed dev key to be reproducible, and a Durable Sink
+//! refuses that key (ADR-0012) — the bytes are identical either way, which is
+//! itself part of what this file pins.
 //!
 //! Reproducible because the dev key is a fixed seed, ed25519 signing is
 //! deterministic, the records below are constants, and `seq`/`prev_hash` follow
@@ -18,7 +23,7 @@
 
 use std::sync::OnceLock;
 
-use botzr_aegis_audit::{insecure_dev_key, verify_line, AuditWriter};
+use botzr_aegis_audit::{insecure_dev_key, verify_line, AuditWriter, MemoryChainSink};
 use botzr_aegis_core::{
     ApprovalId, ApprovalVerdict, ApprovedScope, AuditDecision, AuditIntent, AuditOpen, AuditRecord,
     CapabilityGrant, CapabilityOutcome, DecisionAxes, ExecutionOutcome, FsAxis, FsGrant, HttpGrant,
@@ -75,10 +80,10 @@ fn fixture_grant() -> CapabilityGrant {
 fn golden_session() -> &'static [(&'static str, String)] {
     static SESSION: OnceLock<Vec<(&'static str, String)>> = OnceLock::new();
     SESSION.get_or_init(|| {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("session.jsonl");
+        let store = MemoryChainSink::new();
         {
-            let writer = AuditWriter::open(&path, insecure_dev_key()).expect("open session");
+            let writer = AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+                .expect("open session");
             writer.emit_intent(&mut golden_intent()).expect("intent");
             for (_, mut record) in outcome_cases() {
                 writer.emit_outcome(&mut record).expect("outcome");
@@ -89,8 +94,8 @@ fn golden_session() -> &'static [(&'static str, String)] {
             // Drop closes the Session — the `close` snapshot only exists because
             // of that, so the scope is the fixture.
         }
-        let rows: Vec<String> = std::fs::read_to_string(&path)
-            .expect("session readable")
+        let rows: Vec<String> = store
+            .to_text()
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(str::to_owned)
@@ -473,11 +478,12 @@ fn jsonl_roundtrip_writes_open_intent_and_outcome() {
     );
     writer.emit_outcome(&mut outcome).unwrap();
 
-    let lines: Vec<String> = std::fs::read_to_string(writer.path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let lines: Vec<String> =
+        std::fs::read_to_string(writer.path().expect("open_temp writes to a real temp file"))
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
     // The Session `Open` line is now the file's first line — every `lines[0]`
     // assumption from schema v1 shifts by one.
     assert_eq!(lines.len(), 3);

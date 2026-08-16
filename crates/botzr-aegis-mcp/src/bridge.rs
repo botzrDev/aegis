@@ -46,9 +46,15 @@ const ECHO_WASM: &[u8] = include_bytes!("../fixtures/echo.wasm");
 /// `audit_path` and `signing_key_path` travel together (AILAB-620). A host that
 /// asks for a persistent record file must say which key signs it: a Session an
 /// MCP host later pins a `Verified (pinned)` label to must not have been signed
-/// by a seed compiled into the published audit crate. The pairing is checked
-/// here as well as in `main.rs` because this function is public — a library
-/// caller reaches it without going through argument parsing.
+/// by a seed compiled into the published audit crate.
+///
+/// **The security half of that rule now lives in the constructor.**
+/// `AuditWriter::with_sink` refuses a Durable Sink signed by `insecure_dev_key`
+/// (ADR-0012), so a retained file with no provisioned key is unreachable no
+/// matter what this function does. The match below stays for usability — an
+/// early, flag-shaped error instead of a library error mid-build — and the
+/// wording is deliberately identical to the CLI's, because the rule an operator
+/// hits is the same rule. Do not re-add the security claim here.
 pub fn build_runtime(
     policy_path: Option<&Path>,
     audit_path: Option<&Path>,

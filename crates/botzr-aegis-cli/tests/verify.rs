@@ -27,7 +27,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use botzr_aegis_audit::{insecure_dev_key, line_hash, AuditWriter, SigningKey};
+use botzr_aegis_audit::{line_hash, AuditWriter, SigningKey};
 use botzr_aegis_core::{
     to_canonical_json, ApprovalId, ApprovalVerdict, AuditDecision, AuditIntent, AuditRecord,
     CapabilityOutcome, ExecutionOutcome, PolicyOutcome, PolicySetHash, PrevHash, RequestDigest,
@@ -95,16 +95,25 @@ fn verdict_line(output: &Output) -> String {
 
 // ---- keys ----------------------------------------------------------------
 
+/// The key every fixture Session below is signed with.
+///
+/// A fixed seed that is **not** the dev key's: these fixtures write real Chain
+/// files, and a Durable Sink refuses `insecure_dev_key` (ADR-0012). Fixed rather
+/// than random so a failing case reproduces byte for byte.
+fn session_key() -> SigningKey {
+    SigningKey::from_seed([0x2a; 32])
+}
+
 /// What `--key` takes: the `public_key` an `open` line publishes.
-fn dev_key() -> String {
-    insecure_dev_key().public_key().to_hex()
+fn session_public_key() -> String {
+    session_key().public_key().to_hex()
 }
 
 /// What the report prints: the `key_id` fingerprint. Deliberately a different
-/// value from [`dev_key`] — pinning compares published keys, and a test that
+/// value from [`session_public_key`] — pinning compares published keys, and a test that
 /// confused the two would pin nothing and still pass.
-fn dev_fingerprint() -> String {
-    insecure_dev_key().key_id().to_hex()
+fn session_fingerprint() -> String {
+    session_key().key_id().to_hex()
 }
 
 fn foreign_key() -> String {
@@ -145,7 +154,7 @@ fn intent(call_id: &str) -> AuditIntent {
 /// One closed Session: an intent/outcome pair per call id, then the `Close`
 /// that `Drop` writes.
 fn closed_session(path: &Path, call_ids: &[&str]) {
-    let writer = AuditWriter::open(path, insecure_dev_key()).expect("open chain");
+    let writer = AuditWriter::open(path, session_key()).expect("open chain");
     for call_id in call_ids {
         writer.emit_intent(&mut intent(call_id)).expect("intent");
         writer.emit_outcome(&mut outcome(call_id)).expect("outcome");
@@ -158,7 +167,7 @@ fn closed_session(path: &Path, call_ids: &[&str]) {
 /// durable. `in_flight` names Calls that get an intent and no outcome — the only
 /// content the unverified tail may legally hold.
 fn unclosed_session(path: &Path, completed: &[&str], in_flight: &[&str]) {
-    let writer = AuditWriter::open(path, insecure_dev_key()).expect("open chain");
+    let writer = AuditWriter::open(path, session_key()).expect("open chain");
     for call_id in completed {
         writer.emit_intent(&mut intent(call_id)).expect("intent");
         writer.emit_outcome(&mut outcome(call_id)).expect("outcome");
@@ -173,7 +182,7 @@ fn unclosed_session(path: &Path, completed: &[&str], in_flight: &[&str]) {
 /// open/outcome/close twice and the indices below stay legible.
 fn two_sessions(path: &Path) {
     for session in 0..2 {
-        let writer = AuditWriter::open(path, insecure_dev_key()).expect("open chain");
+        let writer = AuditWriter::open(path, session_key()).expect("open chain");
         writer
             .emit_outcome(&mut outcome(&format!("call-s{session}")))
             .expect("outcome");
@@ -216,7 +225,7 @@ fn hash_of(row: &str) -> PrevHash {
 /// A mutation passed through here comes out validly signed. What it cannot fix
 /// is the *next* line's `prev_hash`, which is the point of the row that uses it.
 fn resign(mut value: Value) -> String {
-    let key = insecure_dev_key();
+    let key = session_key();
     let body = value.as_object_mut().expect("a chain line is an object");
     body.remove("signature");
     body.insert("key_id".into(), json!(key.key_id().to_hex()));
@@ -259,7 +268,7 @@ fn an_unmodified_closed_session_verifies_unpinned() {
     // ADR-0004: the fingerprint is printed on every report, not only on a pin,
     // so an operator can compare it against a key they hold out of band.
     assert!(
-        stdout(&output).contains(&format!("key_id {}", dev_fingerprint())),
+        stdout(&output).contains(&format!("key_id {}", session_fingerprint())),
         "stdout={}",
         stdout(&output)
     );
@@ -275,11 +284,11 @@ fn the_same_bytes_with_the_open_key_supplied_are_pinned_to_its_fingerprint() {
     let (_dir, path) = temp_chain();
     closed_session(&path, &["call-0", "call-1"]);
 
-    let output = verify(&["--key", &dev_key(), path_arg(&path)]);
+    let output = verify(&["--key", &session_public_key(), path_arg(&path)]);
     assert_exit(&output, 0);
     assert_eq!(
         verdict_line(&output),
-        format!("Verified (pinned to {})", dev_fingerprint())
+        format!("Verified (pinned to {})", session_fingerprint())
     );
 }
 
@@ -504,7 +513,7 @@ fn a_key_that_is_not_the_open_key_is_tampering_not_merely_unpinned() {
     // The report still names the key the file published, so an operator can
     // compare fingerprints without re-reading the record.
     assert!(
-        stdout(&output).contains(&format!("key_id {}", dev_fingerprint())),
+        stdout(&output).contains(&format!("key_id {}", session_fingerprint())),
         "stdout={}",
         stdout(&output)
     );
@@ -520,7 +529,7 @@ fn two_decisions_for_one_approval_id_are_tampering() {
     // the file still verifies (ADR-0005).
     let (_dir, path) = temp_chain();
     {
-        let writer = AuditWriter::open(&path, insecure_dev_key()).expect("open chain");
+        let writer = AuditWriter::open(&path, session_key()).expect("open chain");
         for _ in 0..2 {
             let mut decision = AuditDecision::new(
                 ApprovalId::new("apr-1"),
@@ -673,8 +682,8 @@ fn two_runs_over_the_same_bytes_produce_byte_identical_output() {
     let (_dir, path) = temp_chain();
     unclosed_session(&path, &["call-done"], &["call-a", "call-b"]);
 
-    let first = verify(&["--key", &dev_key(), path_arg(&path)]);
-    let second = verify(&["--key", &dev_key(), path_arg(&path)]);
+    let first = verify(&["--key", &session_public_key(), path_arg(&path)]);
+    let second = verify(&["--key", &session_public_key(), path_arg(&path)]);
     assert_exit(&first, 3);
     assert_eq!(first.status.code(), second.status.code());
     assert_eq!(first.stdout, second.stdout);
@@ -753,7 +762,7 @@ fn a_trust_store_with_comments_and_blank_lines_still_pins() {
              {}\n\
              \n\
              # rotation goes below this line\n",
-            dev_key()
+            session_public_key()
         ),
     )
     .expect("write trust store");
@@ -762,7 +771,7 @@ fn a_trust_store_with_comments_and_blank_lines_still_pins() {
     assert_exit(&output, 0);
     assert_eq!(
         verdict_line(&output),
-        format!("Verified (pinned to {})", dev_fingerprint())
+        format!("Verified (pinned to {})", session_fingerprint())
     );
 }
 

@@ -269,7 +269,7 @@ mod tests {
 
     /// Read the last JSONL line the runtime's audit sink recorded.
     fn last_audit_line(rt: &Runtime) -> String {
-        std::fs::read_to_string(rt.audit().path())
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
             .unwrap()
             .lines()
             .last()

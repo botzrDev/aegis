@@ -48,7 +48,9 @@ fn append_episodic_allowed_with_audit_success() {
     let text = std::fs::read_to_string(jsonl).unwrap();
     assert!(text.contains("tokio channels"));
 
-    let audit = std::fs::read_to_string(rt.audit().path()).unwrap();
+    let audit =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .unwrap();
     assert!(audit.contains("\"status\":\"success\""));
 }
 
@@ -84,7 +86,9 @@ fn append_personal_denied_without_owner_role() {
     let personal = dir.path().join(".agent/personal/notes.jsonl");
     assert!(!personal.exists(), "denied write must not create file");
 
-    let audit = std::fs::read_to_string(rt.audit().path()).unwrap();
+    let audit =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .unwrap();
     assert!(audit.contains("\"status\":\"denied\"") || audit.contains("default deny"));
 }
 

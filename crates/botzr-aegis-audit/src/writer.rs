@@ -1,11 +1,19 @@
-//! The Session owner: synchronous JSONL append + fsync (G3 durability
-//! default), with the hash chain behind the same lock as the file handle.
+//! The Session owner: it stamps `seq` and `prev_hash`, signs, hashes the signed
+//! form and appends — with the hash chain behind the same lock as the sink
+//! handle.
+//!
+//! **Durability is the sink's claim, not this module's.** The fsync lives in
+//! [`FileChainSink`], which declares [`Retention::Durable`]; what this module
+//! guarantees is order and failing closed — a write error is returned, never
+//! swallowed, and the tail advances only after the sink accepted the line. What
+//! the bytes are worth afterwards is whatever the sink's [`Retention`] says
+//! (ADR-0012).
 //!
 //! One `AuditWriter` is one Session — `Open` on construction, `Close` on
-//! `Drop`. Chain state (`seq`, tail hash) lives *inside* the file mutex rather
+//! `Drop`. Chain state (`seq`, tail hash) lives *inside* the sink mutex rather
 //! than in a sibling object: two threads that read the chain head outside the
 //! lock get the same `prev_hash` and fork the chain, and splitting ordering
-//! authority across two objects is how that race gets reintroduced. A file may
+//! authority across two objects is how that race gets reintroduced. A Chain may
 //! hold many Sessions; `prev_session_tail` on the `Open` line is what links
 //! them.
 //!
@@ -14,8 +22,6 @@
 //! with no `Close` and no later `Open` beyond it is exactly what makes a tail
 //! undecidable, and a verifier reports it as `Indeterminate` (ADR-0002).
 
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -28,13 +34,16 @@ use botzr_aegis_core::{
 use crate::error::AuditError;
 use crate::line::{ChainLine, SignedChainLine};
 use crate::signing::{insecure_dev_key, SigningKey};
+use crate::sink::{ChainSink, FileChainSink, Retention};
 
 /// Everything the chain rule needs, under one lock.
 ///
-/// Bundled deliberately: `seq`, the tail hash, and the file handle have to move
+/// Bundled deliberately: `seq`, the tail hash, and the sink handle have to move
 /// together or the append order and the chain order can disagree.
 struct ChainState {
-    file: BufWriter<File>,
+    /// `Send` is load-bearing, not stylistic: an `AuditWriter` shared across
+    /// threads is only `Sync` because everything inside this mutex is `Send`.
+    sink: Box<dyn ChainSink + Send>,
     /// Next position to hand out. Per appended **line**, per Session — not per
     /// Call, because concurrent Calls interleave and a Call's intent and
     /// outcome lines are not adjacent.
@@ -60,7 +69,10 @@ impl ChainState {
 /// Append-only audit sink and Session owner. Fail-closed: callers must treat
 /// write errors as fatal.
 pub struct AuditWriter {
-    path: PathBuf,
+    /// Cached from the sink at construction, deliberately *outside* the chain
+    /// lock. `path()` is a printer's question, and a printer must not be able to
+    /// queue behind an in-flight fsync to learn a value that never changes.
+    path: Option<PathBuf>,
     chain: Mutex<ChainState>,
     signing_key: SigningKey,
     /// Names Calls; it does **not** order the chain, so it stays outside the
@@ -71,37 +83,48 @@ pub struct AuditWriter {
     /// it did, so a writer whose construction failed does not leave a Session
     /// that closes without ever having opened.
     open_emitted: AtomicBool,
-    _temp: Option<tempfile::TempDir>,
 }
 
 impl AuditWriter {
-    /// Open (or create) a Chain file and begin a Session.
+    /// Begin a Session over any [`ChainSink`].
     ///
-    /// Appending to a non-empty file recovers the previous Session's final line
-    /// hash into this Session's `Open` line as `prev_session_tail`. The `Open`
-    /// line's own `prev_hash` stays genesis — a verifier already special-cases
-    /// `Open`, since that is where the public key is, and duplicating the tail
-    /// into `prev_hash` would give one fact two spellings.
-    pub fn open(path: impl AsRef<Path>, signing_key: SigningKey) -> Result<Self, AuditError> {
-        let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+    /// Three things happen, in this order, and the order is the point:
+    ///
+    /// 1. The sink's declared [`Retention`] is checked against the key. A
+    ///    Durable Sink signed by [`insecure_dev_key`] is refused before the
+    ///    store is touched at all, so a library embedder inherits the pairing
+    ///    rule without going through anyone's argument parsing.
+    /// 2. The previous tail is read, for this Session's `prev_session_tail`.
+    /// 3. The `Open` line is appended, publishing the public key every later
+    ///    line in this Session is verified against (ADR-0004).
+    pub fn with_sink(
+        sink: Box<dyn ChainSink + Send>,
+        signing_key: SigningKey,
+    ) -> Result<Self, AuditError> {
+        if sink.retention() == Retention::Durable
+            && signing_key.key_id() == insecure_dev_key().key_id()
+        {
+            return Err(AuditError::DurableSinkNeedsProvisionedKey);
         }
-        let prev_session_tail = recover_tail(&path)?;
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        // Uniform across both retentions, deliberately. For a Durable Sink this
+        // is the torn-tail refusal: chaining onto bytes nobody can hash twice
+        // turns a recoverable `Indeterminate` into a permanent break. For a
+        // Volatile one the error is not a chain-integrity claim — but a sink
+        // that cannot read the store it is about to write is broken either way,
+        // and starting a Session on it would only move the failure to the first
+        // append, after an `Open` line had already been emitted.
+        let prev_session_tail = sink.existing_tail()?;
+        let path = sink.path().map(Path::to_path_buf);
         let writer = Self {
             path,
             chain: Mutex::new(ChainState {
-                file: BufWriter::new(file),
+                sink,
                 next_seq: 0,
                 tail: PrevHash::GENESIS,
             }),
             signing_key,
             call_seq: AtomicU64::new(1),
             open_emitted: AtomicBool::new(false),
-            _temp: None,
         };
         let mut open = AuditOpen::new(writer.signing_key.public_key(), prev_session_tail);
         writer.append_signed(&mut open)?;
@@ -109,18 +132,41 @@ impl AuditWriter {
         Ok(writer)
     }
 
-    /// Ephemeral sink for tests and dev defaults — a temp JSONL file signed by
-    /// [`insecure_dev_key`]. Not a production sink, and not a production key.
-    pub fn open_temp() -> Result<Self, AuditError> {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("audit.jsonl");
-        let mut writer = Self::open(path, insecure_dev_key())?;
-        writer._temp = Some(dir);
-        Ok(writer)
+    /// Open (or create) a Chain file and begin a Session.
+    ///
+    /// [`AuditWriter::with_sink`] over a [`FileChainSink`], which declares
+    /// [`Retention::Durable`] — so this constructor refuses
+    /// [`insecure_dev_key`]. A retained file is one somebody will later pin a
+    /// `Verified (pinned)` label to, and the dev seed ships in every published
+    /// artifact.
+    ///
+    /// Appending to a non-empty file recovers the previous Session's final line
+    /// hash into this Session's `Open` line as `prev_session_tail`. The `Open`
+    /// line's own `prev_hash` stays genesis — a verifier already special-cases
+    /// `Open`, since that is where the public key is, and duplicating the tail
+    /// into `prev_hash` would give one fact two spellings.
+    pub fn open(path: impl AsRef<Path>, signing_key: SigningKey) -> Result<Self, AuditError> {
+        Self::with_sink(Box::new(FileChainSink::open(path)?), signing_key)
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// Ephemeral sink for tests and dev defaults — a real temp JSONL file,
+    /// signed by [`insecure_dev_key`]. Not a production sink, and not a
+    /// production key.
+    ///
+    /// The temp directory is removed when the writer drops, so the sink
+    /// declares [`Retention::Volatile`]: the bytes are fsynced but do not
+    /// outlive the process, which is exactly the pairing the dev key is allowed.
+    pub fn open_temp() -> Result<Self, AuditError> {
+        Self::with_sink(Box::new(FileChainSink::temp()?), insecure_dev_key())
+    }
+
+    /// Where this Session's bytes live, when that is a meaningful question.
+    ///
+    /// `None` for a sink with nothing to point an operator at — an in-memory
+    /// Chain has no path, and printing one for it would name a file that does
+    /// not exist.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     /// The public key this Session's `Open` line published — what a verifier
@@ -212,46 +258,11 @@ fn write_line<L: serde::Serialize>(state: &mut ChainState, line: &L) -> Result<(
     // fsync path.
     let canonical = to_canonical_json(line)?;
     let line_hash = PrevHash::of_line(canonical.as_bytes());
-    state.file.write_all(canonical.as_bytes())?;
-    state.file.write_all(b"\n")?;
-    state.file.flush()?;
-    state.file.get_ref().sync_all()?;
-    // Only after the line is durable: a failed write leaves the next line
-    // chained to the last one that actually landed.
+    state.sink.append(canonical.as_bytes())?;
+    // Only after the sink accepted the line: a failed write leaves the next
+    // line chained to the last one that actually landed.
     state.tail = line_hash;
     Ok(())
-}
-
-/// The hash of the last line already in `path`, or `None` for a fresh or empty
-/// file.
-///
-/// Canonicalizes what it reads rather than hashing the raw bytes, because that
-/// is what a verifier does; we write canonical rows, so the round trip is an
-/// identity and a divergence would be a bug worth failing on.
-fn recover_tail(path: &Path) -> Result<Option<PrevHash>, AuditError> {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let mut last: Option<(usize, String)> = None;
-    for (index, line) in BufReader::new(file).lines().enumerate() {
-        let line = line?;
-        if !line.trim().is_empty() {
-            last = Some((index + 1, line));
-        }
-    }
-    let Some((number, line)) = last else {
-        return Ok(None);
-    };
-    // A tail that does not parse is a torn write. Refusing to open is the
-    // fail-closed answer: continuing would chain a new Session onto bytes
-    // nobody can hash the same way twice, turning a recoverable
-    // `Indeterminate` into a permanent chain break.
-    let value: serde_json::Value =
-        serde_json::from_str(&line).map_err(|_| AuditError::TornTail { line: number })?;
-    let canonical = to_canonical_json(&value).map_err(|_| AuditError::TornTail { line: number })?;
-    Ok(Some(PrevHash::of_line(canonical.as_bytes())))
 }
 
 impl Drop for AuditWriter {
@@ -311,6 +322,20 @@ mod tests {
 
     use super::*;
     use crate::signing::{verify_line, VerifyError};
+    use crate::sink::MemoryChainSink;
+
+    /// A fixed seed that is *not* the dev key's, for fixtures that need a
+    /// Durable file sink — which refuses [`insecure_dev_key`] (ADR-0012).
+    /// Fixed rather than random so a failing test reproduces byte for byte.
+    fn provisioned_key() -> SigningKey {
+        SigningKey::from_seed([0x2a; 32])
+    }
+
+    /// The Session's file. Every writer below is a file sink, so `None` here
+    /// would be a bug in the test rather than a case to handle.
+    fn file_of(writer: &AuditWriter) -> &Path {
+        writer.path().expect("a file sink names its path")
+    }
 
     fn outcome(call_id: &str) -> AuditRecord {
         AuditRecord::new(
@@ -356,11 +381,11 @@ mod tests {
         writer.emit_intent(&mut intent).unwrap();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
 
-        let rows = raw_lines(writer.path());
+        let rows = raw_lines(file_of(&writer));
         assert_eq!(rows.len(), 3, "open + intent + outcome");
         // The Open line anchors on genesis; the back-reference to a previous
         // Session lives in `prev_session_tail`, not here.
-        let parsed = lines(writer.path());
+        let parsed = lines(file_of(&writer));
         assert_eq!(parsed[0]["prev_hash"], Value::from("0".repeat(64)));
         for index in 1..rows.len() {
             let expected = PrevHash::of_line(rows[index - 1].as_bytes());
@@ -382,7 +407,7 @@ mod tests {
         let writer = AuditWriter::open_temp().unwrap();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
 
-        let rows = raw_lines(writer.path());
+        let rows = raw_lines(file_of(&writer));
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
         let record: AuditRecord = serde_json::from_str(&rows[1]).unwrap();
         assert_eq!(*open.line_type(), AuditLineType::Open);
@@ -395,7 +420,7 @@ mod tests {
     fn tampering_with_any_field_makes_the_signature_fail() {
         let writer = AuditWriter::open_temp().unwrap();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
-        let rows = raw_lines(writer.path());
+        let rows = raw_lines(file_of(&writer));
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
 
         for (field, replacement) in [
@@ -426,7 +451,7 @@ mod tests {
     fn stripping_a_signature_changes_the_line_hash() {
         let writer = AuditWriter::open_temp().unwrap();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
-        let rows = raw_lines(writer.path());
+        let rows = raw_lines(file_of(&writer));
         let signed = PrevHash::of_line(rows[1].as_bytes());
 
         let mut value: Value = serde_json::from_str(&rows[1]).unwrap();
@@ -443,7 +468,7 @@ mod tests {
         let path = dir.path().join("session.jsonl");
 
         {
-            let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+            let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
             let first = &lines(&path)[0];
             assert!(
                 first.get("prev_session_tail").is_none(),
@@ -455,7 +480,7 @@ mod tests {
         let first_session = raw_lines(&path);
         let tail = PrevHash::of_line(first_session.last().unwrap().as_bytes());
 
-        let _second = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+        let _second = AuditWriter::open(&path, provisioned_key()).unwrap();
         let rows = lines(&path);
         let reopened = &rows[first_session.len()];
         assert_eq!(reopened["line_type"], Value::from("open"));
@@ -479,7 +504,7 @@ mod tests {
 
         let clean = dir.path().join("clean.jsonl");
         {
-            let _writer = AuditWriter::open(&clean, insecure_dev_key()).unwrap();
+            let _writer = AuditWriter::open(&clean, provisioned_key()).unwrap();
         }
         let rows = lines(&clean);
         assert_eq!(rows.last().unwrap()["line_type"], Value::from("close"));
@@ -488,7 +513,7 @@ mod tests {
         let result = std::panic::catch_unwind({
             let unwound = unwound.clone();
             move || {
-                let _writer = AuditWriter::open(&unwound, insecure_dev_key()).unwrap();
+                let _writer = AuditWriter::open(&unwound, provisioned_key()).unwrap();
                 panic!("simulated host panic");
             }
         });
@@ -512,13 +537,13 @@ mod tests {
             RequestDigest::of_request_bytes(b"{}"),
         );
         writer.emit_intent(&mut intent).unwrap();
-        let row = &lines(writer.path())[1];
+        let row = &lines(file_of(&writer))[1];
         assert_eq!(row["line_type"], Value::from("intent"));
         assert!(row.get("signature").is_none(), "{row}");
         assert!(row.get("key_id").is_none(), "{row}");
         // Still hashed into the chain: the next line points at it.
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
-        let rows = raw_lines(writer.path());
+        let rows = raw_lines(file_of(&writer));
         let next: AuditRecord = serde_json::from_str(&rows[2]).unwrap();
         assert_eq!(*next.prev_hash(), PrevHash::of_line(rows[1].as_bytes()));
     }
@@ -541,9 +566,9 @@ mod tests {
             }
         });
 
-        let rows = raw_lines(writer.path());
+        let rows = raw_lines(file_of(&writer));
         assert_eq!(rows.len(), 1 + 8 * 4);
-        let parsed = lines(writer.path());
+        let parsed = lines(file_of(&writer));
         for (index, row) in parsed.iter().enumerate() {
             assert_eq!(row["seq"], Value::from(index as u64), "seq must not repeat");
             if index > 0 {
@@ -575,12 +600,149 @@ mod tests {
     fn a_torn_tail_refuses_to_open_rather_than_chaining_onto_garbage() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("torn.jsonl");
-        drop(AuditWriter::open(&path, insecure_dev_key()).unwrap());
+        drop(AuditWriter::open(&path, provisioned_key()).unwrap());
         let mut text = std::fs::read_to_string(&path).unwrap();
         text.push_str("{\"line_type\":\"outcome\",\"seq\"");
         std::fs::write(&path, text).unwrap();
 
-        let err = AuditWriter::open(&path, insecure_dev_key()).unwrap_err();
+        let err = AuditWriter::open(&path, provisioned_key()).unwrap_err();
         assert!(matches!(err, AuditError::TornTail { .. }), "{err:?}");
+    }
+
+    /// A sink that claims [`Retention::Durable`] while holding its bytes in
+    /// memory. The pairing rule is about the *declaration*, so the refusal is
+    /// checkable without a filesystem — and "nothing was written" is then a
+    /// statement about a buffer rather than about a stat call.
+    struct DurableStub(MemoryChainSink);
+
+    impl ChainSink for DurableStub {
+        fn retention(&self) -> Retention {
+            Retention::Durable
+        }
+        fn existing_tail(&self) -> Result<Option<PrevHash>, AuditError> {
+            self.0.existing_tail()
+        }
+        fn append(&mut self, line: &[u8]) -> Result<(), AuditError> {
+            self.0.append(line)
+        }
+        fn path(&self) -> Option<&Path> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_durable_sink_refuses_the_dev_key_and_leaves_no_open_line() {
+        let store = MemoryChainSink::new();
+        let err = AuditWriter::with_sink(
+            Box::new(DurableStub(store.clone())),
+            crate::signing::insecure_dev_key(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AuditError::DurableSinkNeedsProvisionedKey),
+            "{err:?}"
+        );
+        // The negative half is the point: a refused construction must not leave
+        // a Session that opened and will never close.
+        assert!(
+            store.bytes().is_empty(),
+            "refused construction wrote: {}",
+            store.to_text()
+        );
+
+        // `open` is `with_sink` over a Durable file sink, so it inherits the
+        // refusal — and writes no `Open` line either.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("refused.jsonl");
+        let err = AuditWriter::open(&path, crate::signing::insecure_dev_key()).unwrap_err();
+        assert!(
+            matches!(err, AuditError::DurableSinkNeedsProvisionedKey),
+            "{err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            "",
+            "a refused Durable sink must hold no Open line"
+        );
+
+        // The same key over a Volatile sink is allowed — that pairing is what
+        // keeps `open_temp` and the runtime's default sink working.
+        assert!(
+            AuditWriter::with_sink(
+                Box::new(MemoryChainSink::new()),
+                crate::signing::insecure_dev_key()
+            )
+            .is_ok(),
+            "only Durable sinks refuse the dev key"
+        );
+    }
+
+    #[test]
+    fn an_in_memory_session_round_trips_and_verifies() {
+        let store = MemoryChainSink::new();
+        {
+            let writer =
+                AuditWriter::with_sink(Box::new(store.clone()), crate::signing::insecure_dev_key())
+                    .unwrap();
+            assert_eq!(writer.path(), None, "an in-memory Chain names no file");
+            let mut intent = AuditIntent::new(
+                "call-1",
+                ToolId::new("echo"),
+                RequestDigest::of_request_bytes(b"{}"),
+            );
+            writer.emit_intent(&mut intent).unwrap();
+            writer.emit_outcome(&mut outcome("call-1")).unwrap();
+            // Dropped here, so the `Close` line is part of what is read back.
+        }
+
+        let text = store.to_text();
+        let rows: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        assert_eq!(rows.len(), 4, "open + intent + outcome + close: {text}");
+        // The bytes, not the writer, are what a verifier sees — so this is the
+        // assertion that the seam did not change them.
+        let verification = crate::verify_chain(&text);
+        assert_eq!(
+            verification.verdict,
+            crate::Verdict::Verified,
+            "{verification:?}"
+        );
+        for (index, row) in rows.iter().enumerate().skip(1) {
+            let parsed: Value = serde_json::from_str(row).unwrap();
+            assert_eq!(
+                parsed["prev_hash"],
+                Value::from(PrevHash::of_line(rows[index - 1].as_bytes()).to_hex()),
+                "line {index} forked off the chain"
+            );
+        }
+    }
+
+    /// A Durable sink that cannot read its own tail. `append` panics because
+    /// reaching it at all would mean a Session opened on a store the writer
+    /// could not chain onto.
+    struct UnreadableDurableSink;
+
+    impl ChainSink for UnreadableDurableSink {
+        fn retention(&self) -> Retention {
+            Retention::Durable
+        }
+        fn existing_tail(&self) -> Result<Option<PrevHash>, AuditError> {
+            Err(AuditError::TornTail { line: 7 })
+        }
+        fn append(&mut self, _line: &[u8]) -> Result<(), AuditError> {
+            unreachable!("construction must fail before any line is appended")
+        }
+        fn path(&self) -> Option<&Path> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_durable_sink_that_cannot_read_its_tail_fails_construction() {
+        let err = AuditWriter::with_sink(Box::new(UnreadableDurableSink), provisioned_key())
+            .expect_err("a Durable sink with an unreadable tail must fail closed");
+        assert!(matches!(err, AuditError::TornTail { line: 7 }), "{err:?}");
     }
 }

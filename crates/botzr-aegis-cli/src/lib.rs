@@ -230,6 +230,15 @@ fn parse_global_flags(args: &[String]) -> Result<GlobalFlags, String> {
 /// must never be able to describe. Without `--audit` the sink is a temp file
 /// signed by the loudly-named dev key, and a signing key for it would be
 /// pointing at nothing.
+///
+/// **The security half of this rule now lives in the constructor.**
+/// `AuditWriter::with_sink` refuses a Durable Sink signed by `insecure_dev_key`
+/// (ADR-0012), so `--audit` without a key cannot produce a retained file
+/// whatever this function does — a library embedder inherits the refusal
+/// without going through argument parsing at all. What is left here is
+/// usability: telling the operator early, in flag vocabulary, instead of
+/// surfacing a library error after the run has started. Do not re-add the
+/// security claim to this function; do not delete it either.
 fn check_audit_key_pair(audit: Option<&Path>, signing_key: Option<&Path>) -> Result<(), String> {
     match (audit, signing_key) {
         (Some(_), None) => Err(
@@ -722,6 +731,20 @@ pub fn build_runtime(
     builder.build().map_err(|e| e.to_string())
 }
 
+/// What the `Audit:` banner line says about where this run's records land.
+///
+/// A sink that answers `None` has no path to print, and the honest line says
+/// the records are not retained rather than naming a file nobody can open
+/// afterwards (ADR-0012). Unreachable today — every sink the CLI builds is a
+/// file — which is exactly why it must not be an `unwrap`: the day the default
+/// sink changes, this prints the truth instead of panicking.
+fn audit_destination(writer: &botzr_aegis_audit::AuditWriter) -> String {
+    match writer.path() {
+        Some(path) => path.display().to_string(),
+        None => "(volatile sink — records are not retained)".to_string(),
+    }
+}
+
 pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
     let mut rt = build_runtime(
         args.policy.as_deref(),
@@ -772,7 +795,7 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
         env!("CARGO_PKG_VERSION"),
         args.id
     );
-    eprintln!("Audit: {}", rt.audit().path().display());
+    eprintln!("Audit: {}", audit_destination(rt.audit()));
     // Diagnostic only — the digest is no longer an execute argument. The runtime
     // derives it internally for the audit record; we call the *same* constructor
     // here purely so the operator can eyeball-match this line against the
@@ -844,7 +867,7 @@ pub fn dispatch(cmd: Command) -> ExitCode {
                     env!("CARGO_PKG_VERSION")
                 );
                 eprintln!("Pipeline: policy → capability → sandbox → audit");
-                eprintln!("Audit: {}", rt.audit().path().display());
+                eprintln!("Audit: {}", audit_destination(rt.audit()));
                 eprintln!(
                     "Runtime ready — use `aegis run --component <WASM> --id <TOOL_ID>` to execute"
                 );

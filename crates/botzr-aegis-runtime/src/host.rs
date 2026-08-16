@@ -277,11 +277,12 @@ rules:
             .expect("host echo succeeds");
         assert_eq!(out, input);
 
-        let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
-            .unwrap()
-            .lines()
-            .map(str::to_owned)
-            .collect();
+        let lines: Vec<String> =
+            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect();
         // Line 0 is the Session `Open` the writer emits on construction.
         assert_eq!(lines.len(), 3, "open + intent + outcome lines");
         assert!(lines[2].contains("\"status\":\"success\""));
@@ -316,12 +317,13 @@ rules:
             }
         );
 
-        let outcome = std::fs::read_to_string(rt.audit().path())
-            .unwrap()
-            .lines()
-            .last()
-            .unwrap()
-            .to_owned();
+        let outcome =
+            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap()
+                .to_owned();
         assert!(
             outcome.contains("\"status\":\"resource_exceeded\""),
             "expected resource_exceeded, got: {outcome}"
@@ -361,7 +363,9 @@ rules:
             }
         );
 
-        let text = std::fs::read_to_string(rt.audit().path()).unwrap();
+        let text =
+            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+                .unwrap();
         assert!(text.contains("path outside grant"));
     }
 
@@ -394,7 +398,9 @@ rules:
             .expect("escape hatch runs the supplied closure");
         assert_eq!(out, b"raw");
 
-        let text = std::fs::read_to_string(rt.audit().path()).unwrap();
+        let text =
+            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+                .unwrap();
         assert!(text.contains("\"status\":\"success\""), "{text}");
         assert!(!text.contains("registry handler ran"), "{text}");
     }

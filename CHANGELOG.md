@@ -31,6 +31,26 @@ support.
 
 ### Changed
 
+- **The audit sink is a seam that declares its retention** (AILAB-701).
+  `botzr-aegis-audit` gains a public `ChainSink` trait, a `Retention`
+  declaration (`Durable` / `Volatile`), and two adapters: `FileChainSink` (the
+  synchronous append + fsync path, unchanged) and `MemoryChainSink`.
+  `AuditWriter::with_sink(sink, key)` is the new constructor; `AuditWriter::open`
+  is now a convenience wrapper over a `FileChainSink`. The writer keeps the
+  chain rule and its single lock — only *where the bytes land* is pluggable.
+  **Breaking:** `AuditWriter::path()` returns `Option<&Path>`, because a sink
+  that stores nothing on disk has no path to name. **Breaking:** a Durable Sink
+  paired with `insecure_dev_key` is refused at construction with the new
+  `AuditError::DurableSinkNeedsProvisionedKey` — `AuditWriter::open(path,
+  insecure_dev_key())` now fails, and fixtures that want a real file must supply
+  a provisioned key. What this fixes: G3 durability was stated as a property of
+  the crate while being a property of one hard-wired `BufWriter<File>`; a Chain
+  written to a third-party sink and a Chain fsynced to disk are byte-identical,
+  so the declaration is the only thing that can distinguish them. Known and
+  documented limit: a sink may declare `Durable` and still report an empty tail,
+  which silently unanchors later Sessions and is not detectable from here. The
+  default sink is unchanged — `Runtime::default()` still uses a temp file — see
+  [ADR-0012](docs/adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md).
 - **A Model A call now carries its Decision Axes** (AILAB-708).
   `Runtime::execute_tool_call` takes a `ToolCallRequest { tool_id, input,
   policy }` — the mirror of the `HostCallRequest` Model B has always taken —

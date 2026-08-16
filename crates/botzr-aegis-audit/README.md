@@ -17,15 +17,28 @@ A begun `CallSession` is fail-closed by construction. Its seeds serialize as def
 
 ## Writer
 
-One `AuditWriter` is one **Session**: it appends the `Open` line on construction and the `Close` line on `Drop`, and owns the chain state (`seq`, tail hash) behind the same lock as the file handle. Rows are canonical (RFC 8785 JCS) JSON with per-line `fsync` for durability (G3), so the bytes a verifier reads are the bytes that were hashed. Schema version is validated before every write.
+One `AuditWriter` is one **Session**: it appends the `Open` line on construction and the `Close` line on `Drop`, and owns the chain state (`seq`, tail hash) behind the same lock as the sink handle. Rows are canonical (RFC 8785 JCS) JSON, so the bytes a verifier reads are the bytes that were hashed. Schema version is validated before every write.
 
-`Open`, `Outcome`, `Decision` and `Close` are ed25519-signed; `Intent` is hashed into the chain but never signed, because it is fsynced ahead of execution and signing must stay off the pre-execution critical path.
+`Open`, `Outcome`, `Decision` and `Close` are ed25519-signed; `Intent` is hashed into the chain but never signed, because it is written ahead of execution and signing must stay off the pre-execution critical path.
+
+## The sink
+
+Where the bytes land is a public seam (ADR-0012). A `ChainSink` **declares** its `Retention` — `Durable` or `Volatile` — and the writer checks that declaration against the signing key at construction. **Per-line `fsync` for durability (G3) is a property of `FileChainSink`, not of this crate**: a Chain appended to `MemoryChainSink` and a Chain fsynced to disk are byte-identical, so the declaration is the only thing that distinguishes them. There is no durability flag on the writer — a guarantee you can switch off in production is not a guarantee.
+
+**A Durable Sink requires a provisioned key.** `AuditWriter::with_sink` refuses `insecure_dev_key` over a Durable Sink with `AuditError::DurableSinkNeedsProvisionedKey`, before anything is read or written.
+
+**Known limit, not engineered around:** a sink may declare `Durable` and still report an empty tail over a non-empty store, silently leaving every later Session unanchored. One trait plus a runtime check cannot detect that. A Durable Sink that *errors* on `existing_tail` is a different case and fails construction.
 
 ```rust
-let writer = AuditWriter::open("path/to/audit.jsonl", signing_key)?;
-// or for ephemeral testing, signed by the loudly-named dev key:
+let writer = AuditWriter::open("path/to/audit.jsonl", signing_key)?;   // Durable file sink
+// or for ephemeral testing — a temp file removed on drop, so Volatile,
+// which is why the loudly-named dev key is allowed to sign it:
 let writer = AuditWriter::open_temp()?;
+// or any sink you supply:
+let writer = AuditWriter::with_sink(Box::new(MemoryChainSink::new()), signing_key)?;
 ```
+
+`AuditWriter::path()` returns `Option<&Path>` — a sink with nothing on disk names no file, and printing one for it would name a file nobody can open.
 
 **`Drop` does not run on SIGKILL.** Close-on-drop covers clean exit and unwind only; a Session with no `Close` is what a verifier reports as `Indeterminate`.
 
@@ -45,7 +58,7 @@ In-process the same two calls are `generate_signing_key(path, force)` and `load_
 
 **Generation is never implicit.** Nothing on the emit path mints a key. `load_signing_key` fails closed on every failure — missing, unreadable, loose permissions, bad hex, wrong length — and never falls back to `insecure_dev_key()` or to emitting unsigned records. `RuntimeBuilder::audit_file` takes the key path as a *required* argument for the same reason: a persistent sink is a file somebody will later pin a `Verified (pinned to <fp>)` label to, and a key minted silently on first run would publish a brand-new public key in the `Open` Line and quietly break every pin the operator held.
 
-`insecure_dev_key()` survives only where it cannot be mistaken for provisioned authority: `AuditWriter::open_temp`, the runtime's throwaway default sink, and tests. Its seed is compiled into this crate, ships in every published artifact, and is not a secret — a Line it signs can only ever be reported `Verified (unpinned)`.
+`insecure_dev_key()` survives only where it cannot be mistaken for provisioned authority: `AuditWriter::open_temp`, the runtime's throwaway default sink, and tests. That is now **enforced, not conventional** — every one of those is a Volatile Sink, and the constructor refuses the pairing anywhere else. Its seed is compiled into this crate, ships in every published artifact, and is not a secret — a Line it signs can only ever be reported `Verified (unpinned)`.
 
 **Rotation** is normative in [`spec/SPEC.md`](../../spec/SPEC.md) §8.4 and is not restated here. In terms of this file: rotating means `aegis keygen` into a *new* seed file and starting a *new* process. One `AuditWriter` is one Session and holds one key for its lifetime, so a key change mid-Session is not something an emitter can produce — and a verifier reads it as `Tampered`.
 

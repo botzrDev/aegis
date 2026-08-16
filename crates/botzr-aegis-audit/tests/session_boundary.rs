@@ -9,7 +9,7 @@
 //! detect truncation", and it is why these two cases are tested side by side.
 
 use botzr_aegis_audit::{
-    insecure_dev_key, verify_chain, verify_chain_file, AuditWriter, IndeterminateReason, Verdict,
+    verify_chain, verify_chain_file, AuditWriter, IndeterminateReason, SigningKey, Verdict,
 };
 use botzr_aegis_core::{
     AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, PolicySetHash, PrevHash,
@@ -17,6 +17,15 @@ use botzr_aegis_core::{
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+
+/// A fixed seed that is **not** the dev key's.
+///
+/// These fixtures write real Chain files, and a Durable Sink refuses
+/// `insecure_dev_key` (ADR-0012). Fixed rather than random so a failing case
+/// reproduces byte for byte.
+fn provisioned_key() -> SigningKey {
+    SigningKey::from_seed([0x2a; 32])
+}
 
 fn outcome(call_id: &str) -> AuditRecord {
     AuditRecord::new(
@@ -51,7 +60,7 @@ fn write_rows(path: &Path, rows: &[String]) {
 /// Two closed Sessions appended to one file, each with one call.
 fn two_sessions(path: &Path) {
     for session in 0..2 {
-        let writer = AuditWriter::open(path, insecure_dev_key()).unwrap();
+        let writer = AuditWriter::open(path, provisioned_key()).unwrap();
         writer
             .emit_outcome(&mut outcome(&format!("call-s{session}")))
             .unwrap();
@@ -179,7 +188,7 @@ fn close_is_written_on_drop_for_clean_exit_and_for_unwind() {
 
     let clean = dir.join("clean.jsonl");
     {
-        let writer = AuditWriter::open(&clean, insecure_dev_key()).unwrap();
+        let writer = AuditWriter::open(&clean, provisioned_key()).unwrap();
         writer.emit_outcome(&mut outcome("call-clean")).unwrap();
     }
     assert_eq!(
@@ -191,7 +200,7 @@ fn close_is_written_on_drop_for_clean_exit_and_for_unwind() {
     let result = std::panic::catch_unwind({
         let unwound = unwound.clone();
         move || {
-            let writer = AuditWriter::open(&unwound, insecure_dev_key()).unwrap();
+            let writer = AuditWriter::open(&unwound, provisioned_key()).unwrap();
             writer.emit_outcome(&mut outcome("call-unwound")).unwrap();
             panic!("simulated host panic");
         }
@@ -215,7 +224,7 @@ fn a_session_that_never_dropped_is_indeterminate_which_is_the_sigkill_gap() {
     // than a false `Verified` or a false alarm. Closing it needs an external
     // Anchor, which is not this ticket.
     let (_dir, path) = temp_chain();
-    let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+    let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
     writer.emit_outcome(&mut outcome("call-killed")).unwrap();
     std::mem::forget(writer);
 
@@ -243,12 +252,12 @@ fn a_later_session_reopening_the_file_anchors_the_killed_one() {
     // the same file, the killed Session stops being the final one, and its tail
     // becomes anchored by a signature.
     let (_dir, path) = temp_chain();
-    let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+    let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
     writer.emit_outcome(&mut outcome("call-killed")).unwrap();
     std::mem::forget(writer);
 
     {
-        let writer = AuditWriter::open(&path, insecure_dev_key()).unwrap();
+        let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
         writer.emit_outcome(&mut outcome("call-after")).unwrap();
     }
     assert_eq!(verify_chain_file(&path).unwrap().verdict, Verdict::Verified);

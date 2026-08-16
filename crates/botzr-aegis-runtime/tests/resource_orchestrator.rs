@@ -53,11 +53,12 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
         "expected ResourceExceeded(wall_clock), got {err:?}"
     );
 
-    let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let lines: Vec<String> =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
     // Line 0 is the Session `Open` the writer emits on construction.
     assert_eq!(lines.len(), 3, "open + intent + outcome");
 
@@ -101,11 +102,12 @@ fn golden_resource_exceeded_orchestrator_shape() {
         ))
         .unwrap_err();
 
-    let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let lines: Vec<String> =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
     let mut record: AuditRecord = serde_json::from_str(&lines[2]).expect("outcome parses");
 
     // The digest is *not* normalized: since AEG-44 it is derived inside the

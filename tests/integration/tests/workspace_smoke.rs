@@ -43,7 +43,9 @@ fn echo_tool_e2e_through_pipeline() {
         .expect("pipeline run succeeds");
     assert_eq!(out, input);
 
-    let audit = std::fs::read_to_string(rt.audit().path()).expect("audit readable");
+    let audit =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .expect("audit readable");
     // Schema v2: the Session `Open` line comes first, then the call's two lines.
     assert!(audit.contains("\"line_type\":\"open\""));
     assert!(audit.contains("\"line_type\":\"intent\""));

@@ -38,11 +38,12 @@ fn attack_input(mode: &str) -> Vec<u8> {
 
 /// Read audit JSONL and return the outcome record.
 fn outcome(rt: &Runtime) -> AuditRecord {
-    let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
-        .expect("audit readable")
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let lines: Vec<String> =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .expect("audit readable")
+            .lines()
+            .map(str::to_owned)
+            .collect();
     // Schema v2: the Session `Open` line is the file's first line, so the call's
     // intent and outcome sit at 1 and 2.
     assert_eq!(lines.len(), 3, "open + intent + outcome");

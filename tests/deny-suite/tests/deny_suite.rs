@@ -77,11 +77,12 @@ fn info(id: &str) -> ToolInfo {
 /// are lines 1 and 2, not 0 and 1. The `Close` line is not here: the writer is
 /// still alive inside the `Runtime`.
 fn outcome(rt: &Runtime) -> AuditRecord {
-    let lines: Vec<String> = std::fs::read_to_string(rt.audit().path())
-        .expect("audit readable")
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let lines: Vec<String> =
+        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
+            .expect("audit readable")
+            .lines()
+            .map(str::to_owned)
+            .collect();
     assert_eq!(
         lines.len(),
         3,
