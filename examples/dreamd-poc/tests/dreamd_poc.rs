@@ -1,5 +1,6 @@
 //! AEG-20 integration tests — allow + deny paths with audit records.
 
+use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_core::{AegisError, ToolId};
 use botzr_aegis_runtime::{HostCallRequest, Runtime};
 use dreamd_poc::{
@@ -12,17 +13,24 @@ use tempfile::TempDir;
 /// A runtime whose three dreamd tools are registered with their handlers
 /// (AEG-44): the effect is no longer supplied per call, so these tests exercise
 /// the same registry path a real embedder would.
-fn setup_runtime(dir: &TempDir) -> Runtime {
+fn setup_runtime(dir: &TempDir) -> (Runtime, MemoryChainSink) {
     init_agent_store(dir.path());
-    let mut rt = Runtime::new().with_policy(policy_engine());
+    // The default Sink is Volatile and in-memory (ADR-0012) and the writer owns
+    // it, so these tests supply their own and keep a clone to read the Chain
+    // back. `MemoryChainSink::clone` shares the buffer.
+    let store = MemoryChainSink::new();
+    let mut rt = Runtime::new().with_policy(policy_engine()).with_audit(
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("volatile memory sink must open"),
+    );
     register_dreamd_tools(&mut rt, dir.path()).unwrap();
-    rt
+    (rt, store)
 }
 
 #[test]
 fn append_episodic_allowed_with_audit_success() {
     let dir = TempDir::new().unwrap();
-    let rt = setup_runtime(&dir);
+    let (rt, audit) = setup_runtime(&dir);
 
     let input = AppendInput {
         content: "tokio channels need bounded capacity".into(),
@@ -48,16 +56,14 @@ fn append_episodic_allowed_with_audit_success() {
     let text = std::fs::read_to_string(jsonl).unwrap();
     assert!(text.contains("tokio channels"));
 
-    let audit =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .unwrap();
+    let audit = audit.to_text();
     assert!(audit.contains("\"status\":\"success\""));
 }
 
 #[test]
 fn append_personal_denied_without_owner_role() {
     let dir = TempDir::new().unwrap();
-    let rt = setup_runtime(&dir);
+    let (rt, audit) = setup_runtime(&dir);
 
     let input = AppendInput {
         content: "private note".into(),
@@ -86,16 +92,14 @@ fn append_personal_denied_without_owner_role() {
     let personal = dir.path().join(".agent/personal/notes.jsonl");
     assert!(!personal.exists(), "denied write must not create file");
 
-    let audit =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .unwrap();
+    let audit = audit.to_text();
     assert!(audit.contains("\"status\":\"denied\"") || audit.contains("default deny"));
 }
 
 #[test]
 fn append_personal_allowed_with_owner_role() {
     let dir = TempDir::new().unwrap();
-    let rt = setup_runtime(&dir);
+    let (rt, _audit) = setup_runtime(&dir);
 
     let input = AppendInput {
         content: "owner-only note".into(),
@@ -122,7 +126,7 @@ fn append_personal_allowed_with_owner_role() {
 #[test]
 fn search_nodes_returns_seeded_hit() {
     let dir = TempDir::new().unwrap();
-    let rt = setup_runtime(&dir);
+    let (rt, _audit) = setup_runtime(&dir);
 
     // Seed one learning directly.
     let seed = AppendInput {
@@ -161,7 +165,7 @@ fn search_nodes_returns_seeded_hit() {
 #[test]
 fn dream_consolidation_requires_approval() {
     let dir = TempDir::new().unwrap();
-    let rt = setup_runtime(&dir);
+    let (rt, _audit) = setup_runtime(&dir);
     let tool = ToolId::new(TOOL_DREAM);
     let input = b"{}";
 

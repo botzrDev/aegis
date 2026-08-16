@@ -20,8 +20,8 @@
 //!
 //! The signing key's lifecycle — a hex seed file, owner-only, generated
 //! explicitly and loaded fail-closed — is [`generate_signing_key`] /
-//! [`load_signing_key`] (AILAB-620). [`insecure_dev_key`] signs temp sinks and
-//! tests only, and no configuration reaches it.
+//! [`load_signing_key`] (AILAB-620). [`insecure_dev_key`] signs Volatile sinks
+//! and tests only — a Durable one refuses it — and no configuration reaches it.
 
 mod error;
 mod keyfile;

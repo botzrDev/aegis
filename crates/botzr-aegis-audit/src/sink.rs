@@ -126,18 +126,15 @@ fn tail_of_lines(reader: impl BufRead) -> Result<Option<PrevHash>, AuditError> {
 
 /// A JSONL file on disk: synchronous append plus fsync per line, fail-closed on
 /// write failure. This adapter is where the G3 durability default lives.
+///
+/// Always [`Retention::Durable`], and deliberately not via a stored field.
+/// [`FileChainSink::open`] is the only constructor, so there is no second file
+/// shape a declaration could distinguish — and a field only invites something
+/// to set it, which is the durability knob ADR-0012 refused. The retention is a
+/// property of this type, so it is written where the type is.
 pub struct FileChainSink {
     path: PathBuf,
     file: BufWriter<File>,
-    /// Stated by whichever constructor built this sink, so the two file sinks
-    /// that differ in whether their bytes survive also differ in what they
-    /// claim. Never derived from the file's own state — the point of a
-    /// declaration is that it is fixed before the first byte is written.
-    retention: Retention,
-    /// Kept alive, never read. Dropping the [`tempfile::TempDir`] removes the
-    /// directory holding `path`, which is precisely why a sink that owns one
-    /// declares [`Retention::Volatile`].
-    _temp: Option<tempfile::TempDir>,
 }
 
 impl FileChainSink {
@@ -159,35 +156,13 @@ impl FileChainSink {
         Ok(Self {
             path,
             file: BufWriter::new(file),
-            retention: Retention::Durable,
-            _temp: None,
         })
-    }
-
-    /// A Chain file inside a temp directory this sink owns.
-    ///
-    /// Declares [`Retention::Volatile`]: the directory is removed when the sink
-    /// drops, so the bytes do not outlive the process even though every line
-    /// was fsynced on the way in. That is the same `Drop`-shaped guarantee the
-    /// `Close` line has — SIGKILL skips both — and it is why this sink may be
-    /// signed by [`crate::insecure_dev_key`] while [`FileChainSink::open`] may
-    /// not.
-    ///
-    /// Crate-internal on purpose: it exists to keep
-    /// [`crate::AuditWriter::open_temp`] working, and both leave together when
-    /// the default sink stops touching the filesystem (AILAB-702).
-    pub(crate) fn temp() -> Result<Self, AuditError> {
-        let dir = tempfile::tempdir()?;
-        let mut sink = Self::open(dir.path().join("audit.jsonl"))?;
-        sink.retention = Retention::Volatile;
-        sink._temp = Some(dir);
-        Ok(sink)
     }
 }
 
 impl ChainSink for FileChainSink {
     fn retention(&self) -> Retention {
-        self.retention
+        Retention::Durable
     }
 
     fn existing_tail(&self) -> Result<Option<PrevHash>, AuditError> {
@@ -216,7 +191,7 @@ impl std::fmt::Debug for FileChainSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileChainSink")
             .field("path", &self.path)
-            .field("retention", &self.retention)
+            .field("retention", &self.retention())
             .finish_non_exhaustive()
     }
 }
@@ -295,17 +270,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_named_file_is_durable_and_a_temp_file_is_not() {
+    fn a_named_file_is_durable_and_names_the_path_it_was_opened_at() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let named = FileChainSink::open(dir.path().join("chain.jsonl")).expect("open");
+        let path = dir.path().join("chain.jsonl");
+        let named = FileChainSink::open(&path).expect("open");
+        // The only file sink there is: bytes on disk, retained, and pointable
+        // at afterwards — which is why it refuses the dev key upstream.
         assert_eq!(named.retention(), Retention::Durable);
-        assert!(named.path().is_some());
-
-        let temp = FileChainSink::temp().expect("temp sink");
-        // A real file, as `open_temp` promises — inside a directory this sink
-        // deletes on drop, which is what makes it Volatile.
-        assert!(temp.path().expect("temp sink names a file").exists());
-        assert_eq!(temp.retention(), Retention::Volatile);
+        assert_eq!(named.path(), Some(path.as_path()));
     }
 
     #[test]

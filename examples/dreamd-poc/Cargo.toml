@@ -16,6 +16,7 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+botzr-aegis-audit = { path = "../../crates/botzr-aegis-audit" }
 criterion = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

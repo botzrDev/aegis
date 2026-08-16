@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use botzr_aegis_audit::to_json_line;
+use botzr_aegis_audit::{insecure_dev_key, to_json_line, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{
     AegisError, AuditRecord, ExecutionOutcome, GrantId, KeyId, PrevHash, PublicKey, RequestDigest,
@@ -18,6 +18,20 @@ const SPIN: &str = r#"
   (core instance $i (instantiate $m))
   (func (export "spin") (canon lift (core func $i "spin"))))
 "#;
+
+/// A runtime whose audit Chain this test can read back.
+///
+/// The default Sink is Volatile and in-memory (ADR-0012) and the writer owns
+/// it, so a test that wants the bytes supplies its own `MemoryChainSink` and
+/// keeps a clone — `Clone` shares the buffer.
+fn audited_runtime() -> (Runtime, MemoryChainSink) {
+    let store = MemoryChainSink::new();
+    let rt = Runtime::new().with_audit(
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("volatile memory sink must open"),
+    );
+    (rt, store)
+}
 
 #[test]
 fn wall_clock_resource_exceeded_through_orchestrator() {
@@ -36,7 +50,7 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
         ..ToolLimits::default()
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
 
@@ -53,12 +67,12 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
         "expected ResourceExceeded(wall_clock), got {err:?}"
     );
 
-    let lines: Vec<String> =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .unwrap()
-            .lines()
-            .map(str::to_owned)
-            .collect();
+    let lines: Vec<String> = audit
+        .to_text()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect();
     // Line 0 is the Session `Open` the writer emits on construction.
     assert_eq!(lines.len(), 3, "open + intent + outcome");
 
@@ -89,7 +103,7 @@ fn golden_resource_exceeded_orchestrator_shape() {
         ..ToolLimits::default()
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
 
@@ -102,12 +116,12 @@ fn golden_resource_exceeded_orchestrator_shape() {
         ))
         .unwrap_err();
 
-    let lines: Vec<String> =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .unwrap()
-            .lines()
-            .map(str::to_owned)
-            .collect();
+    let lines: Vec<String> = audit
+        .to_text()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect();
     let mut record: AuditRecord = serde_json::from_str(&lines[2]).expect("outcome parses");
 
     // The digest is *not* normalized: since AEG-44 it is derived inside the

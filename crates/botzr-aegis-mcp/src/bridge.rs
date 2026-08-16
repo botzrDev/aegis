@@ -79,13 +79,13 @@ pub fn build_runtime(
         ),
         (None, Some(_)) => {
             return Err(
-                "--signing-key only applies with --audit <PATH> (the default sink is a temp file)"
+                "--signing-key only applies with --audit <PATH> (the default sink is volatile and in memory)"
                     .to_string(),
             )
         }
-        // No persistent sink: the runtime's own temp file, signed by the
-        // loudly-named dev key. Nothing an operator can mistake for provisioned
-        // authority, so no key is required.
+        // No persistent sink: the runtime's own Volatile in-memory Chain, signed
+        // by the loudly-named dev key. Nothing an operator can mistake for
+        // provisioned authority, so no key is required.
         (None, None) => {}
     }
 

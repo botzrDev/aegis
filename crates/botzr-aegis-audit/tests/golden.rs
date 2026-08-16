@@ -453,7 +453,11 @@ fn every_committed_golden_line_verifies_and_chains() {
 
 #[test]
 fn jsonl_roundtrip_writes_open_intent_and_outcome() {
-    let writer = AuditWriter::open_temp().unwrap();
+    // Same in-memory Chain the golden fixture uses: the bytes a verifier reads
+    // are the sink's, and a Volatile sink is what the dev key may sign.
+    let store = MemoryChainSink::new();
+    let writer =
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key()).expect("open session");
     let mut intent = AuditIntent::new(
         "call-rt-1",
         ToolId::new("smoke"),
@@ -478,12 +482,12 @@ fn jsonl_roundtrip_writes_open_intent_and_outcome() {
     );
     writer.emit_outcome(&mut outcome).unwrap();
 
-    let lines: Vec<String> =
-        std::fs::read_to_string(writer.path().expect("open_temp writes to a real temp file"))
-            .unwrap()
-            .lines()
-            .map(str::to_owned)
-            .collect();
+    let lines: Vec<String> = store
+        .to_text()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect();
     // The Session `Open` line is now the file's first line — every `lines[0]`
     // assumption from schema v1 shifts by one.
     assert_eq!(lines.len(), 3);

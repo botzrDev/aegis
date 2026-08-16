@@ -31,6 +31,27 @@ support.
 
 ### Changed
 
+- **The default audit sink is in-memory and retains nothing** (AILAB-702).
+  `Runtime::default()` builds a `MemoryChainSink`, which declares
+  `Retention::Volatile`. Without `--audit`, `aegis`, `aegis run` and the MCP
+  gateway now print `Audit: (volatile sink — records are not retained)` in place
+  of a `/tmp/…/audit.jsonl` path. What this fixes: the old default was a temp
+  *file* whose directory was deleted at process exit, so the banner named a file
+  nobody could open afterwards — verified 2026-08-14 against the shipped `0.3.0`
+  binary. The in-memory default is signed by the compiled-in dev key and is not
+  retained, so it is not a production record and not evidence; a retained record
+  is `--audit <PATH>` together with `--signing-key <PATH>`, and that Durable sink
+  refuses the dev key. **Breaking:** `AuditWriter::open_temp` is removed, and so
+  is `FileChainSink::temp` — `FileChainSink` is Durable-only. **Added:**
+  `AuditWriter::retention() -> Retention`, reporting the sink's own declaration;
+  it is cached at construction beside `path()`, and is for embedders and tests —
+  both banners still switch on `path()`. Note that the in-memory default Chain
+  is uncapped and nothing reclaims it, so a long-lived process left on the
+  default holds every line in memory for its lifetime. `tempfile` is no
+  longer a production dependency of `botzr-aegis-audit`: it moves to
+  `[dev-dependencies]`, where the benches and tests still use it. This completes
+  [ADR-0012](docs/adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md),
+  whose *Not implemented* banner is removed.
 - **The audit sink is a seam that declares its retention** (AILAB-701).
   `botzr-aegis-audit` gains a public `ChainSink` trait, a `Retention`
   declaration (`Durable` / `Volatile`), and two adapters: `FileChainSink` (the
@@ -48,8 +69,9 @@ support.
   written to a third-party sink and a Chain fsynced to disk are byte-identical,
   so the declaration is the only thing that can distinguish them. Known and
   documented limit: a sink may declare `Durable` and still report an empty tail,
-  which silently unanchors later Sessions and is not detectable from here. The
-  default sink is unchanged — `Runtime::default()` still uses a temp file — see
+  which silently unanchors later Sessions and is not detectable from here. This
+  slice left the default sink alone; AILAB-702 above is the one that flipped it
+  — see
   [ADR-0012](docs/adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md).
 - **A Model A call now carries its Decision Axes** (AILAB-708).
   `Runtime::execute_tool_call` takes a `ToolCallRequest { tool_id, input,

@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{ToolId, PIPELINE_STAGES};
 use botzr_aegis_policy::PolicyRequest;
@@ -29,7 +30,14 @@ fn echo_tool_e2e_through_pipeline() {
     )
     .with_sha256(sha256_hex(wasm));
 
-    let mut rt = Runtime::new();
+    // The default Sink is Volatile and in-memory (ADR-0012) and the writer owns
+    // it, so this test supplies its own and keeps a clone to read the Chain
+    // back. `MemoryChainSink::clone` shares the buffer.
+    let store = MemoryChainSink::new();
+    let mut rt = Runtime::new().with_audit(
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("volatile memory sink must open"),
+    );
     rt.register(manifest, wasm.to_vec()).expect("register echo");
 
     let input = b"{\"ping\":true}";
@@ -43,9 +51,7 @@ fn echo_tool_e2e_through_pipeline() {
         .expect("pipeline run succeeds");
     assert_eq!(out, input);
 
-    let audit =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .expect("audit readable");
+    let audit = store.to_text();
     // Schema v2: the Session `Open` line comes first, then the call's two lines.
     assert!(audit.contains("\"line_type\":\"open\""));
     assert!(audit.contains("\"line_type\":\"intent\""));

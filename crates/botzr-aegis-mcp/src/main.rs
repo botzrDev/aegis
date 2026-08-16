@@ -18,7 +18,7 @@ fn print_help() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --policy <PATH>  Path to policy YAML (default: allow-all except exfil)");
-    eprintln!("  --audit  <PATH>  Path for audit JSONL output (default: temp file)");
+    eprintln!("  --audit  <PATH>  Path for audit JSONL output (default: volatile in-memory sink)");
     eprintln!("  --signing-key <PATH>");
     eprintln!("                   ed25519 seed file signing the audit Session;");
     eprintln!(
@@ -109,10 +109,10 @@ fn main() -> ExitCode {
         env!("CARGO_PKG_VERSION")
     );
     eprintln!("Pipeline: policy → capability → sandbox → audit");
-    // A sink that answers `None` has no path to print. Unreachable today — the
-    // gateway only ever builds file sinks — but naming a file that does not
-    // exist is the overclaim ADR-0012 exists to prevent, so it is a match and
-    // not an `unwrap`.
+    // A sink that answers `None` has no path to print, and that is the default
+    // arm: without `--audit` the gateway runs on a Volatile in-memory Chain.
+    // The phrasing is byte-identical to the CLI's `audit_destination`, so one
+    // banner does not describe the same sink two ways.
     match runtime.audit().path() {
         Some(path) => eprintln!("Audit: {}", path.display()),
         None => eprintln!("Audit: (volatile sink — records are not retained)"),

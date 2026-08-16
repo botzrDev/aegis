@@ -53,6 +53,7 @@ dependencies = [
 name = "aegis-integration-tests"
 version = "0.3.0"
 dependencies = [
+ "botzr-aegis-audit",
  "botzr-aegis-capability",
  "botzr-aegis-core",
  "botzr-aegis-policy",
@@ -909,6 +910,7 @@ dependencies = [
 name = "dreamd-poc"
 version = "0.1.0"
 dependencies = [
+ "botzr-aegis-audit",
  "botzr-aegis-capability",
  "botzr-aegis-core",
  "botzr-aegis-policy",

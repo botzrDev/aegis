@@ -11,6 +11,7 @@ publish = false
 workspace = true
 
 [dev-dependencies]
+botzr-aegis-audit = { workspace = true }
 botzr-aegis-capability = { workspace = true }
 botzr-aegis-core = { workspace = true }
 botzr-aegis-policy = { workspace = true }

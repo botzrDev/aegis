@@ -18,7 +18,7 @@
 
 use std::hint::black_box;
 
-use botzr_aegis_audit::{to_json_line, AuditWriter, CallSession};
+use botzr_aegis_audit::{to_json_line, AuditWriter, CallSession, FileChainSink, SigningKey};
 use botzr_aegis_core::{
     AuditIntent, AuditRecord, CallMetrics, CapabilityGrant, CapabilityOutcome, ExecutionOutcome,
     PolicyOutcome, PolicySetHash, RequestDigest, ToolId,
@@ -48,7 +48,7 @@ fn emit_cycle(writer: &AuditWriter, grant: &CapabilityGrant) {
         RequestDigest::of_request_bytes(b"abc123"),
         PolicySetHash::of_canonical_bytes(b"policy"),
     )
-    .expect("begin must succeed on a temp sink");
+    .expect("begin must succeed on the bench's file sink");
     session.set_policy(PolicyOutcome::Allowed);
     session.set_capability(CapabilityOutcome::Granted {
         grant: grant.clone(),
@@ -92,7 +92,21 @@ fn serialize_cycle(grant: &CapabilityGrant) {
 fn emission(c: &mut Criterion) {
     let mut group = c.benchmark_group("audit_emission");
 
-    let writer = AuditWriter::open_temp().expect("temp audit sink");
+    // A **Durable** file sink, named explicitly, and never an in-memory one:
+    // `begin_complete` exists to measure the fsync-per-line path, so timing a
+    // buffer append and calling the result an audit emission cost would publish
+    // a number for work the shipped sink does not do. A Durable sink refuses
+    // `insecure_dev_key` (ADR-0012), hence the fixed provisioned seed.
+    //
+    // `dir` is bound before `writer` so it outlives it: locals drop in reverse,
+    // and removing the directory first would pull the file out from under the
+    // sink the `Close` line is still being written to.
+    let dir = tempfile::tempdir().expect("bench tempdir");
+    let writer = AuditWriter::with_sink(
+        Box::new(FileChainSink::open(dir.path().join("audit.jsonl")).expect("bench file sink")),
+        SigningKey::from_seed([7u8; 32]),
+    )
+    .expect("bench writer must open");
     let grant = grant();
 
     group.bench_function("begin_complete", |b| {

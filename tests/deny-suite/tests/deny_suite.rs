@@ -17,6 +17,7 @@
 //!   * guest fs write + path containment (`..`, symlink)
 //!   * guest http import through `Runtime::execute_tool_call` (Model B)
 
+use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{
     mint_grant, narrow_grant, CapabilityError, FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo,
     ToolKind, ToolLimits, ToolManifest,
@@ -71,18 +72,34 @@ fn info(id: &str) -> ToolInfo {
     }
 }
 
-/// Read the audit JSONL, assert the Session shape, and return the outcome.
+/// A runtime whose audit Chain this suite can read back.
+///
+/// The default Sink is Volatile and in-memory (ADR-0012) and the writer owns
+/// it, so a test that wants the bytes supplies its own [`MemoryChainSink`] and
+/// keeps a clone — `Clone` shares the buffer. Nothing here is a Durable claim:
+/// what these cases assert is that a refusal *was recorded*, not that the
+/// record survives the process.
+fn audited_runtime() -> (Runtime, MemoryChainSink) {
+    let store = MemoryChainSink::new();
+    let rt = Runtime::new().with_audit(
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("volatile memory sink must open"),
+    );
+    (rt, store)
+}
+
+/// Read the audit Chain, assert the Session shape, and return the outcome.
 ///
 /// Schema v2 puts the Session `Open` line first, so a call's intent and outcome
 /// are lines 1 and 2, not 0 and 1. The `Close` line is not here: the writer is
 /// still alive inside the `Runtime`.
-fn outcome(rt: &Runtime) -> AuditRecord {
-    let lines: Vec<String> =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .expect("audit readable")
-            .lines()
-            .map(str::to_owned)
-            .collect();
+fn outcome(audit: &MemoryChainSink) -> AuditRecord {
+    let lines: Vec<String> = audit
+        .to_text()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect();
     assert_eq!(
         lines.len(),
         3,
@@ -148,7 +165,8 @@ rules:
     tool: exfil
     reason: "blocked in deny-suite"
 "#;
-    let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+    let (rt, audit) = audited_runtime();
+    let rt = rt.with_policy(PolicyEngine::from_yaml(yaml).unwrap());
     let tool = ToolId::new("exfil");
     let err = rt
         .execute_tool_call(ToolCallRequest::new(
@@ -164,7 +182,7 @@ rules:
         }
     );
 
-    let mut record = outcome(&rt);
+    let mut record = outcome(&audit);
     assert!(matches!(record.policy, PolicyOutcome::Denied { .. }));
     // A denied call never mints a grant.
     assert!(matches!(
@@ -190,7 +208,8 @@ rules:
     action: pending_approval
     tool: transfer
 "#;
-    let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+    let (rt, audit) = audited_runtime();
+    let rt = rt.with_policy(PolicyEngine::from_yaml(yaml).unwrap());
     let tool = ToolId::new("transfer");
     let err = rt
         .execute_tool_call(ToolCallRequest::new(
@@ -204,7 +223,7 @@ rules:
         "unexpected error: {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert!(matches!(
         record.policy,
         PolicyOutcome::PendingApproval { .. }
@@ -224,7 +243,7 @@ rules:
 #[test]
 fn unregistered_tool_is_capability_denied() {
     // allow-all policy, but the tool was never registered with the resolver.
-    let rt = Runtime::new();
+    let (rt, audit) = audited_runtime();
     let tool = ToolId::new("ghost");
     let err = rt
         .execute_tool_call(ToolCallRequest::new(
@@ -238,7 +257,7 @@ fn unregistered_tool_is_capability_denied() {
         "expected CapabilityDenied for unregistered tool, got {err:?}"
     );
 
-    let mut record = outcome(&rt);
+    let mut record = outcome(&audit);
     assert!(matches!(record.policy, PolicyOutcome::Allowed));
     match &record.capability {
         CapabilityOutcome::Denied {
@@ -265,7 +284,7 @@ fn unresolvable_fs_need_is_capability_denied() {
         write: vec![],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     // Registration is atomic (manifest + executable); the NOOP fixture is a
     // stand-in body that is never reached — the resolver denies at station 2.
     rt.register_fixture(manifest, NOOP.as_bytes().to_vec(), "go")
@@ -283,7 +302,7 @@ fn unresolvable_fs_need_is_capability_denied() {
         "expected CapabilityDenied for fs, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     match &record.capability {
         CapabilityOutcome::Denied {
             reason,
@@ -313,7 +332,7 @@ fn wildcard_net_need_is_capability_denied() {
         }],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     // Same as the fs case: a real executable is registered, and the capability
     // station still refuses before the sandbox ever runs it.
     rt.register_fixture(manifest, NOOP.as_bytes().to_vec(), "go")
@@ -331,7 +350,7 @@ fn wildcard_net_need_is_capability_denied() {
         "expected CapabilityDenied for net, got {err:?}"
     );
 
-    let mut record = outcome(&rt);
+    let mut record = outcome(&audit);
     match &record.capability {
         CapabilityOutcome::Denied {
             denied_capability, ..
@@ -358,7 +377,7 @@ fn wall_clock_cap_trips_through_pipeline() {
         ..ToolLimits::default()
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
     let tool = ToolId::new("spin");
@@ -374,7 +393,7 @@ fn wall_clock_cap_trips_through_pipeline() {
         "expected ResourceExceeded(wall_clock), got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert!(matches!(record.policy, PolicyOutcome::Allowed));
     assert!(matches!(
         record.capability,
@@ -397,7 +416,7 @@ fn memory_cap_trips_through_pipeline() {
         ..ToolLimits::default()
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     rt.register_fixture(manifest, GROW_TOUCH.as_bytes().to_vec(), "grow-touch")
         .expect("register grow-touch fixture");
     let tool = ToolId::new("grow-touch");
@@ -413,7 +432,7 @@ fn memory_cap_trips_through_pipeline() {
         "expected ResourceExceeded(memory), got {err:?}"
     );
 
-    let mut record = outcome(&rt);
+    let mut record = outcome(&audit);
     assert!(matches!(
         record.capability,
         CapabilityOutcome::Granted { .. }

@@ -39,7 +39,8 @@ pub enum BuildError {
 /// Builder for a configured [`Runtime`].
 ///
 /// Every field is optional; an unset field keeps the [`Runtime::default`]
-/// behaviour (`PolicyEngine::allow_all()` and a temp-file audit sink). Tool
+/// behaviour (`PolicyEngine::allow_all()` and a Volatile in-memory audit
+/// sink — records are emitted, and nothing is retained). Tool
 /// registration is deliberately *not* part of the builder — it stays on
 /// [`Runtime::register_tool`] so catalogs remain the consumer's business.
 #[derive(Default)]
@@ -74,8 +75,9 @@ impl RuntimeBuilder {
         self.policy_yaml(&yaml)
     }
 
-    /// Append audit records to `path`, signed by the key at `signing_key`,
-    /// instead of the default temp sink.
+    /// Append audit records to `path`, signed by the key at `signing_key` —
+    /// the only way to get a Chain that outlives the process, since the default
+    /// sink is Volatile and in memory.
     ///
     /// The key path is **required**, not optional (AILAB-620). A persistent sink
     /// is a file somebody will later pin a `Verified (pinned to <fp>)` label to,
@@ -86,8 +88,10 @@ impl RuntimeBuilder {
     /// `aegis keygen --out <PATH>`.
     ///
     /// The dev key survives only where it cannot be mistaken for provisioned
-    /// authority: `AuditWriter::open_temp`, which [`Runtime::new`] uses for its
-    /// throwaway sink, and tests.
+    /// authority: the Volatile in-memory sink [`Runtime::new`] opens, whose
+    /// bytes nobody can pin a label to afterwards, and tests. A Durable sink
+    /// refuses it outright (ADR-0012), so this method could not fall back to it
+    /// even if it wanted to.
     pub fn audit_file(mut self, path: &Path, signing_key: &Path) -> Result<Self, BuildError> {
         let key = load_signing_key(signing_key).map_err(|source| BuildError::LoadSigningKey {
             path: signing_key.to_path_buf(),
@@ -126,6 +130,7 @@ impl std::fmt::Debug for RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use botzr_aegis_audit::Retention;
     use botzr_aegis_core::{AegisError, ToolId};
     use botzr_aegis_policy::PolicyRequest;
 
@@ -143,14 +148,23 @@ rules:
 
     #[test]
     fn defaults_match_runtime_new() {
-        // An empty builder must not change behaviour: allow-all policy and a
-        // usable temp audit sink, exactly like `Runtime::new()`.
+        // An empty builder must not change behaviour: allow-all policy and the
+        // Volatile in-memory audit sink `Runtime::new()` opens.
+        //
+        // Asserted against the absolute value, not against
+        // `Runtime::new().audit().retention()`: `build()` starts from
+        // `Runtime::new()`, so comparing the two would hold for any default
+        // whatsoever, including a regressed one.
+        //
+        // What no test here can reach: that the default sink *retains* the
+        // lines it accepts. It hands out no reader by construction — that is
+        // the point of it — so every assertion on recorded bytes injects its
+        // own `MemoryChainSink`. Construction succeeding does prove the `Open`
+        // line was accepted, since `with_sink` is fail-closed and `Default`
+        // unwraps it.
         let rt = RuntimeBuilder::new().build().expect("default build");
-        assert!(rt
-            .audit()
-            .path()
-            .expect("the default sink is a temp file")
-            .exists());
+        assert_eq!(rt.audit().retention(), Retention::Volatile);
+        assert!(rt.audit().path().is_none());
         // allow-all policy → an unregistered tool is stopped by capability,
         // never by policy.
         let tool = ToolId::new("unregistered");

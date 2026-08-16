@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use aegis_stage2_demo::native::scan_native;
-use botzr_aegis_audit::to_json_line;
+use botzr_aegis_audit::{insecure_dev_key, to_json_line, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditRecord, ExecutionOutcome, ToolId};
 use botzr_aegis_policy::PolicyRequest;
@@ -44,7 +44,7 @@ fn detector_info() -> ToolInfo {
 /// Register the path-detector against `dir` with a single read-only `fs` grant
 /// (default-deny writes, no net) and a digest pin. `dir` is preopened at `/ro0`;
 /// the guest scans `/ro0/<scan_root>` (default `"fixtures"`).
-fn setup_runtime(dir: &Path) -> Runtime {
+fn setup_runtime(dir: &Path) -> (Runtime, MemoryChainSink) {
     let manifest = ToolManifest::new(detector_info(), dir)
         .with_fs(FsNeeds {
             read: vec![PathNeed::recursive(".")],
@@ -52,10 +52,24 @@ fn setup_runtime(dir: &Path) -> Runtime {
         })
         .with_sha256(sha256_hex(DETECTOR_WASM));
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     rt.register(manifest, DETECTOR_WASM.to_vec())
         .expect("register path-detector");
-    rt
+    (rt, audit)
+}
+
+/// A runtime whose audit Chain this scorecard can read back.
+///
+/// The default Sink is Volatile and in-memory (ADR-0012) and the writer owns
+/// it, so a test that wants the bytes supplies its own `MemoryChainSink` and
+/// keeps a clone — `Clone` shares the buffer.
+fn audited_runtime() -> (Runtime, MemoryChainSink) {
+    let store = MemoryChainSink::new();
+    let rt = Runtime::new().with_audit(
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("volatile memory sink must open"),
+    );
+    (rt, store)
 }
 
 /// Write a small three-file tree under `<dir>/fixtures` for the scan tests.
@@ -67,10 +81,11 @@ fn seed_fixture_tree(dir: &Path) {
     std::fs::write(scan.join("nested/gamma.txt"), b"gamma nested payload\n").unwrap();
 }
 
-fn audit_lines(rt: &Runtime) -> Vec<String> {
-    std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-        .expect("audit readable")
+fn audit_lines(audit: &MemoryChainSink) -> Vec<String> {
+    audit
+        .to_text()
         .lines()
+        .filter(|line| !line.trim().is_empty())
         .map(str::to_owned)
         .collect()
 }
@@ -79,8 +94,8 @@ fn audit_lines(rt: &Runtime) -> Vec<String> {
 ///
 /// Schema v2 opens the file with the Session `Open` line, so a single call is
 /// three lines, not two.
-fn outcome(rt: &Runtime) -> AuditRecord {
-    let lines = audit_lines(rt);
+fn outcome(audit: &MemoryChainSink) -> AuditRecord {
+    let lines = audit_lines(audit);
     assert_eq!(lines.len(), 3, "open + intent + outcome");
     assert!(lines[0].contains("\"line_type\":\"open\""));
     assert!(lines[1].contains("\"line_type\":\"intent\""));
@@ -105,7 +120,7 @@ fn equivalence_native_matches_wasm() {
     let dir = tempfile::tempdir().unwrap();
     seed_fixture_tree(dir.path());
 
-    let rt = setup_runtime(dir.path());
+    let (rt, _audit) = setup_runtime(dir.path());
     let out = run_detector(&rt, br#"{"scan_root":"fixtures"}"#).expect("scan runs");
 
     let wasm_json: Value = serde_json::from_slice(&out).expect("wasm output parses");
@@ -134,12 +149,12 @@ fn happy_path_audit_one_call_per_session() {
     let dir = tempfile::tempdir().unwrap();
     seed_fixture_tree(dir.path());
 
-    let rt = setup_runtime(dir.path());
+    let (rt, audit) = setup_runtime(dir.path());
     let out = run_detector(&rt, br#"{"scan_root":"fixtures"}"#).expect("scan runs");
     let json: Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(json["findings"].as_array().unwrap().len(), 3);
 
-    let lines = audit_lines(&rt);
+    let lines = audit_lines(&audit);
     assert_eq!(lines.len(), 3, "open + intent + outcome");
     assert!(lines[0].contains("\"line_type\":\"open\""));
     assert!(lines[1].contains("\"line_type\":\"intent\""));
@@ -153,7 +168,7 @@ fn happy_path_audit_one_call_per_session() {
 #[test]
 fn write_escape_denied() {
     let dir = tempfile::tempdir().unwrap();
-    let rt = setup_runtime(dir.path());
+    let (rt, audit) = setup_runtime(dir.path());
 
     let err = run_detector(&rt, br#"{"attack":"write_escape"}"#)
         .expect_err("write under a read-only preopen must fail");
@@ -162,7 +177,7 @@ fn write_escape_denied() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert!(
         !matches!(record.execution, ExecutionOutcome::Success),
         "deny must not report success"
@@ -183,7 +198,7 @@ fn write_escape_denied() {
 #[test]
 fn http_probe_denied() {
     let dir = tempfile::tempdir().unwrap();
-    let rt = setup_runtime(dir.path());
+    let (rt, audit) = setup_runtime(dir.path());
 
     let err = run_detector(&rt, br#"{"attack":"http_probe"}"#)
         .expect_err("http without a net grant must fail");
@@ -192,7 +207,7 @@ fn http_probe_denied() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert!(
         !matches!(record.execution, ExecutionOutcome::Success),
         "deny must not report success"
@@ -230,7 +245,7 @@ fn wall_clock_cap_trips() {
         ..ToolLimits::default()
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     rt.register_fixture(manifest, SPIN.as_bytes().to_vec(), "spin")
         .expect("register spin fixture");
 
@@ -247,7 +262,7 @@ fn wall_clock_cap_trips() {
         "expected ResourceExceeded(wall_clock), got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert!(
         matches!(
             record.execution,

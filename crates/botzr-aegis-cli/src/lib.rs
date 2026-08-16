@@ -227,9 +227,9 @@ fn parse_global_flags(args: &[String]) -> Result<GlobalFlags, String> {
 ///
 /// A usage error, not a default (AILAB-620): a persistent record file signed by
 /// a key the CLI picked on its own is exactly the situation `Verified (pinned)`
-/// must never be able to describe. Without `--audit` the sink is a temp file
-/// signed by the loudly-named dev key, and a signing key for it would be
-/// pointing at nothing.
+/// must never be able to describe. Without `--audit` the sink is Volatile and
+/// in memory — records are emitted but nothing is retained — signed by the
+/// loudly-named dev key, and a signing key for it would be pointing at nothing.
 ///
 /// **The security half of this rule now lives in the constructor.**
 /// `AuditWriter::with_sink` refuses a Durable Sink signed by `insecure_dev_key`
@@ -246,7 +246,7 @@ fn check_audit_key_pair(audit: Option<&Path>, signing_key: Option<&Path>) -> Res
                 .into(),
         ),
         (None, Some(_)) => Err(
-            "--signing-key only applies with --audit <PATH> (the default sink is a temp file)"
+            "--signing-key only applies with --audit <PATH> (the default sink is volatile and in memory)"
                 .into(),
         ),
         _ => Ok(()),
@@ -491,8 +491,8 @@ fn parse_recheck(args: &[String]) -> Result<Command, String> {
 ///
 /// Both paths are required here, unlike `run`'s. [`check_audit_key_pair`] still
 /// runs first so the pairing mistake keeps its shared wording, but its
-/// "neither was given" arm — legal for `run`, whose default sink is a temp file
-/// — is a usage error for this verb.
+/// "neither was given" arm — legal for `run`, whose default sink is volatile
+/// and in memory — is a usage error for this verb.
 fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
     let mut audit = None;
     let mut signing_key = None;
@@ -644,7 +644,8 @@ pub fn usage_text() -> String {
            --input <TEXT>              Call input (default: empty)\n\
            --input-file <PATH>         Read call input from file\n\
            --policy <PATH>             Policy YAML (default: allow-all)\n\
-           --audit <PATH>              Audit JSONL path (default: temp file)\n\
+           --audit <PATH>              Audit JSONL path (default: volatile\n\
+                                       in-memory sink — nothing is retained)\n\
            --signing-key <PATH>        ed25519 seed file signing the audit\n\
                                        Session; required with --audit\n\
            --base-dir <PATH>           Manifest base dir (default: component parent)\n\
@@ -702,8 +703,9 @@ pub fn usage_text() -> String {
 /// gateway cannot drift apart on how policy YAML is parsed or how the audit
 /// sink is opened. An unset flag is *not* the same as a permissive default the
 /// CLI invents: leaving the option `None` simply keeps the runtime's own
-/// defaults (allow-all policy, temp-file audit sink), which is what the
-/// pre-builder code did by never calling `with_policy` / `with_audit`.
+/// defaults (allow-all policy, Volatile in-memory audit sink that retains
+/// nothing), which is what the pre-builder code did by never calling
+/// `with_policy` / `with_audit`.
 ///
 /// [`BuildError`](botzr_aegis_runtime::BuildError) already carries the offending
 /// path in its `Display`, so flattening it to `String` here preserves the error
@@ -735,9 +737,9 @@ pub fn build_runtime(
 ///
 /// A sink that answers `None` has no path to print, and the honest line says
 /// the records are not retained rather than naming a file nobody can open
-/// afterwards (ADR-0012). Unreachable today — every sink the CLI builds is a
-/// file — which is exactly why it must not be an `unwrap`: the day the default
-/// sink changes, this prints the truth instead of panicking.
+/// afterwards (ADR-0012). Since AILAB-702 the `None` arm is the **production
+/// default**: a run without `--audit` gets a Volatile in-memory Chain, and this
+/// is the line an operator sees for it. `Some` is the `--audit` path.
 fn audit_destination(writer: &botzr_aegis_audit::AuditWriter) -> String {
     match writer.path() {
         Some(path) => path.display().to_string(),

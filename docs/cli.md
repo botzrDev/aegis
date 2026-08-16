@@ -38,14 +38,36 @@ Registers a `wasm32-wasip2` component and executes one call through
 [the pipeline](pipeline.md). `--audit` and `--signing-key` travel
 together, or neither is given.
 
+**Without `--audit`, nothing is kept.** Bare `aegis` and `aegis run` with
+no `--audit` write to a **Volatile**, in-memory sink and print
+
+```
+Audit: (volatile sink — records are not retained)
+```
+
+instead of a path. The bytes die with the process: there is no file to
+open afterwards, nothing for `aegis verify` or `aegis recheck` to read,
+and the Session is signed by the dev key compiled into
+`botzr-aegis-audit` — so it is not evidence, and never was. Naming a path
+there would be the overclaim
+([ADR-0012](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md)).
+
+To get a retained record, pass `--audit <PATH>` **and**
+`--signing-key <PATH>`. That is a Durable sink, and a Durable sink refuses
+the dev key — which is why the two flags travel together rather than one
+of them defaulting.
+
 > **The published `0.3.0` binary differs here.** At tag `v0.3.0` there is
 > no `--signing-key` at all: `--audit <PATH>` is accepted alone, and the
 > records it writes are **unsigned** — no signing code shipped at that tag,
 > so a `0.3.0` audit file carries no signature to attribute and `aegis
-> verify` has nothing to check. Signing, and therefore the requirement that
-> the two flags travel together, is a `main` change that reaches the
-> registry with the next cut. Flags on this page are `main`'s; do not read
-> them against an installed `0.3.0`.
+> verify` has nothing to check. It also defaults to a temp *file* sink and
+> prints that `/tmp/…/audit.jsonl` path for a directory it deletes at exit
+> (verified 2026-08-14 against the shipped binary). Signing, the in-memory
+> default, and therefore the requirement that the two flags travel
+> together, are `main` changes that reach the registry with the next cut.
+> Flags on this page are `main`'s; do not read them against an installed
+> `0.3.0`.
 
 ## `aegis wrap`
 

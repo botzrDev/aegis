@@ -9,7 +9,7 @@ mod pipeline;
 
 use std::collections::HashMap;
 
-use botzr_aegis_audit::AuditWriter;
+use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{CapabilityResolver, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId};
 use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
@@ -138,7 +138,12 @@ impl Runtime {
         self
     }
 
-    /// Replace the audit sink (default is a temp JSONL file).
+    /// Replace the audit sink.
+    ///
+    /// The default is a Volatile in-memory Chain: records are emitted on every
+    /// exit path, but nothing outlives the process and `audit().path()` is
+    /// `None`. An embedder that wants evidence supplies a Durable sink here —
+    /// which, by the pairing rule, means supplying a provisioned key with it.
     pub fn with_audit(mut self, audit: AuditWriter) -> Self {
         self.audit = audit;
         self
@@ -149,7 +154,11 @@ impl Runtime {
         &self.policy
     }
 
-    /// Access the audit writer (e.g. for tests asserting JSONL output).
+    /// Access the audit writer — its `path()`, `retention()` and public key.
+    ///
+    /// Not a way to read the records back: the default sink is in-memory and
+    /// hands out no reader, so a test that wants to assert on JSONL injects its
+    /// own sink with [`Runtime::with_audit`] and keeps a clone of it.
     pub fn audit(&self) -> &AuditWriter {
         &self.audit
     }
@@ -403,7 +412,14 @@ impl Default for Runtime {
             policy: PolicyEngine::allow_all(),
             capabilities: CapabilityResolver::new(),
             sandbox: SandboxEngine::default(),
-            audit: AuditWriter::open_temp().expect("temp audit sink must open"),
+            // In-memory and Volatile by declaration (ADR-0012). The default
+            // used to be a temp *file*: real bytes, fsynced, then deleted with
+            // the process — so `path()` handed an operator a filename for
+            // records nobody retains, which is exactly the overclaim the
+            // record rule forbids. A Chain worth keeping is opted into with
+            // `--audit`, and that route requires a provisioned key.
+            audit: AuditWriter::with_sink(Box::new(MemoryChainSink::new()), insecure_dev_key())
+                .expect("volatile memory sink must open"),
             tools: HashMap::new(),
         }
     }
@@ -434,9 +450,35 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    use botzr_aegis_audit::Retention;
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
     use botzr_aegis_core::{AegisError, CapabilityOutcome, PIPELINE_STAGES};
     use botzr_aegis_policy::PolicyEngine;
+
+    /// A runtime whose audit Chain the test can read back.
+    ///
+    /// The default Sink is Volatile *and* in-memory, and the writer owns it —
+    /// so a test that wants the bytes supplies its own [`MemoryChainSink`] and
+    /// keeps a clone, which shares the buffer. This is the same sink shape the
+    /// default has; the only difference is who else holds a handle.
+    fn audited_runtime() -> (Runtime, MemoryChainSink) {
+        let store = MemoryChainSink::new();
+        let rt = Runtime::new().with_audit(
+            AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+                .expect("volatile memory sink must open"),
+        );
+        (rt, store)
+    }
+
+    /// Every non-empty row of a Chain.
+    fn chain_lines(store: &MemoryChainSink) -> Vec<String> {
+        store
+            .to_text()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 
     /// Build an echo manifest with an explicit `max_output_bytes` ceiling.
     fn echo_manifest_with_output_cap(
@@ -467,6 +509,17 @@ mod tests {
         );
     }
 
+    /// ADR-0012: retention is declared by the Sink, and the zero-config default
+    /// declares Volatile. Both halves are load-bearing together — a `Some(path)`
+    /// alongside `Volatile` would be a filename an operator could go looking for
+    /// after the only copy of those records was gone, which is the overclaim the
+    /// record rule exists to prevent.
+    #[test]
+    fn the_default_sink_is_volatile_and_names_no_path() {
+        assert_eq!(Runtime::default().audit().retention(), Retention::Volatile);
+        assert!(Runtime::default().audit().path().is_none());
+    }
+
     #[test]
     fn policy_deny_short_circuits_before_capability() {
         let yaml = r#"
@@ -478,7 +531,8 @@ rules:
     tool: smoke
     reason: "blocked in test"
 "#;
-        let rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+        let (rt, audit) = audited_runtime();
+        let rt = rt.with_policy(PolicyEngine::from_yaml(yaml).unwrap());
         let tool = ToolId::new("smoke");
         let err = rt
             .execute_tool_call(ToolCallRequest::new(
@@ -495,12 +549,7 @@ rules:
             }
         );
 
-        let lines: Vec<String> =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap()
-                .lines()
-                .map(str::to_owned)
-                .collect();
+        let lines = chain_lines(&audit);
         // Line 0 is the Session `Open` the writer emits on construction.
         assert_eq!(lines.len(), 3, "open + intent + outcome lines");
         assert!(lines[1].contains("\"line_type\":\"intent\""));
@@ -547,7 +596,7 @@ rules:
         )
         .with_sha256(digest);
 
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         rt.register(manifest, wasm.to_vec()).expect("register echo");
 
         let input = b"hello-aegis";
@@ -561,12 +610,7 @@ rules:
             .expect("echo run succeeds");
         assert_eq!(out, input);
 
-        let lines: Vec<String> =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap()
-                .lines()
-                .map(str::to_owned)
-                .collect();
+        let lines = chain_lines(&audit);
         assert_eq!(lines.len(), 3, "open + intent + outcome lines");
         assert!(lines[1].contains("\"line_type\":\"intent\""));
         assert!(lines[2].contains("\"status\":\"success\""));
@@ -581,7 +625,7 @@ rules:
         let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/echo-tool");
         let manifest = echo_manifest_with_output_cap(&base, digest, 8);
 
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         rt.register(manifest, wasm.to_vec()).expect("register echo");
 
         // 11-byte input echoes back 11 bytes > the 8-byte cap.
@@ -602,13 +646,7 @@ rules:
             }
         );
 
-        let outcome =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap()
-                .lines()
-                .last()
-                .unwrap()
-                .to_owned();
+        let outcome = chain_lines(&audit).last().unwrap().to_owned();
         assert!(
             outcome.contains("\"status\":\"resource_exceeded\""),
             "expected resource_exceeded, got: {outcome}"

@@ -25,11 +25,14 @@ ed25519-dalek = { workspace = true }
 getrandom = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Tests and benches only. No production sink creates a temp directory since
+# AILAB-702: the default Chain is in-memory and Volatile, and the only file sink
+# is opened at a path the caller names.
+tempfile = { workspace = true }
 
 [[bench]]
 name = "emission"

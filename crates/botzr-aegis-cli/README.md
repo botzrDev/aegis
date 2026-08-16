@@ -19,8 +19,8 @@ landed after that tag and reach crates.io with the next release.
 aegis [--policy <yaml-path>] [--audit <jsonl-path> --signing-key <key-path>]
 ```
 
-Wires `Runtime` with optional policy/audit, prints the audit path, and exits.
-No tools are registered in this mode.
+Wires `Runtime` with optional policy/audit, prints where this run's records
+land, and exits. No tools are registered in this mode.
 
 ### `aegis run` — register + execute
 
@@ -39,7 +39,7 @@ and `request_digest` go to stderr. Deny/trap paths still emit audit JSONL.
 | `--input` | Call input bytes as text (default: empty) |
 | `--input-file` | Read call input from a file |
 | `--policy` | Policy YAML (default: allow-all) |
-| `--audit` | Audit JSONL path (default: temp file). Requires `--signing-key` |
+| `--audit` | Audit JSONL path (default: none — an in-memory Volatile sink). Requires `--signing-key` |
 | `--signing-key` | ed25519 seed file signing the audit Session (see `aegis keygen`) |
 | `--base-dir` | Manifest base dir (default: component parent) |
 | `--sha256` | Optional component digest pin (G10) |
@@ -47,8 +47,10 @@ and `request_digest` go to stderr. Deny/trap paths still emit audit JSONL.
 
 `--audit` and `--signing-key` travel together, or neither is given — a persistent
 record file with no provisioned key is a **usage error** (exit 1), never a
-default. Without `--audit` the sink is a temp file signed by the loudly-named dev
-key, and `--signing-key` alone would be pointing at nothing. See
+default. Without `--audit` the sink is **Volatile** and in-memory, signed by the
+loudly-named dev key: the banner prints
+`Audit: (volatile sink — records are not retained)`, nothing survives the
+process, and `--signing-key` alone would be pointing at nothing. See
 [AILAB-620 in the audit crate README](../botzr-aegis-audit/README.md#the-signing-key).
 
 Example against the in-tree echo fixture:
@@ -291,10 +293,10 @@ Read this list before describing wrap as a sandbox, a firewall, or a guard:
 - **Not Model A isolation.** Nothing runs inside wasmtime. See
   [`docs/threat-model.md`](../../docs/threat-model.md) §3.
 
-`--audit` and `--signing-key` are both **required**. Wrap has no temp-sink mode:
-the only thing an interposer produces is its record, so a throwaway file signed
-by the compiled-in dev key would be a process that stood in the middle and
-proved nothing. Mint a key with `aegis keygen --out <PATH>`.
+`--audit` and `--signing-key` are both **required**. Wrap has no Volatile-sink
+mode: the only thing an interposer produces is its record, so a throwaway
+record signed by the compiled-in dev key would be a process that stood in the
+middle and proved nothing. Mint a key with `aegis keygen --out <PATH>`.
 
 The literal `--` ends wrap's own flags. Everything after it is the child argv,
 including the child's `--help`.

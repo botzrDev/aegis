@@ -56,8 +56,10 @@ cargo run -p botzr-aegis-mcp -- --policy path/to/policy.yaml \
 **`--audit` requires `--signing-key`** (AILAB-620). A persistent record file an
 operator later pins a `Verified (pinned)` label to must not be signed by a seed
 compiled into the published audit crate, so the gateway refuses to start rather
-than falling back to one. Omit both and the sink is a temp file signed by the
-loudly-named dev key. Mint a key with `aegis keygen --out <PATH>`; the format,
+than falling back to one. Omit both and the sink is **Volatile** and in-memory,
+signed by the loudly-named dev key — the gateway prints
+`Audit: (volatile sink — records are not retained)` and nothing survives the
+process. Mint a key with `aegis keygen --out <PATH>`; the format,
 permissions, and rotation rules are in the
 [audit crate README](../botzr-aegis-audit/README.md#the-signing-key).
 

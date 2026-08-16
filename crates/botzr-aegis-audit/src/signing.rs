@@ -82,10 +82,12 @@ const INSECURE_DEV_SEED: [u8; 32] = *b"aegis-insecure-dev-key-not-real!";
 /// signs proves that *some* Aegis build wrote it, never *which* — a verifier
 /// can only report `Verified (unpinned)` over it (ADR-0004).
 ///
-/// It exists because [`crate::AuditWriter::open_temp`] and the runtime's
-/// default sink need *some* key before AILAB-620 ships key lifecycle, and a
+/// It exists because the runtime's default Sink — an in-memory Chain that
+/// declares [`crate::Retention::Volatile`] — needs *some* key, and because a
 /// stable `key_id` across the whole test suite is worth more than a fresh
-/// random key per test. Do not add a config option that reaches this function.
+/// random key per test. That pairing is the whole permitted use: a Durable Sink
+/// signed by this key is refused at construction (ADR-0012). Do not add a
+/// config option that reaches this function.
 pub fn insecure_dev_key() -> SigningKey {
     SigningKey::from_seed(INSECURE_DEV_SEED)
 }

@@ -25,8 +25,9 @@ call something on it.
 `audit_file` takes the signing key's path and it is **not** optional. A
 persistent record file is one somebody will later pin a
 `Verified (pinned)` label to, so it is never signed with the dev seed
-compiled into `botzr-aegis-audit`. Leaving `audit_file` unset keeps the
-temp sink, which *is* dev-key-signed and is not a production record.
+compiled into `botzr-aegis-audit`. Leaving `audit_file` unset gives you the
+default in-memory **Volatile** sink, which *is* dev-key-signed, retains
+nothing past the process, and is not a production record.
 
 ## Registration
 

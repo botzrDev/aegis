@@ -31,8 +31,11 @@ cargo run -p botzr-aegis-mcp -- \
   --audit /tmp/aegis-mcp-audit.jsonl --signing-key /tmp/aegis-signing.key
 ```
 
-`--audit` requires `--signing-key`. Omit both and the sink is a temp file
-signed by the compiled-in dev key.
+`--audit` requires `--signing-key`. Omit both and the sink is **Volatile**
+and in-memory, signed by the compiled-in dev key: the gateway prints
+`Audit: (volatile sink — records are not retained)`, the bytes die with
+the process, and there is nothing to verify afterwards. Pass both flags to
+get a retained record.
 
 ### What `0.3.0` does instead
 

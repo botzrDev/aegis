@@ -24,7 +24,7 @@ narrower surface still ([CLI](cli.md)).
 | [0009](adr/0009-d4-reproduces-a-cross-boundary-chain.md) | D4 reproduces a cross-boundary exfiltration chain, not a same-server one | no — demo not built |
 | [0010](adr/0010-macos-confinement-fast-follows-m4.md) | macOS confinement fast-follows M4; it does not gate it | **no** |
 | [0011](adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md) | The workspace and the spec are dual `Apache-2.0 OR MIT`; this supersedes OQ-1 | yes — crates.io `0.3.0` metadata stays MIT |
-| [0012](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md) | The audit sink is a public seam that declares its own retention | **no** |
+| [0012](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md) | The audit sink is a public seam that declares its own retention | yes |
 | [0013](adr/0013-verify-and-recheck-share-a-classifier-not-a-walk.md) | Verify and Recheck share a line classifier, not a walk | **no** |
 
 The bold **no** rows carry an above-the-fold *Not implemented*

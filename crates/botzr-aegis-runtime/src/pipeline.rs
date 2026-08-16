@@ -263,16 +263,32 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
     use botzr_aegis_core::AegisError;
     use botzr_aegis_policy::PolicyEngine;
 
+    /// A runtime whose audit Chain the test can read back.
+    ///
+    /// The default Sink is Volatile and in-memory (ADR-0012) and the writer
+    /// owns it, so a test that wants the bytes supplies its own
+    /// [`MemoryChainSink`] and keeps a clone — `Clone` shares the buffer.
+    fn audited_runtime() -> (Runtime, MemoryChainSink) {
+        let store = MemoryChainSink::new();
+        let rt = Runtime::new().with_audit(
+            AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+                .expect("volatile memory sink must open"),
+        );
+        (rt, store)
+    }
+
     /// Read the last JSONL line the runtime's audit sink recorded.
-    fn last_audit_line(rt: &Runtime) -> String {
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .unwrap()
+    fn last_audit_line(audit: &MemoryChainSink) -> String {
+        audit
+            .to_text()
             .lines()
-            .last()
+            .filter(|line| !line.trim().is_empty())
+            .next_back()
             .unwrap()
             .to_owned()
     }
@@ -315,7 +331,8 @@ rules:
     tool: x
     reason: "blocked in test"
 "#;
-        let mut rt = Runtime::new().with_policy(PolicyEngine::from_yaml(yaml).unwrap());
+        let (rt, audit) = audited_runtime();
+        let mut rt = rt.with_policy(PolicyEngine::from_yaml(yaml).unwrap());
         let tool = ToolId::new("x");
         register_capped(&mut rt, &tool, 1024);
 
@@ -346,7 +363,7 @@ rules:
             "execution adapter must not run on policy deny"
         );
 
-        let outcome = last_audit_line(&rt);
+        let outcome = last_audit_line(&audit);
         assert!(outcome.contains("\"status\":\"denied\""), "got: {outcome}");
         assert!(
             outcome.contains("policy blocked before capability"),
@@ -358,7 +375,7 @@ rules:
     fn capability_deny_never_invokes_execution_adapter() {
         // allow-all policy but an unregistered tool → capability denies. The fake
         // must not run; the audited execution reason is "capability denied".
-        let rt = Runtime::new();
+        let (rt, audit) = audited_runtime();
         let tool = ToolId::new("never-registered");
 
         let called = Cell::new(false);
@@ -386,7 +403,7 @@ rules:
             "execution adapter must not run on capability deny"
         );
 
-        let outcome = last_audit_line(&rt);
+        let outcome = last_audit_line(&audit);
         assert!(outcome.contains("capability denied"), "got: {outcome}");
     }
 
@@ -394,7 +411,7 @@ rules:
     fn allowed_grant_invokes_fake_exactly_once() {
         // allow-all + registered tool → the fake runs once, receives a grant, and
         // its bytes flow back to the caller as success.
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         let tool = ToolId::new("ok-tool");
         register_capped(&mut rt, &tool, 1024);
 
@@ -417,7 +434,7 @@ rules:
         assert_eq!(out, b"pong");
         assert_eq!(calls.get(), 1, "execution adapter runs exactly once");
 
-        let outcome = last_audit_line(&rt);
+        let outcome = last_audit_line(&audit);
         assert!(outcome.contains("\"status\":\"success\""), "got: {outcome}");
     }
 
@@ -426,7 +443,7 @@ rules:
         // Ordering: output-cap runs *after* the fake produces bytes. An 8-byte
         // cap with a 100-byte fake output fails closed to resource_exceeded, and
         // the bytes are never returned as success.
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         let tool = ToolId::new("bulky");
         register_capped(&mut rt, &tool, 8);
 
@@ -449,7 +466,7 @@ rules:
             }
         );
 
-        let outcome = last_audit_line(&rt);
+        let outcome = last_audit_line(&audit);
         assert!(
             outcome.contains("\"status\":\"resource_exceeded\""),
             "got: {outcome}"

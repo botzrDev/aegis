@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use botzr_aegis_audit::to_json_line;
+use botzr_aegis_audit::{insecure_dev_key, to_json_line, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{
     FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolManifest,
 };
@@ -36,14 +36,28 @@ fn attack_input(mode: &str) -> Vec<u8> {
     format!(r#"{{"attack":"{mode}"}}"#).into_bytes()
 }
 
-/// Read audit JSONL and return the outcome record.
-fn outcome(rt: &Runtime) -> AuditRecord {
-    let lines: Vec<String> =
-        std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-            .expect("audit readable")
-            .lines()
-            .map(str::to_owned)
-            .collect();
+/// A runtime whose audit Chain this demo can read back.
+///
+/// The default Sink is Volatile and in-memory (ADR-0012) and the writer owns
+/// it, so a test that wants the bytes supplies its own [`MemoryChainSink`] and
+/// keeps a clone — `Clone` shares the buffer.
+fn audited_runtime() -> (Runtime, MemoryChainSink) {
+    let store = MemoryChainSink::new();
+    let rt = Runtime::new().with_audit(
+        AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("volatile memory sink must open"),
+    );
+    (rt, store)
+}
+
+/// Read the audit Chain and return the outcome record.
+fn outcome(audit: &MemoryChainSink) -> AuditRecord {
+    let lines: Vec<String> = audit
+        .to_text()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect();
     // Schema v2: the Session `Open` line is the file's first line, so the call's
     // intent and outcome sit at 1 and 2.
     assert_eq!(lines.len(), 3, "open + intent + outcome");
@@ -81,7 +95,7 @@ fn guest_write_under_readonly_grant_is_refused() {
         write: vec![],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     register_damage_bot(&mut rt, manifest);
 
     let input = attack_input("write_readonly");
@@ -98,7 +112,7 @@ fn guest_write_under_readonly_grant_is_refused() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert_refused_with_trap(&record, "fs_write_denied");
     assert!(to_json_line(&record)
         .unwrap()
@@ -115,7 +129,7 @@ fn guest_dotdot_escape_is_refused() {
         write: vec![],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     register_damage_bot(&mut rt, manifest);
 
     let input = attack_input("dotdot_escape");
@@ -132,7 +146,7 @@ fn guest_dotdot_escape_is_refused() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert_refused_with_trap(&record, "fs_escape_denied");
 }
 
@@ -153,7 +167,7 @@ fn guest_symlink_escape_is_refused() {
         write: vec![],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     register_damage_bot(&mut rt, manifest);
 
     let input = attack_input("symlink_escape");
@@ -170,7 +184,7 @@ fn guest_symlink_escape_is_refused() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert_refused_with_trap(&record, "symlink_denied");
 }
 
@@ -181,7 +195,7 @@ fn guest_http_without_net_grant_is_refused() {
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/damage-bot");
     let manifest = ToolManifest::new(damage_bot_info(), &base);
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     register_damage_bot(&mut rt, manifest);
 
     let input = attack_input("http_exfil");
@@ -198,7 +212,7 @@ fn guest_http_without_net_grant_is_refused() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert_refused_with_trap(&record, "no net grant");
 }
 
@@ -209,7 +223,7 @@ fn guest_http_to_disallowed_host_is_refused() {
         http: vec![HttpNeed::get("api.example.com")],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     register_damage_bot(&mut rt, manifest);
 
     let input = attack_input("http_exfil");
@@ -226,7 +240,7 @@ fn guest_http_to_disallowed_host_is_refused() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert_refused_with_trap(&record, "not in grant");
 }
 
@@ -237,7 +251,7 @@ fn guest_http_to_allowed_host_passes_grant_then_stubs() {
         http: vec![HttpNeed::get("api.example.com")],
     });
 
-    let mut rt = Runtime::new();
+    let (mut rt, audit) = audited_runtime();
     register_damage_bot(&mut rt, manifest);
 
     let input = attack_input("http_allowed");
@@ -254,7 +268,7 @@ fn guest_http_to_allowed_host_passes_grant_then_stubs() {
         "expected Trap, got {err:?}"
     );
 
-    let record = outcome(&rt);
+    let record = outcome(&audit);
     assert!(matches!(record.policy, PolicyOutcome::Allowed));
     assert!(matches!(
         record.capability,

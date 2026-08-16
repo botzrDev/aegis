@@ -175,10 +175,35 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
     use botzr_aegis_core::{AegisError, CapabilityGrant, HOST_PIPELINE_STAGES};
 
     use crate::{HostHandler, ToolExecutable};
+
+    /// A runtime whose audit Chain the test can read back.
+    ///
+    /// The default Sink is Volatile and in-memory (ADR-0012) and the writer
+    /// owns it, so a test that wants the bytes supplies its own
+    /// [`MemoryChainSink`] and keeps a clone — `Clone` shares the buffer.
+    fn audited_runtime() -> (Runtime, MemoryChainSink) {
+        let store = MemoryChainSink::new();
+        let rt = Runtime::new().with_audit(
+            AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+                .expect("volatile memory sink must open"),
+        );
+        (rt, store)
+    }
+
+    /// Every non-empty row of a Chain.
+    fn chain_lines(store: &MemoryChainSink) -> Vec<String> {
+        store
+            .to_text()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 
     /// Host manifest with the given id and optional output ceiling.
     fn host_manifest(id: &str, max_output_bytes: Option<u64>) -> ToolManifest {
@@ -258,7 +283,7 @@ rules:
 
     #[test]
     fn host_call_emits_audit_on_success() {
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         register_host(
             &mut rt,
             "host-echo",
@@ -277,12 +302,7 @@ rules:
             .expect("host echo succeeds");
         assert_eq!(out, input);
 
-        let lines: Vec<String> =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap()
-                .lines()
-                .map(str::to_owned)
-                .collect();
+        let lines = chain_lines(&audit);
         // Line 0 is the Session `Open` the writer emits on construction.
         assert_eq!(lines.len(), 3, "open + intent + outcome lines");
         assert!(lines[2].contains("\"status\":\"success\""));
@@ -293,7 +313,7 @@ rules:
         // Model B: an effect that returns more bytes than the grant's
         // `max_output_bytes` fails closed to ResourceExceeded { kind: "output" }
         // — the same cap the runtime applies to a Model A sandbox output.
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         register_host(
             &mut rt,
             "host-bulky",
@@ -317,13 +337,7 @@ rules:
             }
         );
 
-        let outcome =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap()
-                .lines()
-                .last()
-                .unwrap()
-                .to_owned();
+        let outcome = chain_lines(&audit).last().unwrap().to_owned();
         assert!(
             outcome.contains("\"status\":\"resource_exceeded\""),
             "expected resource_exceeded, got: {outcome}"
@@ -336,7 +350,7 @@ rules:
 
     #[test]
     fn grant_denial_is_audited() {
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         register_host(
             &mut rt,
             "gated",
@@ -363,9 +377,7 @@ rules:
             }
         );
 
-        let text =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap();
+        let text = audit.to_text();
         assert!(text.contains("path outside grant"));
     }
 
@@ -373,7 +385,7 @@ rules:
     fn escape_hatch_still_runs_a_raw_closure() {
         // `execute_host_call_with` is retained for research wiring: it takes the
         // raw grant, bypasses the registry, and the driver still audits + caps.
-        let mut rt = Runtime::new();
+        let (mut rt, audit) = audited_runtime();
         register_host(
             &mut rt,
             "gated",
@@ -398,9 +410,7 @@ rules:
             .expect("escape hatch runs the supplied closure");
         assert_eq!(out, b"raw");
 
-        let text =
-            std::fs::read_to_string(rt.audit().path().expect("the default sink is a temp file"))
-                .unwrap();
+        let text = audit.to_text();
         assert!(text.contains("\"status\":\"success\""), "{text}");
         assert!(!text.contains("registry handler ran"), "{text}");
     }

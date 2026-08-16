@@ -31,14 +31,16 @@ Where the bytes land is a public seam (ADR-0012). A `ChainSink` **declares** its
 
 ```rust
 let writer = AuditWriter::open("path/to/audit.jsonl", signing_key)?;   // Durable file sink
-// or for ephemeral testing — a temp file removed on drop, so Volatile,
-// which is why the loudly-named dev key is allowed to sign it:
-let writer = AuditWriter::open_temp()?;
-// or any sink you supply:
-let writer = AuditWriter::with_sink(Box::new(MemoryChainSink::new()), signing_key)?;
+// or for ephemeral testing and the runtime's own default — nothing reaches
+// the filesystem, so Volatile, which is why the loudly-named dev key is
+// allowed to sign it. Retains nothing; not a production record:
+let writer = AuditWriter::with_sink(Box::new(MemoryChainSink::new()), insecure_dev_key())?;
+// or any sink you implement — the seam is the point. Declare your own
+// retention, and the key you may pair with it follows from that declaration:
+let writer = AuditWriter::with_sink(Box::new(MySink::new()), signing_key)?;
 ```
 
-`AuditWriter::path()` returns `Option<&Path>` — a sink with nothing on disk names no file, and printing one for it would name a file nobody can open.
+`AuditWriter::path()` returns `Option<&Path>` — a sink with nothing on disk names no file, and printing one for it would name a file nobody can open. It is cached at construction, outside the chain lock, because a printer must not queue behind an in-flight fsync for a value that never changes. `AuditWriter::retention()` reports the sink's declaration and is cached beside it; it is for embedders and tests, since the shipped banners switch on `path()`.
 
 **`Drop` does not run on SIGKILL.** Close-on-drop covers clean exit and unwind only; a Session with no `Close` is what a verifier reports as `Indeterminate`.
 
@@ -58,7 +60,7 @@ In-process the same two calls are `generate_signing_key(path, force)` and `load_
 
 **Generation is never implicit.** Nothing on the emit path mints a key. `load_signing_key` fails closed on every failure — missing, unreadable, loose permissions, bad hex, wrong length — and never falls back to `insecure_dev_key()` or to emitting unsigned records. `RuntimeBuilder::audit_file` takes the key path as a *required* argument for the same reason: a persistent sink is a file somebody will later pin a `Verified (pinned to <fp>)` label to, and a key minted silently on first run would publish a brand-new public key in the `Open` Line and quietly break every pin the operator held.
 
-`insecure_dev_key()` survives only where it cannot be mistaken for provisioned authority: `AuditWriter::open_temp`, the runtime's throwaway default sink, and tests. That is now **enforced, not conventional** — every one of those is a Volatile Sink, and the constructor refuses the pairing anywhere else. Its seed is compiled into this crate, ships in every published artifact, and is not a secret — a Line it signs can only ever be reported `Verified (unpinned)`.
+`insecure_dev_key()` survives only where it cannot be mistaken for provisioned authority: the runtime's default in-memory sink, which retains nothing and is not a production record, and tests. That is now **enforced, not conventional** — every one of those is a Volatile Sink, and the constructor refuses the pairing anywhere else. Its seed is compiled into this crate, ships in every published artifact, and is not a secret — a Line it signs can only ever be reported `Verified (unpinned)`.
 
 **Rotation** is normative in [`spec/SPEC.md`](../../spec/SPEC.md) §8.4 and is not restated here. In terms of this file: rotating means `aegis keygen` into a *new* seed file and starting a *new* process. One `AuditWriter` is one Session and holds one key for its lifetime, so a key change mid-Session is not something an emitter can produce — and a verifier reads it as `Tampered`.
 

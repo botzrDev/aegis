@@ -73,6 +73,10 @@ pub struct AuditWriter {
     /// lock. `path()` is a printer's question, and a printer must not be able to
     /// queue behind an in-flight fsync to learn a value that never changes.
     path: Option<PathBuf>,
+    /// Cached beside `path`, and outside the lock for exactly the same reason: a
+    /// sink's [`Retention`] is fixed before its first byte is written, so
+    /// reporting it must never queue behind an in-flight fsync either.
+    retention: Retention,
     chain: Mutex<ChainState>,
     signing_key: SigningKey,
     /// Names Calls; it does **not** order the chain, so it stays outside the
@@ -101,9 +105,8 @@ impl AuditWriter {
         sink: Box<dyn ChainSink + Send>,
         signing_key: SigningKey,
     ) -> Result<Self, AuditError> {
-        if sink.retention() == Retention::Durable
-            && signing_key.key_id() == insecure_dev_key().key_id()
-        {
+        let retention = sink.retention();
+        if retention == Retention::Durable && signing_key.key_id() == insecure_dev_key().key_id() {
             return Err(AuditError::DurableSinkNeedsProvisionedKey);
         }
         // Uniform across both retentions, deliberately. For a Durable Sink this
@@ -117,6 +120,7 @@ impl AuditWriter {
         let path = sink.path().map(Path::to_path_buf);
         let writer = Self {
             path,
+            retention,
             chain: Mutex::new(ChainState {
                 sink,
                 next_seq: 0,
@@ -149,17 +153,6 @@ impl AuditWriter {
         Self::with_sink(Box::new(FileChainSink::open(path)?), signing_key)
     }
 
-    /// Ephemeral sink for tests and dev defaults — a real temp JSONL file,
-    /// signed by [`insecure_dev_key`]. Not a production sink, and not a
-    /// production key.
-    ///
-    /// The temp directory is removed when the writer drops, so the sink
-    /// declares [`Retention::Volatile`]: the bytes are fsynced but do not
-    /// outlive the process, which is exactly the pairing the dev key is allowed.
-    pub fn open_temp() -> Result<Self, AuditError> {
-        Self::with_sink(Box::new(FileChainSink::temp()?), insecure_dev_key())
-    }
-
     /// Where this Session's bytes live, when that is a meaningful question.
     ///
     /// `None` for a sink with nothing to point an operator at — an in-memory
@@ -167,6 +160,19 @@ impl AuditWriter {
     /// not exist.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// What the sink *declared* its bytes are worth: [`Retention::Durable`] for
+    /// evidence somebody can be pointed at afterwards, [`Retention::Volatile`]
+    /// for a Chain that dies with the process.
+    ///
+    /// The sink's own statement, read back verbatim — never an inference from
+    /// this writer's side. A Chain in memory and a Chain fsynced to disk are
+    /// byte-identical, so nothing here could derive the answer; a `path()` of
+    /// `Some` would be a guess wearing a guarantee's clothes, and ADR-0012 puts
+    /// the claim with the adapter that can actually keep it.
+    pub fn retention(&self) -> Retention {
+        self.retention
     }
 
     /// The public key this Session's `Open` line published — what a verifier
@@ -286,6 +292,7 @@ impl std::fmt::Debug for AuditWriter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuditWriter")
             .field("path", &self.path)
+            .field("retention", &self.retention)
             .field("key_id", &self.signing_key.key_id())
             .finish_non_exhaustive()
     }
@@ -331,10 +338,18 @@ mod tests {
         SigningKey::from_seed([0x2a; 32])
     }
 
-    /// The Session's file. Every writer below is a file sink, so `None` here
-    /// would be a bug in the test rather than a case to handle.
-    fn file_of(writer: &AuditWriter) -> &Path {
-        writer.path().expect("a file sink names its path")
+    /// A Session over an in-memory Chain, plus the clone the test reads it back
+    /// through. [`MemoryChainSink`] clones share the buffer, so the writer and
+    /// the test see the same bytes — including the `Close` line `Drop` appends.
+    ///
+    /// Volatile, so the dev key is the allowed pairing (ADR-0012). Fixtures that
+    /// genuinely need a file on disk use [`AuditWriter::open`] with
+    /// [`provisioned_key`] instead.
+    fn memory_session() -> (AuditWriter, MemoryChainSink) {
+        let store = MemoryChainSink::new();
+        let writer = AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("a Volatile sink accepts the dev key");
+        (writer, store)
     }
 
     fn outcome(call_id: &str) -> AuditRecord {
@@ -352,27 +367,30 @@ mod tests {
         )
     }
 
-    fn lines(path: &Path) -> Vec<Value> {
-        std::fs::read_to_string(path)
-            .expect("audit file readable")
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str(line).expect("every row is JSON"))
-            .collect()
-    }
-
-    fn raw_lines(path: &Path) -> Vec<String> {
-        std::fs::read_to_string(path)
-            .expect("audit file readable")
-            .lines()
+    /// Every non-empty row of a Chain, verbatim. Takes text rather than a path
+    /// so a file Session and an in-memory one are read by the same code.
+    fn raw_lines(text: &str) -> Vec<String> {
+        text.lines()
             .filter(|line| !line.trim().is_empty())
             .map(str::to_owned)
             .collect()
     }
 
+    fn lines(text: &str) -> Vec<Value> {
+        raw_lines(text)
+            .iter()
+            .map(|line| serde_json::from_str(line).expect("every row is JSON"))
+            .collect()
+    }
+
+    /// The bytes a Durable file sink wrote.
+    fn file_text(path: &Path) -> String {
+        std::fs::read_to_string(path).expect("audit file readable")
+    }
+
     #[test]
     fn each_line_chains_to_the_hash_of_the_one_before_it() {
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, store) = memory_session();
         let mut intent = AuditIntent::new(
             "call-1",
             ToolId::new("echo"),
@@ -381,11 +399,12 @@ mod tests {
         writer.emit_intent(&mut intent).unwrap();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
 
-        let rows = raw_lines(file_of(&writer));
+        let text = store.to_text();
+        let rows = raw_lines(&text);
         assert_eq!(rows.len(), 3, "open + intent + outcome");
         // The Open line anchors on genesis; the back-reference to a previous
         // Session lives in `prev_session_tail`, not here.
-        let parsed = lines(file_of(&writer));
+        let parsed = lines(&text);
         assert_eq!(parsed[0]["prev_hash"], Value::from("0".repeat(64)));
         for index in 1..rows.len() {
             let expected = PrevHash::of_line(rows[index - 1].as_bytes());
@@ -404,10 +423,10 @@ mod tests {
 
     #[test]
     fn a_signed_line_verifies_against_the_public_key_in_the_open_line() {
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, store) = memory_session();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
 
-        let rows = raw_lines(file_of(&writer));
+        let rows = raw_lines(&store.to_text());
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
         let record: AuditRecord = serde_json::from_str(&rows[1]).unwrap();
         assert_eq!(*open.line_type(), AuditLineType::Open);
@@ -418,9 +437,9 @@ mod tests {
 
     #[test]
     fn tampering_with_any_field_makes_the_signature_fail() {
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, store) = memory_session();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
-        let rows = raw_lines(file_of(&writer));
+        let rows = raw_lines(&store.to_text());
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
 
         for (field, replacement) in [
@@ -449,9 +468,9 @@ mod tests {
 
     #[test]
     fn stripping_a_signature_changes_the_line_hash() {
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, store) = memory_session();
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
-        let rows = raw_lines(file_of(&writer));
+        let rows = raw_lines(&store.to_text());
         let signed = PrevHash::of_line(rows[1].as_bytes());
 
         let mut value: Value = serde_json::from_str(&rows[1]).unwrap();
@@ -469,7 +488,7 @@ mod tests {
 
         {
             let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
-            let first = &lines(&path)[0];
+            let first = &lines(&file_text(&path))[0];
             assert!(
                 first.get("prev_session_tail").is_none(),
                 "a fresh file has no previous Session: {first}"
@@ -477,11 +496,11 @@ mod tests {
             writer.emit_outcome(&mut outcome("call-1")).unwrap();
         }
 
-        let first_session = raw_lines(&path);
+        let first_session = raw_lines(&file_text(&path));
         let tail = PrevHash::of_line(first_session.last().unwrap().as_bytes());
 
         let _second = AuditWriter::open(&path, provisioned_key()).unwrap();
-        let rows = lines(&path);
+        let rows = lines(&file_text(&path));
         let reopened = &rows[first_session.len()];
         assert_eq!(reopened["line_type"], Value::from("open"));
         assert_eq!(
@@ -506,7 +525,7 @@ mod tests {
         {
             let _writer = AuditWriter::open(&clean, provisioned_key()).unwrap();
         }
-        let rows = lines(&clean);
+        let rows = lines(&file_text(&clean));
         assert_eq!(rows.last().unwrap()["line_type"], Value::from("close"));
 
         let unwound = dir.path().join("unwound.jsonl");
@@ -518,7 +537,7 @@ mod tests {
             }
         });
         assert!(result.is_err());
-        let rows = lines(&unwound);
+        let rows = lines(&file_text(&unwound));
         assert_eq!(
             rows.last().unwrap()["line_type"],
             Value::from("close"),
@@ -530,27 +549,28 @@ mod tests {
 
     #[test]
     fn intent_lines_carry_no_signature() {
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, store) = memory_session();
         let mut intent = AuditIntent::new(
             "call-1",
             ToolId::new("echo"),
             RequestDigest::of_request_bytes(b"{}"),
         );
         writer.emit_intent(&mut intent).unwrap();
-        let row = &lines(file_of(&writer))[1];
+        let text = store.to_text();
+        let row = &lines(&text)[1];
         assert_eq!(row["line_type"], Value::from("intent"));
         assert!(row.get("signature").is_none(), "{row}");
         assert!(row.get("key_id").is_none(), "{row}");
         // Still hashed into the chain: the next line points at it.
         writer.emit_outcome(&mut outcome("call-1")).unwrap();
-        let rows = raw_lines(file_of(&writer));
+        let rows = raw_lines(&store.to_text());
         let next: AuditRecord = serde_json::from_str(&rows[2]).unwrap();
         assert_eq!(*next.prev_hash(), PrevHash::of_line(rows[1].as_bytes()));
     }
 
     #[test]
     fn concurrent_appends_produce_one_unforked_chain() {
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, store) = memory_session();
         std::thread::scope(|scope| {
             for thread in 0..8 {
                 scope.spawn({
@@ -566,9 +586,10 @@ mod tests {
             }
         });
 
-        let rows = raw_lines(file_of(&writer));
+        let text = store.to_text();
+        let rows = raw_lines(&text);
         assert_eq!(rows.len(), 1 + 8 * 4);
-        let parsed = lines(file_of(&writer));
+        let parsed = lines(&text);
         for (index, row) in parsed.iter().enumerate() {
             assert_eq!(row["seq"], Value::from(index as u64), "seq must not repeat");
             if index > 0 {
@@ -586,7 +607,7 @@ mod tests {
         // The field is sealed against direct mutation (AEG-45), so the only way
         // an unsupported version reaches the writer is a foreign/tampered record
         // deserialized from the wire — exactly what this guard is for.
-        let writer = AuditWriter::open_temp().unwrap();
+        let (writer, _store) = memory_session();
         let mut intent: AuditIntent = serde_json::from_str(
             r#"{"schema_version":999,"line_type":"intent","seq":0,"prev_hash":"0000000000000000000000000000000000000000000000000000000000000000","call_id":"call-1","tool_id":"smoke","request_digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}"#,
         )
@@ -666,7 +687,7 @@ mod tests {
         );
 
         // The same key over a Volatile sink is allowed — that pairing is what
-        // keeps `open_temp` and the runtime's default sink working.
+        // keeps the runtime's default sink working.
         assert!(
             AuditWriter::with_sink(
                 Box::new(MemoryChainSink::new()),

@@ -16,7 +16,7 @@ entry points: `execute_tool_call` (Model A, WASM) and `execute_host_call`
 `RuntimeBuilder` is the shared construction facade — the CLI and the MCP gateway
 both go through it, so policy/audit wiring lives in exactly one place. Every
 option is optional; unset means the `Runtime::default()` behaviour (`allow_all`
-policy, temp-file JSONL audit sink).
+policy, in-memory Volatile audit sink that retains nothing).
 
 ```rust
 use std::path::Path;
@@ -37,8 +37,9 @@ to, so it is never signed with the dev seed compiled into `botzr-aegis-audit`.
 Generate the key once with `aegis keygen --out /tmp/aegis-signing.key`. A key
 that is missing, malformed, or readable beyond its owner fails the build
 (`BuildError::LoadSigningKey`) rather than falling back to anything. Leaving
-`audit_file` unset keeps the temp sink, which *is* dev-key-signed and is not a
-production record.
+`audit_file` unset keeps the default in-memory Volatile sink, which *is*
+dev-key-signed, retains nothing past the process, and is not a production
+record.
 
 ## Registration
 

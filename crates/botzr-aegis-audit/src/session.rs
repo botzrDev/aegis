@@ -184,6 +184,20 @@ impl Drop for CallSession<'_> {
 mod tests {
     use super::*;
 
+    use crate::signing::insecure_dev_key;
+    use crate::sink::MemoryChainSink;
+
+    /// A Session over an in-memory Chain, plus the clone the test reads it back
+    /// through — the shape the runtime's default Sink has since ADR-0012.
+    /// `MemoryChainSink` clones share the buffer, and a Volatile sink is the
+    /// pairing the dev key is allowed.
+    fn memory_session() -> (AuditWriter, MemoryChainSink) {
+        let store = MemoryChainSink::new();
+        let writer = AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
+            .expect("a Volatile sink accepts the dev key");
+        (writer, store)
+    }
+
     fn begin<'a>(writer: &'a AuditWriter, tool: &str) -> Result<CallSession<'a>, AuditError> {
         CallSession::begin(
             writer,
@@ -202,17 +216,13 @@ mod tests {
 
     #[test]
     fn panic_emits_trap_outcome() {
-        let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let path = writer
-            .path()
-            .expect("open_temp is a file sink")
-            .to_path_buf();
+        let (writer, store) = memory_session();
         let result = std::panic::catch_unwind(|| {
             let _session = begin(&writer, "panic-tool").unwrap();
             panic!("simulated host panic");
         });
         assert!(result.is_err());
-        let text = std::fs::read_to_string(path).unwrap();
+        let text = store.to_text();
         assert!(text.contains("host panic during tool call"));
         assert!(text.contains("\"line_type\":\"outcome\""));
         // Exactly one outcome, and default-deny seeds must not leak `allowed`
@@ -223,16 +233,12 @@ mod tests {
 
     #[test]
     fn abandoned_session_emits_one_fail_closed_outcome() {
-        let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let path = writer
-            .path()
-            .expect("open_temp is a file sink")
-            .to_path_buf();
+        let (writer, store) = memory_session();
         {
             let _session = begin(&writer, "abandoned-tool").unwrap();
             // No `complete()` — the session is abandoned and dropped here.
         }
-        let text = std::fs::read_to_string(&path).unwrap();
+        let text = store.to_text();
         // Intent plus exactly one fail-closed outcome — never an orphan intent.
         assert!(text.contains("\"line_type\":\"intent\""));
         assert_eq!(outcome_count(&text), 1, "abandon must emit one outcome");
@@ -255,16 +261,12 @@ mod tests {
 
     #[test]
     fn complete_then_drop_emits_exactly_one_outcome() {
-        let writer = crate::writer::AuditWriter::open_temp().unwrap();
-        let path = writer
-            .path()
-            .expect("open_temp is a file sink")
-            .to_path_buf();
+        let (writer, store) = memory_session();
         let mut session = begin(&writer, "ok-tool").unwrap();
         session.set_policy(PolicyOutcome::Allowed);
         session.set_execution(ExecutionOutcome::Success);
         session.complete().unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
+        let text = store.to_text();
         // complete() consumes the session; its Drop must not append a second line.
         assert_eq!(
             outcome_count(&text),
@@ -276,7 +278,7 @@ mod tests {
 
     #[test]
     fn begin_seeds_never_serialize_allowed_or_success() {
-        let writer = crate::writer::AuditWriter::open_temp().unwrap();
+        let (writer, _store) = memory_session();
         let session = begin(&writer, "seed-tool").unwrap();
         let json = crate::to_json_line(&session.to_record()).unwrap();
         assert!(
@@ -295,7 +297,7 @@ mod tests {
 
     #[test]
     fn the_new_axes_reach_the_record_and_stay_omitted_until_set() {
-        let writer = crate::writer::AuditWriter::open_temp().unwrap();
+        let (writer, _store) = memory_session();
         let mut session = begin(&writer, "axes-tool").unwrap();
         let bare = crate::to_json_line(&session.to_record()).unwrap();
         assert!(bare.contains("\"decision_axes\":{}"), "{bare}");
