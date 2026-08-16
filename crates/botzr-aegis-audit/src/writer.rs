@@ -73,9 +73,11 @@ pub struct AuditWriter {
     /// lock. `path()` is a printer's question, and a printer must not be able to
     /// queue behind an in-flight fsync to learn a value that never changes.
     path: Option<PathBuf>,
-    /// Cached beside `path`, and outside the lock for exactly the same reason: a
-    /// sink's [`Retention`] is fixed before its first byte is written, so
-    /// reporting it must never queue behind an in-flight fsync either.
+    /// The sink's declaration, read once at construction — the same read the
+    /// key-pairing check in `with_sink` makes. Stored rather than delegated
+    /// because the sink lives behind the chain lock and a declaration fixed
+    /// before the first byte is written has nothing to gain from being re-read
+    /// under it.
     retention: Retention,
     chain: Mutex<ChainState>,
     signing_key: SigningKey,
@@ -168,9 +170,18 @@ impl AuditWriter {
     ///
     /// The sink's own statement, read back verbatim — never an inference from
     /// this writer's side. A Chain in memory and a Chain fsynced to disk are
-    /// byte-identical, so nothing here could derive the answer; a `path()` of
-    /// `Some` would be a guess wearing a guarantee's clothes, and ADR-0012 puts
+    /// byte-identical, so nothing here could derive the answer; ADR-0012 puts
     /// the claim with the adapter that can actually keep it.
+    ///
+    /// **Orthogonal to [`AuditWriter::path`].** `path` says where the bytes are;
+    /// this says how long they last. A file sink whose directory is removed on
+    /// drop is `Some(path)` *and* [`Retention::Volatile`] — that pairing is why
+    /// the two are separate questions, not two spellings of one. Read this, not
+    /// `path().is_some()`, to decide whether a Chain is evidence.
+    ///
+    /// No shipped caller reads it: the CLI and MCP banners switch on `path`,
+    /// because what they print is a location. It is here for embedders choosing
+    /// a sink and for tests pinning the default.
     pub fn retention(&self) -> Retention {
         self.retention
     }
