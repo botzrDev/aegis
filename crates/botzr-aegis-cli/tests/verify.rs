@@ -16,7 +16,22 @@
 //! Each row also asserts the *reason* the report printed. An exit code cannot
 //! tell one `Tampered` row from another, so without that a mutation could fire
 //! on the wrong mechanism — a stale `prev_hash` row failing on a broken
-//! signature, say — and the matrix would still look green.
+//! signature, say — and the matrix would still look green. Those assertions
+//! identify the *mechanism*, not the wording: what the formatter does with a
+//! verdict once it has one is a pure function, and it is tested as one, in
+//! process, in `src/verify.rs` (AILAB-705).
+//!
+//! One row was retired to that suite rather than kept:
+//! `an_exit_three_report_names_every_call_in_flight_in_walk_order`, whose two
+//! halves now live in `botzr-aegis-audit`'s `verdict.rs` (the walker collects
+//! the Calls in walk order — its fixture emits them descending, so a sort does
+//! not pass for walk order) and in this crate's `verify::tests` (the formatter
+//! prints one `in_flight` line per Call, in that order, from a descending
+//! fixture for the same reason). What that split does *not* reproduce is the
+//! composition through a process: no row here asserts that the binary emits an
+//! `in_flight` line. It is inferable — the coverage-line rows below prove
+//! `render`'s output reaches stdout — but it is inference, and it is named here
+//! rather than left for someone to discover.
 //!
 //! Fixtures follow `botzr-aegis-audit/tests/verdict.rs`. Anything an emitter can
 //! produce is produced by the real [`AuditWriter`], so a fixture cannot drift
@@ -679,6 +694,11 @@ fn two_runs_over_the_same_bytes_produce_byte_identical_output() {
     // nowhere else. The fixture is the richest report the formatter emits —
     // verdict, key_id, coverage and in_flight lines — so every section is inside
     // the comparison.
+    //
+    // What that does *not* say is that any section is present: this row compares
+    // run 1 to run 2, so a `render` that stopped emitting `in_flight` entirely
+    // stays green here. The content of each section is asserted in
+    // `verify::tests`, in process; determinism is this row's whole subject.
     let (_dir, path) = temp_chain();
     unclosed_session(&path, &["call-done"], &["call-a", "call-b"]);
 
@@ -688,31 +708,6 @@ fn two_runs_over_the_same_bytes_produce_byte_identical_output() {
     assert_eq!(first.status.code(), second.status.code());
     assert_eq!(first.stdout, second.stdout);
     assert_eq!(first.stderr, second.stderr);
-}
-
-// ---- what an exit-3 report has to name -----------------------------------
-
-#[test]
-fn an_exit_three_report_names_every_call_in_flight_in_walk_order() {
-    // Three intents for workspace reads is a shrug; one for `net.post` is where
-    // an operator starts looking. An `Indeterminate` that only said "uncovered
-    // tail" would send them to read the file to learn which.
-    let (_dir, path) = temp_chain();
-    unclosed_session(&path, &[], &["call-a", "call-b"]);
-
-    let output = verify_path(&path);
-    assert_exit(&output, 3);
-    let in_flight: Vec<String> = stdout(&output)
-        .lines()
-        .filter(|line| line.starts_with("in_flight "))
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(
-        in_flight,
-        vec!["in_flight call-a".to_owned(), "in_flight call-b".to_owned()],
-        "stdout={}",
-        stdout(&output)
-    );
 }
 
 // ---- argument surface ----------------------------------------------------

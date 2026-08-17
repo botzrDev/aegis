@@ -446,7 +446,12 @@ fn an_intent_tail_is_indeterminate_and_names_the_calls_in_flight() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
     let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
-    for call_id in ["call-a", "call-b"] {
+    // Emitted `call-b` first, and the assertion below expects it first. Walk
+    // order is the claim; an ascending fixture would pass just as happily
+    // against a walk that sorted the ids, so the two hypotheses have to be
+    // distinguishable from the fixture alone. `aegis verify` prints this Vec
+    // one line per Call in exactly this order.
+    for call_id in ["call-b", "call-a"] {
         let mut intent = botzr_aegis_core::AuditIntent::new(
             call_id,
             ToolId::new("net.post"),
@@ -462,7 +467,7 @@ fn an_intent_tail_is_indeterminate_and_names_the_calls_in_flight() {
         Verdict::Indeterminate {
             reason: IndeterminateReason::UnanchoredTail {
                 session_index: 0,
-                in_flight_calls: vec!["call-a".into(), "call-b".into()],
+                in_flight_calls: vec!["call-b".into(), "call-a".into()],
             }
         }
     );

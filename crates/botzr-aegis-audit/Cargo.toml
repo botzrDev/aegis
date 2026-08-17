@@ -14,6 +14,25 @@ categories = ["development-tools"]
 [lints]
 workspace = true
 
+[features]
+# House parity with `sandbox`, `capability` and `runtime`: the place a
+# test-only audit API lands, off by default so it cannot reach a production
+# build.
+#
+# **Empty today, and honestly so.** It gates nothing, because there is nothing
+# here that needs gating: the verdict types (`Verification`, `Verdict`,
+# `IndeterminateReason`, `TamperedReason`, `TrustLabel`, `Position`) all carry
+# public fields and public variants in a default build, so a consumer — the
+# `aegis verify` formatter tests included — already constructs them with a
+# struct literal. Do not describe this feature as making those types
+# constructible; it does not, and a doc that said so would be describing a seal
+# nobody has built.
+#
+# Not the option ADR-0012 rejected. That was a gated, crate-private *sink* seam
+# proposed instead of declared Retention; Retention shipped and stands. This
+# gates no sink and replaces no decision.
+test-utils = []
+
 [dependencies]
 botzr-aegis-core = { workspace = true }
 # The private key lives here, not in core: core holds signature *bytes* and

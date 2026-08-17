@@ -16,6 +16,37 @@ support.
 
 ### Added
 
+- **`aegis verify`'s report formatter is tested in process** (AILAB-705).
+  `render` and `label` in `crates/botzr-aegis-cli/src/verify.rs` are pure
+  functions of a `Verification`, and they now have a fourteen-case
+  `#[cfg(test)]` suite that builds verdict values directly: the three `Verified`
+  trust spellings (unpinned, pinned to one fingerprint, pinned across a
+  rotation), a `Tampered` line, every `IndeterminateReason` this build can meet,
+  the `key_id` / `coverage` / `in_flight` sections and their order, and the rule
+  that `in_flight` appears under `UnanchoredTail` and nowhere else. Most compare
+  the whole report byte for byte; the rest assert a fragment's presence or
+  absence. Three of the fourteen had a subprocess counterpart before; the other
+  eleven were not covered anywhere. **No behaviour change:** not a byte of the
+  report moved, no exit code changed, and the walk was not touched. The
+  subprocess matrix in `crates/botzr-aegis-cli/tests/verify.rs` keeps what needs
+  a process — the exit code a shell sees, an empty stdout on could-not-read,
+  usage errors, the trust-store exit mapping, and which *mechanism* a given
+  mutation fires. One row left it: the in-flight report row, whose walker half
+  is asserted in `botzr-aegis-audit`'s `verdict.rs` and whose formatter half is
+  now asserted in process. Both of those fixtures were changed to feed their
+  ids *descending*, because the ascending ones they had could not tell walk
+  order from a sort — the property both tests name. What the split does not
+  reproduce is the composition through a real binary, and the suite's header
+  says so rather than implying otherwise. `botzr-aegis-audit` also gains a
+  `test-utils` feature, **off by default and empty**, for parity with `sandbox`,
+  `capability` and `runtime`. It gates nothing today and is not a seal:
+  `Verification`, `Verdict`, `IndeterminateReason`, `TamperedReason`,
+  `TrustLabel` and `Position` all keep public fields and public variants in a
+  default build, so every one of them stays constructible by any consumer — the
+  feature is the place a future test-only audit API would land, and saying more
+  than that would describe a contraction nobody has made. It does not reopen the
+  option ADR-0012 rejected: that was a `test-utils`-gated *sink seam* standing in
+  for declared Retention, and Retention still ships as the answer there.
 - **Trust-store parsing is `botzr-aegis-audit` library API** (AILAB-704).
   `load_trust_store(&Path) -> Result<Vec<PublicKey>, TrustStoreError>` and its
   two-variant `TrustStoreError` (`Read`, `MalformedEntry` with a one-based line
