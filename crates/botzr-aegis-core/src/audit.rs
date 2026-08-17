@@ -90,6 +90,111 @@ impl AuditLineType {
     }
 }
 
+/// The `line_type` field alone, with no schema-v1 fallback.
+///
+/// `None` covers both "no such field" and "present but not a string": neither
+/// is a tag, and a reader that requires one treats the two the same way.
+///
+/// This is the half a consumer that does **not** read schema-v1 records wants.
+/// It never invents a line type out of `phase`, so a v1 record stays untagged
+/// rather than becoming routable.
+pub fn line_type_field(value: &serde_json::Value) -> Option<AuditLineType> {
+    value
+        .get("line_type")
+        .and_then(serde_json::Value::as_str)
+        .map(AuditLineType::from_wire)
+}
+
+/// The line's type under either spelling of the tag — `line_type`, or schema
+/// v1's `phase` as a fallback.
+///
+/// The two are read in order, not as alternatives. A present string
+/// `line_type` is authoritative even when `phase` disagrees, and `phase` is
+/// consulted only for records written before `line_type` existed. A
+/// `line_type` that is present but not a string is no tag either, and falls
+/// through to the fallback. Nothing is lost by the ordering: a genuine v1 line
+/// carries `phase` and no `line_type` at all, so the fallback still reaches
+/// every line it exists for.
+///
+/// LOAD-BEARING: the fallback must not speak over a `line_type` that is there.
+/// A line tagged `open` is a Session boundary and nothing else. Reading
+/// `phase: "outcome"` off such a line would report a boundary as a call *and*
+/// stall whichever [`SessionCounter`] is numbering the file, so every address
+/// after it would name a different Session than a reader keyed on `line_type`
+/// names for the same bytes.
+///
+/// Which of this and [`line_type_field`] a reader calls is that reader's
+/// declaration of whether it reads v1 records at all (ADR-0013): `aegis verify`
+/// does not and takes the field alone, `aegis recheck` does and takes this. The
+/// choice sits at the call site rather than in a parameter here, so that no
+/// caller can loosen another caller's reading.
+pub fn line_type_from_value(value: &serde_json::Value) -> Option<AuditLineType> {
+    line_type_field(value).or_else(|| {
+        value
+            .get("phase")
+            .and_then(serde_json::Value::as_str)
+            .map(AuditLineType::from_wire)
+    })
+}
+
+/// A Session's ordinal within a Chain file: `None` until the first `Open` line,
+/// then 0, 1, 2 …
+///
+/// Coverage is `(session_index, seq)` and not `seq` alone — `seq` restarts at 0
+/// on each Session's `Open`, so one file holding two Sessions has two different
+/// lines at `seq` 5. The Session ordinal is the other half of that address, and
+/// every reader that prints one has to count Sessions by the same rule, or a
+/// finding stops carrying between two reports about the same file.
+///
+/// This type **is** that rule. It was previously the same expression written
+/// twice — once in the verifying walk, once in the recheck walk — held in
+/// agreement by nothing but a pair of comments saying so (ADR-0013).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionCounter {
+    index: Option<usize>,
+}
+
+impl SessionCounter {
+    /// A counter that has not yet seen an `Open`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The ordinal the next `Open` will take, without advancing to it.
+    ///
+    /// A reader that validates an `Open` before committing to it — a verifying
+    /// walk names the Session in its tamper reports — needs the number ahead of
+    /// the decision it is still entitled to refuse.
+    pub fn next_index(&self) -> usize {
+        self.index.map_or(0, |index| index + 1)
+    }
+
+    /// Record an `Open` line, advancing to [`Self::next_index`].
+    pub fn note_open(&mut self) {
+        self.index = Some(self.next_index());
+    }
+
+    /// The ordinal of the Session in progress, or `None` before the first
+    /// `Open`.
+    ///
+    /// The distinction from [`Self::current`] is not cosmetic: a reader that
+    /// requires a file to begin with an `Open` reads this `None` as "this chain
+    /// does not begin with an open line", where `current` would hand it a
+    /// plausible 0 and let a headless file walk on.
+    pub fn index(&self) -> Option<usize> {
+        self.index
+    }
+
+    /// The Session ordinal to print in an address column.
+    ///
+    /// A line seen before any `Open` reports 0 rather than nothing: an address
+    /// is two numbers or it is not an address, and 0 names the Session such a
+    /// line would sit in if the file's first `Open` were there to be read.
+    pub fn current(&self) -> usize {
+        self.index.unwrap_or(0)
+    }
+}
+
 impl std::fmt::Display for AuditLineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -795,6 +900,180 @@ mod tests {
         assert_eq!(unknown, AuditLineType::Unknown("anchor".into()));
         assert_eq!(unknown.as_str(), "anchor");
         assert_eq!(serde_json::to_string(&unknown).unwrap(), "\"anchor\"");
+    }
+
+    /// A present string `line_type` is the answer, and the strict reader never
+    /// consults `phase` at all.
+    #[test]
+    fn the_line_type_field_is_read_without_a_fallback() {
+        let tagged = serde_json::json!({"line_type": "outcome"});
+        assert_eq!(line_type_field(&tagged), Some(AuditLineType::Outcome));
+
+        // The case that separates the two readers: a genuine schema-v1 record.
+        // The strict reader reports no tag rather than inventing one, which is
+        // what lets `aegis verify` keep refusing v1 lines.
+        let v1 = serde_json::json!({"phase": "outcome", "schema_version": 1});
+        assert_eq!(line_type_field(&v1), None);
+
+        // Present but not a string is no tag either.
+        let numeric = serde_json::json!({"line_type": 7});
+        assert_eq!(line_type_field(&numeric), None);
+    }
+
+    /// `line_type` wins over a disagreeing `phase` — the chimera line.
+    ///
+    /// This is the assertion the Session counter depends on: a line tagged
+    /// `open` that also carries `phase: "outcome"` is a Session boundary, not a
+    /// call. The other reading would report the boundary as a call *and* stall
+    /// the counter, so every address after it would name the wrong Session.
+    #[test]
+    fn a_present_line_type_outranks_a_disagreeing_phase() {
+        let chimera = serde_json::json!({"line_type": "open", "phase": "outcome"});
+        assert_eq!(line_type_from_value(&chimera), Some(AuditLineType::Open));
+        assert_eq!(line_type_field(&chimera), Some(AuditLineType::Open));
+    }
+
+    /// `phase` is consulted only when `line_type` is not a usable tag.
+    #[test]
+    fn phase_is_the_fallback_spelling_when_line_type_is_absent() {
+        let v1_outcome = serde_json::json!({"phase": "outcome"});
+        assert_eq!(
+            line_type_from_value(&v1_outcome),
+            Some(AuditLineType::Outcome)
+        );
+
+        // The fallback reads the whole vocabulary, not just outcomes — a v1
+        // intent is still an intent, so a caller filtering for outcomes skips
+        // it rather than reporting a call that recorded no decision.
+        let v1_intent = serde_json::json!({"phase": "intent"});
+        assert_eq!(
+            line_type_from_value(&v1_intent),
+            Some(AuditLineType::Intent)
+        );
+
+        // An unrecognised token keeps its spelling through the fallback too.
+        let future = serde_json::json!({"phase": "something-from-2019"});
+        assert_eq!(
+            line_type_from_value(&future),
+            Some(AuditLineType::Unknown("something-from-2019".into()))
+        );
+
+        // A non-string `line_type` falls through to the fallback.
+        let numeric = serde_json::json!({"line_type": 7, "phase": "outcome"});
+        assert_eq!(line_type_from_value(&numeric), Some(AuditLineType::Outcome));
+    }
+
+    /// Neither spelling present is no tag, under either reader.
+    #[test]
+    fn a_line_with_neither_tag_has_no_line_type() {
+        let untagged = serde_json::json!({"call_id": "c", "seq": 3});
+        assert_eq!(line_type_from_value(&untagged), None);
+        assert_eq!(line_type_field(&untagged), None);
+    }
+
+    /// `None` until the first `Open`, then 0, 1, 2 … — and 0 in the address
+    /// column before any `Open` has been seen.
+    #[test]
+    fn sessions_are_numbered_from_zero_at_each_open() {
+        let mut counter = SessionCounter::new();
+        assert_eq!(counter.index(), None);
+        assert_eq!(counter.current(), 0);
+        assert_eq!(counter.next_index(), 0);
+
+        counter.note_open();
+        assert_eq!(counter.index(), Some(0));
+        assert_eq!(counter.current(), 0);
+        assert_eq!(counter.next_index(), 1);
+
+        counter.note_open();
+        assert_eq!(counter.index(), Some(1));
+        assert_eq!(counter.current(), 1);
+
+        counter.note_open();
+        assert_eq!(counter.current(), 2);
+    }
+
+    /// `next_index` is a peek, not a step: reading it does not advance.
+    ///
+    /// A verifying walk asks for the ordinal to name a Session in a tamper
+    /// report it may then refuse to accept, so the read has to be free of the
+    /// commit.
+    #[test]
+    fn next_index_does_not_advance_the_counter() {
+        let mut counter = SessionCounter::default();
+        assert_eq!(counter.next_index(), 0);
+        assert_eq!(counter.next_index(), 0);
+        assert_eq!(counter.index(), None);
+
+        counter.note_open();
+        assert_eq!(counter.next_index(), 1);
+        assert_eq!(counter.next_index(), 1);
+        assert_eq!(counter.index(), Some(0));
+    }
+
+    /// The cross-walk agreement test (ADR-0013).
+    ///
+    /// The same JSONL is driven through the two readers exactly as the two
+    /// walks drive them — `aegis verify` routing on the `line_type` field
+    /// alone, `aegis recheck` routing through the `phase` fallback — and both
+    /// must place every line at the same Session ordinal.
+    ///
+    /// The fixture carries the three cases where an ordinal could diverge: an
+    /// outcome *before* any `open` (both report Session 0), the chimera
+    /// `open` + `phase: "outcome"` (both treat it as a boundary and advance),
+    /// and a genuine v1 outcome with no `line_type` (which only recheck reports
+    /// at all — but the two agree on the Session it sits in).
+    #[test]
+    fn both_readers_number_the_same_file_identically() {
+        let lines = [
+            r#"{"line_type":"outcome","call_id":"before-any-open"}"#,
+            r#"{"line_type":"open"}"#,
+            r#"{"line_type":"outcome","call_id":"first"}"#,
+            r#"{"line_type":"open","phase":"outcome"}"#,
+            r#"{"line_type":"outcome","call_id":"second"}"#,
+            r#"{"schema_version":1,"phase":"outcome","call_id":"legacy"}"#,
+        ];
+
+        let mut verifying = SessionCounter::new();
+        let mut rechecking = SessionCounter::new();
+        let mut verify_addresses = Vec::new();
+        let mut recheck_addresses = Vec::new();
+        let mut recheck_reported = Vec::new();
+
+        for raw in lines {
+            let value: serde_json::Value = serde_json::from_str(raw).expect("fixture is JSON");
+
+            // The verifying walk routes on the field alone — it has no reading
+            // of `phase`, so a v1 line is untagged to it.
+            if line_type_field(&value) == Some(AuditLineType::Open) {
+                verifying.note_open();
+            }
+            verify_addresses.push(verifying.current());
+
+            // The recheck walk uses the fallback to *recognise an outcome*, but
+            // still takes Session boundaries off the field alone. That asymmetry
+            // is the behaviour both walks shipped before the extraction.
+            if line_type_field(&value) == Some(AuditLineType::Open) {
+                rechecking.note_open();
+            }
+            if line_type_from_value(&value) == Some(AuditLineType::Outcome) {
+                recheck_reported.push(rechecking.current());
+            }
+            recheck_addresses.push(rechecking.current());
+        }
+
+        assert_eq!(verify_addresses, recheck_addresses);
+        // Outcome before any open is Session 0; the chimera advanced to 1; the
+        // v1 tail line sits in the Session that was open when it was written.
+        assert_eq!(verify_addresses, vec![0, 0, 0, 1, 1, 1]);
+        // The four lines recheck reports — including the v1 one verify cannot
+        // read — carry the ordinals verify assigns to the same file positions.
+        assert_eq!(recheck_reported, vec![0, 0, 1, 1]);
+
+        // And the chimera is an Open under *both* readers, never an outcome.
+        let chimera: serde_json::Value = serde_json::from_str(lines[3]).unwrap();
+        assert_eq!(line_type_from_value(&chimera), Some(AuditLineType::Open));
+        assert_ne!(line_type_from_value(&chimera), Some(AuditLineType::Outcome));
     }
 
     #[test]

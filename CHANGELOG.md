@@ -16,6 +16,26 @@ support.
 
 ### Added
 
+- **Chain line classifier in `botzr-aegis-core`** (AILAB-703, ADR-0013).
+  `line_type_field`, `line_type_from_value` and `SessionCounter` are public
+  beside `AuditLineType::from_wire`. They carry the two facts `aegis verify` and
+  `aegis recheck` genuinely share — how a wire line names its type, including
+  schema v1's `phase` spelling, and how Sessions are numbered within a Chain
+  file — so a Coverage address printed by one verb names the same Session as a
+  diff line printed by the other. **No behaviour change to either verb.** The
+  two walks are *not* merged and take no strictness parameter (ADR-0013 rejects
+  one for the reason ADR-0012 rejects `durable: bool`): each still owns its
+  iteration, error policy and verdict types, and which classifier a walk calls
+  is now the visible statement of whether it reads v1 records. `aegis verify`
+  calls `line_type_field` and still treats a line with no `line_type` field as
+  malformed; `aegis recheck` calls `line_type_from_value` and still reports v1
+  `phase: "outcome"` records. Session boundaries continue to come from
+  `line_type` alone in both walks, so an `open` line carrying a stray
+  `phase: "outcome"` remains a boundary rather than a call. Session numbering
+  was previously the same expression written in two files and kept in agreement
+  by comments; the comments now cite the shared function instead of being the
+  mechanism. AILAB-688 — whether the two walks should agree on *strictness* —
+  stays open and is deliberately not answered here.
 - **Docs book** — mdBook hub under `docs/` (`book.toml`, `SUMMARY.md`, and
   flat chapter files). Stranger-facing chapters for the pipeline, trust
   models, CLI, wrap (records, does not confine), and policy YAML as it

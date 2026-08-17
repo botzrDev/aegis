@@ -2,11 +2,19 @@
 
 **Status:** accepted (2026-08-14)
 
-> **Not implemented.** This is an accepted design decision, not a description of
-> shipped behaviour. In `v0.3.0` and current `main` the two walks remain wholly
-> independent, Session numbering is the same expression written twice
-> (`audit/src/verdict.rs:575`, `cli/src/recheck.rs:189`), and the v1 `phase`
-> fallback lives only in a private CLI function (`cli/src/recheck.rs:244`).
+> **Implemented 2026-08-17** (AILAB-703). `line_type_field`,
+> `line_type_from_value` and `SessionCounter` are public in
+> `botzr-aegis-core/src/audit.rs`, beside `AuditLineType::from_wire`. Both walks
+> number Sessions with the shared counter, and the v1 `phase` fallback has left
+> the CLI binary. Neither verb's behaviour changed: `aegis verify` calls the
+> field-only reader and still refuses a line with no `line_type`, `aegis recheck`
+> calls the fallback-aware one and still reports v1 records, and Session
+> boundaries come from `line_type` alone in both. Address extraction landed as
+> the shared Session ordinal only — `Position` and the two verdict types stayed
+> with their consumers, and `seq` was deliberately not unified, because verify
+> reads a missing `seq` as `Tampered` where recheck prints 0. The text below is
+> the decision as taken on 2026-08-14 and is left unedited. For what shipped,
+> see `CHANGELOG.md`.
 
 The duplication between `aegis verify`'s walk (`audit/src/verdict.rs`) and `aegis recheck`'s
 (`cli/src/recheck.rs`) is resolved by extracting only what they genuinely share: line-type

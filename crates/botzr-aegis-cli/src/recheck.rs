@@ -40,7 +40,10 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use botzr_aegis_core::{AuditRecord, PolicySetHash, ToolId, AUDIT_SCHEMA_VERSION};
+use botzr_aegis_core::{
+    line_type_field, line_type_from_value, AuditLineType, AuditRecord, PolicySetHash,
+    SessionCounter, ToolId, AUDIT_SCHEMA_VERSION,
+};
 use botzr_aegis_policy::{recheck_record, PolicyEngine, RecheckIndeterminate, RecheckVerdict};
 use serde_json::Value;
 
@@ -122,11 +125,18 @@ struct Report {
 /// second, weaker verifier living next to the real one.
 ///
 /// The two routing fields beyond `line_type` are what it costs to notice a
-/// record this build cannot account for. `phase` is the v1 spelling of `line_type`: a
-/// schema-v1 outcome carries `phase: "outcome"` and no `line_type` at all, so a
-/// walk keyed on `line_type` alone steps over a genuine recorded call as though
-/// it were a checkpoint — dropping it from a diff an operator is reading as
-/// complete, which is the one failure a forensic verb must not have. And
+/// record this build cannot account for. `phase` is the v1 spelling of
+/// `line_type`: a schema-v1 outcome carries `phase: "outcome"` and no
+/// `line_type` at all, so a walk keyed on `line_type` alone steps over a
+/// genuine recorded call as though it were a checkpoint — dropping it from a
+/// diff an operator is reading as complete, which is the one failure a forensic
+/// verb must not have. That reading is
+/// [`botzr_aegis_core::line_type_from_value`], and choosing it here rather than
+/// [`botzr_aegis_core::line_type_field`] is this verb's whole declaration that
+/// it answers for files an older build wrote (ADR-0013); `aegis verify` calls
+/// the other one and refuses them. Only the *outcome* spelling earns a row: a
+/// v1 `phase: "intent"` line stays skipped exactly as `line_type: "intent"`
+/// does, because an intent carries no recorded decision to compare against. And
 /// `schema_version` is read *before* the line is offered to [`AuditRecord`],
 /// because the two ways a line can fail to deserialize are not the same
 /// finding. A line from another schema is unreadable by construction — its
@@ -142,12 +152,13 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
     let mut changed = false;
     let mut indeterminate = false;
 
-    // `None` until the first `open`, then 0, 1, 2 … — the same rule the audit
-    // crate's walker uses (`session_index.map_or(0, |i| i + 1)`), so a coverage
+    // The same counter the audit crate's verifying walk holds, so a coverage
     // address printed by `aegis verify` names the same Session as a diff line
-    // printed here. An outcome seen before any `open` is reported under session
-    // 0, which is what verify does with the same file.
-    let mut session: Option<usize> = None;
+    // printed here. It is a shared function and no longer a convention two
+    // files promise each other in comments (ADR-0013); an outcome seen before
+    // any `open` reports session 0, and that is `SessionCounter`'s rule rather
+    // than this walk's opinion.
+    let mut sessions = SessionCounter::new();
 
     for (number, raw) in text.lines().enumerate() {
         let raw = raw.trim();
@@ -162,7 +173,7 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
         // Intents, decisions, closes, checkpoints and anything a newer emitter
         // writes carry no recorded policy outcome, so there is nothing for a
         // Policy Set to be re-run against and they fall out of both arms.
-        if is_outcome_shaped(&value) {
+        if line_type_from_value(&value) == Some(AuditLineType::Outcome) {
             let verdict = if is_from_another_schema(&value) {
                 RecheckVerdict::Indeterminate {
                     reason: RecheckIndeterminate::UnknownPolicySetHash {
@@ -175,7 +186,7 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
             lines.push(format!(
                 "call {} session {} seq {}: {verdict}",
                 call_id(&value),
-                session.unwrap_or(0),
+                sessions.current(),
                 seq(&value),
             ));
             match verdict {
@@ -185,8 +196,17 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
                 | RecheckVerdict::NewlyAllowed { .. }
                 | RecheckVerdict::NewlyParked { .. } => changed = true,
             }
-        } else if value.get("line_type").and_then(Value::as_str) == Some("open") {
-            session = Some(session.map_or(0, |index| index + 1));
+        } else if line_type_field(&value) == Some(AuditLineType::Open) {
+            // LOAD-BEARING: the *field*, not the fallback. To the verifying walk
+            // a Session boundary is `line_type` and nothing else, and the two
+            // counters have to see boundaries in the same places or an address
+            // printed here names a different Session from the one `aegis verify`
+            // prints for the same file — and a finding stops carrying between
+            // the two reports. So `phase` is allowed to say "this is an
+            // outcome" and is never allowed to open a Session; a line tagged
+            // `open` that also carries `phase: "outcome"` is a boundary,
+            // because the outcome test above reads the tag that is there.
+            sessions.note_open();
         }
     }
 
@@ -209,42 +229,6 @@ fn walk(engine: &PolicyEngine, text: &str) -> Report {
         } else {
             EXIT_ALL_UNCHANGED
         },
-    }
-}
-
-/// Whether the line claims to be a post-work outcome, under either spelling of
-/// the tag.
-///
-/// `line_type` is the v2 field; `phase` was v1's. Both are accepted because the
-/// question this verb answers — "what would today's rules do to this recorded
-/// call?" — is asked of files an older build wrote, and a record that named
-/// itself an outcome in the vocabulary of its own schema is an outcome.
-///
-/// The two are read in order, not as alternatives: `line_type` is authoritative
-/// whenever the line carries one, and `phase` is consulted only as a fallback
-/// for records written before `line_type` existed. (A `line_type` that is
-/// present but not a string is no tag either, and falls through to the fallback
-/// exactly as it always has.) Nothing is lost by the ordering, because a genuine
-/// v1 outcome carries `phase: "outcome"` and no `line_type` at all — the
-/// fallback still reaches every line it was added for.
-///
-/// LOAD-BEARING: the fallback must not be allowed to speak over a `line_type`
-/// that is there. To the audit walker a line tagged `open` is a Session
-/// boundary and nothing else — it numbers Sessions on `line_type` alone and
-/// never looks at `phase` — and the counter in [`walk`] has to stay the same
-/// rule, or a session address printed here names a different Session from the
-/// one `aegis verify` prints for the same file, and a finding stops carrying
-/// between the two reports. Reading `phase: "outcome"` off a line already
-/// tagged `open` would do both halves of that damage at once: a boundary would
-/// be reported as a call, and the counter would never advance past it.
-///
-/// Note that only the *outcome* spelling is honoured: a v1 `phase: "intent"`
-/// line stays skipped, exactly as `line_type: "intent"` does, because an intent
-/// carries no recorded decision to compare against.
-fn is_outcome_shaped(value: &Value) -> bool {
-    match value.get("line_type").and_then(Value::as_str) {
-        Some(line_type) => line_type == "outcome",
-        None => value.get("phase").and_then(Value::as_str) == Some("outcome"),
     }
 }
 
@@ -398,8 +382,8 @@ mod tests {
     /// build here emits.
     ///
     /// The last two rows are the v1 spelling of the same skip, and they are
-    /// what pins the `== "outcome"` comparison in [`is_outcome_shaped`]: with
-    /// only `line_type` rows here, the fallback could be widened to "any
+    /// what pins the `== Some(AuditLineType::Outcome)` comparison in [`walk`]:
+    /// with only `line_type` rows here, the fallback could be widened to "any
     /// `phase` at all" without a test noticing, and a v1 **intent** — which
     /// records no decision for a Policy Set to be re-run against — would start
     /// appearing in the diff as a call that was never answered.

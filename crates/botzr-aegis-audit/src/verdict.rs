@@ -36,7 +36,9 @@
 
 use std::path::Path;
 
-use botzr_aegis_core::{to_canonical_json, AuditLineType, KeyId, PrevHash, PublicKey};
+use botzr_aegis_core::{
+    line_type_field, to_canonical_json, AuditLineType, KeyId, PrevHash, PublicKey, SessionCounter,
+};
 use serde_json::Value;
 
 use crate::error::AuditError;
@@ -50,8 +52,11 @@ use crate::signing::{verify_json_line, VerifyError};
 /// per Session"). Those disagree the moment one file holds two Sessions — `seq`
 /// 5 is two different lines — so the position that Coverage names has to carry
 /// the Session with it. `session_index` is the Session's ordinal within the
-/// file, counted from the first `Open` line. SPEC.md (AILAB-623) must state
-/// this; the ADR's wording is under-specified rather than wrong.
+/// file, counted from the first `Open` line by [`SessionCounter`], which is
+/// also what `aegis recheck` counts with — so an address printed by one verb
+/// names the same Session as an address printed by the other (ADR-0013).
+/// SPEC.md (AILAB-623) must state this; the ADR's wording is under-specified
+/// rather than wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     pub session_index: usize,
@@ -345,7 +350,10 @@ pub fn verify_chain_with_trust(text: &str, trust: Option<&[PublicKey]>) -> Verif
 /// position and tail — plus the Session's published key.
 #[derive(Default)]
 struct Walk<'a> {
-    session_index: Option<usize>,
+    /// Session ordinals, counted by the rule `aegis recheck` also counts by
+    /// (ADR-0013) rather than by a local expression the two have to be kept in
+    /// agreement by hand.
+    sessions: SessionCounter,
     expected_seq: u64,
     tail: Option<PrevHash>,
     public_key: Option<PublicKey>,
@@ -398,7 +406,7 @@ impl Walk<'_> {
             return self.finish(Verdict::Verified);
         }
         let reason = IndeterminateReason::UnanchoredTail {
-            session_index: self.session_index.unwrap_or(0),
+            session_index: self.sessions.current(),
             in_flight_calls: std::mem::take(&mut self.in_flight_calls),
         };
         self.finish(Verdict::Indeterminate { reason })
@@ -442,10 +450,14 @@ impl Walk<'_> {
         })?;
         let line_hash = PrevHash::of_line(canonical.as_bytes());
 
-        let line_type = value
-            .get("line_type")
-            .and_then(Value::as_str)
-            .map(AuditLineType::from_wire)
+        // LOAD-BEARING: the *field*, never the schema-v1 `phase` fallback. A
+        // verifier that routed on `line_type_from_value` would start finding a
+        // routable line type on v1 records — which carry no chain, no `seq` and
+        // no signature — and this walk's whole subject is the chain. Refusing
+        // them here is the deliberate half of ADR-0013's asymmetry: `aegis
+        // recheck` reads v1, `aegis verify` does not, and neither reading is
+        // reachable from the other's call site.
+        let line_type = line_type_field(&value)
             .ok_or_else(|| malformed_reason(line_number, "no line_type"))
             .map_err(Stop::Tampered)?;
         let seq = value
@@ -467,7 +479,7 @@ impl Walk<'_> {
             self.continue_session(line_number, seq, prev_hash)?;
         }
         let at = Position {
-            session_index: self.session_index.unwrap_or(0),
+            session_index: self.sessions.current(),
             seq,
         };
 
@@ -572,7 +584,9 @@ impl Walk<'_> {
         seq: u64,
         prev_hash: PrevHash,
     ) -> Result<(), Stop> {
-        let session_index = self.session_index.map_or(0, |index| index + 1);
+        // Peeked, not taken: this Open is still entitled to be refused below,
+        // and every refusal names the Session it would have been.
+        let session_index = self.sessions.next_index();
         if seq != 0 {
             return Err(Stop::Tampered(TamperedReason::SeqOutOfOrder {
                 session_index,
@@ -629,7 +643,7 @@ impl Walk<'_> {
                 }));
             }
         }
-        self.session_index = Some(session_index);
+        self.sessions.note_open();
         self.public_key = Some(public_key);
         self.in_flight_calls.clear();
         Ok(())
@@ -641,7 +655,10 @@ impl Walk<'_> {
         seq: u64,
         prev_hash: PrevHash,
     ) -> Result<(), Stop> {
-        let Some(session_index) = self.session_index else {
+        // `index()` and not `current()`: "no Session yet" is the finding here,
+        // and the address column's 0 would answer a headless file with a
+        // plausible Session number instead.
+        let Some(session_index) = self.sessions.index() else {
             return Err(malformed(
                 line_number,
                 "chain does not begin with an open line",

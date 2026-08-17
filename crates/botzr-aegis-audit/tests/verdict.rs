@@ -300,6 +300,44 @@ fn an_unknown_line_type_parses_hashes_and_caps_the_verdict_at_indeterminate() {
     );
 }
 
+/// A line tagged only with schema v1's `phase` is malformed to this walk, even
+/// when everything else about it is impeccable.
+///
+/// LOAD-BEARING (ADR-0013). The classifier `aegis recheck` uses falls back from
+/// an absent `line_type` to `phase`, and both verbs now read line types out of
+/// the same module in `botzr-aegis-core`. Verify must keep calling the
+/// field-only reader: the fallback exists so a forensic diff can answer for
+/// files an older build wrote, not so a chain verifier can start routing lines
+/// that carry no chain. A v1 record has no `seq`, no `prev_hash` and no
+/// signature, so a walk that accepted its tag would be reporting on a structure
+/// that is not there.
+///
+/// Without this test the swap is silent: point `verify` at the fallback-aware
+/// reader and every other assertion in this file still passes, because every
+/// other fixture spells `line_type`.
+#[test]
+fn a_line_tagged_only_with_the_v1_phase_field_does_not_verify() {
+    let mut chain = FixtureChain::new(None);
+    // Stamped, signed and hashed by the same rule as every other line — the tag
+    // spelling is the single thing wrong with it.
+    let mut body = Map::new();
+    body.insert("phase".into(), json!("outcome"));
+    chain.push(body, Signed::Yes);
+    chain.close();
+
+    let result = verify_chain(&chain.text());
+    assert_eq!(
+        result.verdict,
+        Verdict::Tampered {
+            reason: TamperedReason::MalformedLine {
+                line: 2,
+                detail: "no line_type".into(),
+            }
+        },
+        "verify does not read `phase`; a v1-tagged line is untagged to it"
+    );
+}
+
 #[test]
 fn an_unknown_line_type_never_reports_verified_even_when_everything_else_holds() {
     // The whole extensibility story: if an old auditor said `Verified` here, a
