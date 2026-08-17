@@ -22,6 +22,11 @@
 //! explicitly and loaded fail-closed — is [`generate_signing_key`] /
 //! [`load_signing_key`] (AILAB-620). [`insecure_dev_key`] signs Volatile sinks
 //! and tests only — a Durable one refuses it — and no configuration reaches it.
+//!
+//! The other on-disk key dialect — the *trust store* a verifier pins against —
+//! is [`load_trust_store`] (AILAB-704). It parses; it decides nothing about
+//! trust, because whether an empty store is still a requested anchor is the
+//! caller's claim to make, not the parser's.
 
 mod error;
 mod keyfile;
@@ -29,6 +34,7 @@ mod line;
 mod session;
 mod signing;
 mod sink;
+mod trust;
 mod verdict;
 mod writer;
 
@@ -38,6 +44,7 @@ pub use line::{ChainLine, SignedChainLine};
 pub use session::CallSession;
 pub use signing::{insecure_dev_key, verify_line, SigningKey, VerifyError};
 pub use sink::{ChainSink, FileChainSink, MemoryChainSink, Retention};
+pub use trust::{load_trust_store, TrustStoreError};
 pub use verdict::{
     verify_chain, verify_chain_file, verify_chain_file_with_trust, verify_chain_with_trust,
     IndeterminateReason, Position, TamperedReason, TrustLabel, Verdict, Verification,

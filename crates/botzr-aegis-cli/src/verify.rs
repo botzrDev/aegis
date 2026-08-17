@@ -19,8 +19,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use botzr_aegis_audit::{
-    verify_chain_file_with_trust, AuditError, IndeterminateReason, TrustLabel, Verdict,
-    Verification,
+    load_trust_store, verify_chain_file_with_trust, AuditError, IndeterminateReason, TrustLabel,
+    TrustStoreError, Verdict, Verification,
 };
 use botzr_aegis_core::PublicKey;
 
@@ -40,16 +40,25 @@ const EXIT_USAGE: u8 = EXIT_TAMPERED;
 ///
 /// `keys` are `--key` values and `trust_store` the optional store path; their
 /// union is the trust slice. Supplying *neither* is an unpinned walk, which is a
-/// different question from a failed one — see [`trust_slice`].
+/// different question from a failed one — see the `pinned` computation below.
+/// The store's grammar is not this module's: it belongs to the record format,
+/// and [`load_trust_store`] owns it.
 pub fn run(path: &Path, keys: &[PublicKey], trust_store: Option<&Path>) -> ExitCode {
     // LOAD-BEARING: whether the walk is pinned is what the operator *asked for*,
     // decided here, before the store is read. A store that turns out to hold no
     // keys must not silently become an unpinned walk.
     let pinned = !keys.is_empty() || trust_store.is_some();
-    let trust = match trust_slice(keys, trust_store) {
-        Ok(trust) => trust,
-        Err(error) => return error.report(),
-    };
+    // `--key` values first, then store entries. Duplicates across the two are
+    // kept rather than collapsed: the slice is only ever searched with
+    // `contains`, so a repeated key costs nothing and dropping one would mean
+    // deciding which spelling of "the same key" wins.
+    let mut trust = keys.to_vec();
+    if let Some(store) = trust_store {
+        match load_trust_store(store) {
+            Ok(store_keys) => trust.extend(store_keys),
+            Err(error) => return report_trust_store_failure(&error),
+        }
+    }
     // `None` and `Some(&[])` are not the same claim: `None` says "I anchored no
     // keys", while `Some(&[])` says "I accept these zero keys", so the first
     // `open` fails the pin and the file is `Tampered`. Deciding between them
@@ -71,68 +80,24 @@ pub fn run(path: &Path, keys: &[PublicKey], trust_store: Option<&Path>) -> ExitC
     }
 }
 
-/// The union of `--key` values and trust-store entries, in that order.
-///
-/// Duplicates are kept rather than de-duplicated: the slice is only ever
-/// searched with `contains`, so a repeated key costs nothing and dropping one
-/// would mean deciding which spelling of "the same key" wins.
-fn trust_slice(keys: &[PublicKey], trust_store: Option<&Path>) -> Result<Vec<PublicKey>, Failure> {
-    let mut trust = keys.to_vec();
-    if let Some(store) = trust_store {
-        let text = std::fs::read_to_string(store).map_err(|source| Failure::Unreadable {
-            path: store.display().to_string(),
-            source,
-        })?;
-        for (index, line) in text.lines().enumerate() {
-            let line = line.trim();
-            // Whole-line comments only. An inline `# note` after a key would
-            // make the hex field's end ambiguous for no benefit an operator
-            // asked for.
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let key = PublicKey::from_hex(line).map_err(|source| Failure::MalformedEntry {
-                path: store.display().to_string(),
-                line: index + 1,
-                detail: source.to_string(),
-            })?;
-            trust.push(key);
-        }
-    }
-    Ok(trust)
-}
-
-/// A trust store that could not be turned into a key list.
+/// Map a trust-store failure to an exit code and an stderr line.
 ///
 /// The two cases exit differently on purpose. A store nobody can read is the
 /// same class of failure as a Chain file nobody can read — exit 2. A store that
 /// reads fine and contains something that is not a key is the operator's typo,
 /// exactly like `--key deadbeef` — exit 1, the usage code.
-enum Failure {
-    Unreadable {
-        path: String,
-        source: std::io::Error,
-    },
-    MalformedEntry {
-        path: String,
-        line: usize,
-        detail: String,
-    },
-}
-
-impl Failure {
-    fn report(self) -> ExitCode {
-        match self {
-            Self::Unreadable { path, source } => {
-                eprintln!("error: read trust store {path}: {source}");
-                ExitCode::from(EXIT_COULD_NOT_READ)
-            }
-            Self::MalformedEntry { path, line, detail } => {
-                eprintln!("error: trust store {path} line {line} is not a public key: {detail}");
-                ExitCode::from(EXIT_USAGE)
-            }
-        }
-    }
+///
+/// The wording after `error: ` is the library error's own `Display`. Re-spelling
+/// it here would let the message and the dialect that produced it drift, and the
+/// dialect is the one under test.
+fn report_trust_store_failure(error: &TrustStoreError) -> ExitCode {
+    eprintln!("error: {error}");
+    // Exhaustive rather than a `_` arm, so a new variant fails this build and
+    // gets an exit code decided by a person.
+    ExitCode::from(match error {
+        TrustStoreError::Read { .. } => EXIT_COULD_NOT_READ,
+        TrustStoreError::MalformedEntry { .. } => EXIT_USAGE,
+    })
 }
 
 fn exit_for(verdict: &Verdict) -> ExitCode {

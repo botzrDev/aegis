@@ -748,9 +748,20 @@ fn the_usage_text_names_verify_and_both_trust_flags() {
 // ---- the trust store -----------------------------------------------------
 
 #[test]
-fn a_trust_store_with_comments_and_blank_lines_still_pins() {
-    // Operators keep notes next to their keys. A store that pinned only when it
-    // was a bare list of hex would be a store nobody could annotate.
+fn a_key_that_only_the_trust_store_supplies_satisfies_the_pin() {
+    // The wiring row, and the only one here that ends in exit 0. Every other
+    // trust-store test asserts a *failure*, so all of them stay green if the
+    // parsed keys never reach the trust slice at all — a `--trust-store` that
+    // silently anchored nothing would look exactly like a suite that passes.
+    // Verified by mutation: dropping the store's keys on the floor keeps the
+    // rest of this file, and all of `botzr-aegis-audit`, green.
+    //
+    // This is not a parser-shape test — those moved to `botzr-aegis-audit`'s
+    // `trust` module (AILAB-704). The key is passed *only* via the store and
+    // never via `--key`, so the assertion is that the store path carries a key
+    // all the way to a `Verified (pinned)` label. The surrounding comment and
+    // blank lines are here so the file the CLI hands the library is one an
+    // operator would really write, not to re-test that they are skipped.
     let (dir, path) = temp_chain();
     closed_session(&path, &["call-0"]);
     let store = dir.path().join("trusted-keys.txt");
@@ -759,9 +770,7 @@ fn a_trust_store_with_comments_and_blank_lines_still_pins() {
         format!(
             "# keys this auditor accepts\n\
              \n\
-             {}\n\
-             \n\
-             # rotation goes below this line\n",
+             {}\n",
             session_public_key()
         ),
     )
@@ -798,9 +807,10 @@ fn an_empty_trust_store_fails_the_pin_rather_than_silently_going_unpinned() {
 #[test]
 fn a_trust_store_of_only_comments_and_blank_lines_fails_the_pin() {
     // The same hole one step further in: a store that *reads* fine, parses
-    // fine, and yields nothing. `a_trust_store_with_comments_and_blank_lines_
-    // still_pins` proves comments are skipped; this proves skipping them all
-    // the way down is not a way back to `Verified (unpinned)`.
+    // fine, and yields nothing. That comments and blanks are skipped at all is
+    // now covered in `botzr-aegis-audit`'s `trust` module, in process; what this
+    // row proves is the orchestration fact only the CLI holds — skipping them
+    // all the way down is not a way back to `Verified (unpinned)`.
     let (dir, path) = temp_chain();
     closed_session(&path, &["call-0"]);
     let store = dir.path().join("commented-out-keys.txt");
@@ -835,4 +845,35 @@ fn a_trust_store_that_cannot_be_read_exits_two() {
         "stderr={}",
         stderr(&output)
     );
+}
+
+#[test]
+fn a_trust_store_entry_that_is_not_a_key_exits_one_and_names_the_line() {
+    // The other half of the exit mapping, and the half that must *not* be 2: a
+    // store that read fine and holds a typo is the operator's mistake, exactly
+    // like `--key deadbeef` — exit 1, the usage code. The line number is on
+    // stderr because a store an operator annotates is a store an operator has to
+    // be able to find the bad row in. Parser mechanics live in
+    // `botzr-aegis-audit`'s `trust` module; what is asserted here is the code
+    // and the rendering a shell sees.
+    let (dir, path) = temp_chain();
+    closed_session(&path, &["call-0"]);
+    let store = dir.path().join("typo-keys.txt");
+    std::fs::write(
+        &store,
+        format!(
+            "# the good key first, so the failure is not just \"line 1\"\n\
+             {}\n\
+             deadbeef\n",
+            session_public_key()
+        ),
+    )
+    .expect("write trust store");
+
+    let output = verify(&["--trust-store", path_arg(&store), path_arg(&path)]);
+    assert_exit(&output, 1);
+    assert_eq!(output.stdout, b"", "stdout={}", stdout(&output));
+    let stderr = stderr(&output);
+    assert!(stderr.contains("line 3"), "stderr={stderr}");
+    assert!(stderr.contains("not a public key"), "stderr={stderr}");
 }

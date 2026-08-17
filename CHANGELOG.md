@@ -16,6 +16,33 @@ support.
 
 ### Added
 
+- **Trust-store parsing is `botzr-aegis-audit` library API** (AILAB-704).
+  `load_trust_store(&Path) -> Result<Vec<PublicKey>, TrustStoreError>` and its
+  two-variant `TrustStoreError` (`Read`, `MalformedEntry` with a one-based line
+  number) are public beside `load_signing_key`. The dialect was already
+  normative — `spec/SPEC.md` § *The `aegis verify` command surface* fixes it —
+  but its only implementation was a private function inside the `aegis` binary,
+  so the copy under test was not reachable by anyone else and a second reader
+  would have had to write a second parser against the same spec paragraph.
+  **No behaviour change to `aegis verify`:** same grammar (one 64-lowercase-hex
+  public key per line, blank and comment lines skipped, a note trailing a key on
+  the same line still malformed), same duplicate-preserving source order, same
+  stderr text, same exit codes — 2 for a store that cannot be read, 1 for a line
+  that is not a key. No new exit code was added. What deliberately did **not**
+  move is the trust *decision*: `load_trust_store` returns keys and nothing
+  else, and whether an empty store is still a requested anchor stays a CLI fact,
+  because "no anchor was asked for" and "I accept these zero keys" are different
+  claims and only the caller knows which the operator made (ADR-0004). It is a
+  module of its own rather than part of `keyfile.rs`: public keys and private
+  seeds have opposite security properties and deliberately different formats.
+  The parser-shape cases move to in-process tests in `botzr-aegis-audit`; the
+  CLI suite keeps the empty-store and unreadable-store rows, *gains* a
+  malformed-store row (there was none before — the exit-1 half of the mapping
+  was untested at the command layer), and keeps one row where a key supplied
+  *only* by the store reaches a `Verified (pinned)` label. That last row is
+  load-bearing: every other trust-store test asserts a failure, so without it
+  the suite stays green even if the parsed keys never reach the trust slice at
+  all.
 - **Chain line classifier in `botzr-aegis-core`** (AILAB-703, ADR-0013).
   `line_type_field`, `line_type_from_value` and `SessionCounter` are public
   beside `AuditLineType::from_wire`. They carry the two facts `aegis verify` and
