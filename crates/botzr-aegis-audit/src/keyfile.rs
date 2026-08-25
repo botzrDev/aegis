@@ -243,4 +243,110 @@ mod tests {
         let b = generate_signing_key(&dir.path().join("b"), false).unwrap();
         assert_ne!(a.public_key(), b.public_key());
     }
+
+    /// The dialect the doc comment on [`parse_seed_hex`] promises, asserted
+    /// rather than described (AILAB-712).
+    ///
+    /// Uppercase hex is the interesting half: it is a *valid* 64-character
+    /// encoding of a real seed, and accepting it would cost nothing today. It is
+    /// refused because `PublicKey` and `KeyId` are lowercase-only on the wire, so
+    /// a key file with a second accepted spelling is a second dialect that has to
+    /// stay in agreement with the first forever. Nothing was holding that.
+    #[test]
+    fn a_key_file_is_rejected_unless_it_is_lowercase_hex() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let cases = [
+            ("uppercase", "A".repeat(SEED_HEX_LEN)),
+            (
+                "mixed case",
+                format!("{}{}", "a".repeat(SEED_HEX_LEN - 1), "B"),
+            ),
+            ("non-hex", "z".repeat(SEED_HEX_LEN)),
+            ("hex-adjacent punctuation", "-".repeat(SEED_HEX_LEN)),
+        ];
+
+        for (label, body) in cases {
+            let path = dir.path().join(label.replace(' ', "-"));
+            write_owner_only(&path, &body).expect("write fixture");
+            let err = load_signing_key(&path).expect_err(label);
+            assert!(
+                matches!(err, AuditError::KeyFileMalformed { .. }),
+                "{label}: expected KeyFileMalformed, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains("lowercase hex"),
+                "{label}: the reason names the dialect: {err}"
+            );
+        }
+    }
+
+    /// A wrong-length body is refused by length before the character check, so
+    /// the operator is told which of the two rules they broke.
+    #[test]
+    fn a_key_file_of_the_wrong_length_says_so_rather_than_naming_the_alphabet() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("short");
+        write_owner_only(&path, &"ab".repeat(8)).expect("write fixture");
+
+        let err = load_signing_key(&path).expect_err("a 16-character key is not a seed");
+        let message = err.to_string();
+        assert!(
+            message.contains(&format!("expected {SEED_HEX_LEN} characters, found 16")),
+            "the reason gives both the expected and the actual length: {message}"
+        );
+        // Not the alphabet complaint. The outer `KeyFileMalformed` Display
+        // says "lowercase hex seed" for every reason, so the phrase that
+        // actually distinguishes the two checks is the one to assert on.
+        assert!(
+            !message.contains("expected lowercase hex"),
+            "length is reported before the alphabet check: {message}"
+        );
+    }
+
+    /// `keygen --out` into a path whose parent does not exist yet creates it.
+    ///
+    /// An operator pointing at `~/.aegis/keys/signing.key` on a fresh machine is
+    /// the ordinary case, and it was untested — `generate_signing_key`'s
+    /// `create_dir_all` branch had no coverage at all (AILAB-712).
+    #[test]
+    fn generating_a_key_creates_the_directories_leading_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b").join("c").join("signing.key");
+
+        let generated = generate_signing_key(&nested, false).expect("generate into a new tree");
+
+        assert!(nested.exists(), "{}", nested.display());
+        // Round-trips: what was written back is the key that was returned, so
+        // the directory creation did not change the file that lands.
+        let loaded = load_signing_key(&nested).expect("load what was just written");
+        assert_eq!(generated.public_key(), loaded.public_key());
+    }
+
+    /// Without `force`, an existing key is never written over.
+    ///
+    /// Replacing a key silently takes every signature made under the old one
+    /// with it: the records that carry them can no longer be pinned to anything.
+    #[test]
+    fn generating_over_an_existing_key_is_refused_unless_forced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing.key");
+        let first = generate_signing_key(&path, false).expect("first generate");
+
+        let err = generate_signing_key(&path, false).expect_err("the second must refuse");
+        assert!(
+            matches!(err, AuditError::KeyFileExists { .. }),
+            "got {err:?}"
+        );
+        assert_eq!(
+            load_signing_key(&path).unwrap().public_key(),
+            first.public_key(),
+            "a refused generate must not have touched the file"
+        );
+
+        // `force` is the documented way through, and the replacement is a
+        // different key — not the same bytes rewritten.
+        let forced = generate_signing_key(&path, true).expect("force replaces");
+        assert_ne!(forced.public_key(), first.public_key());
+    }
 }

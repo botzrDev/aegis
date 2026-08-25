@@ -23,6 +23,24 @@ cd "$ROOT"
 BASELINE="coverage/baseline.json"
 MODE="${1:-report}"
 
+# Files excluded from the measurement, as one regex.
+#
+# `probe.rs` is a **test fixture** — its own module doc says "Test fixture for
+# `botzr-aegis-confine`. Not operator surface." Counting a fixture as product
+# coverage is a category error, and it is one that actively misleads here:
+# the fixture's `restrict-exec` verb ends in `exec()` and its `connect` verb is
+# *expected* to die by SIGSYS, and neither a replaced process image nor a
+# signal death runs LLVM's `atexit` handler, so the strongest confinement tests
+# in the repo write no profile data at all. The fixture therefore reports ~41%
+# while being exercised by every escape test we have (AILAB-712, 2026-08-25).
+#
+# `crates/botzr-aegis-cli/src/confine_exec.rs` has the same exec ceiling and is
+# deliberately **not** excluded: it is real enforcement code, its refusal paths
+# do measure, and dropping the confinement mechanism out of the report is how a
+# coverage number stops being worth reading. Its own doc comment names the
+# ceiling instead.
+IGNORE_REGEX='botzr-aegis-confine/src/bin/probe\.rs$'
+
 # Stamped into the baseline by `bump` so a committed number can be traced back
 # to the tree it was measured on. Unavailable git/date is not fatal — the gate
 # does not depend on provenance.
@@ -54,16 +72,30 @@ trap 'rm -f "$SUMMARY_JSON"' EXIT
 
 # One instrumented test run; reports are derived from the collected profdata.
 cargo llvm-cov --workspace --locked --no-report
-cargo llvm-cov report # human-readable per-file table (informational)
-cargo llvm-cov report --json --summary-only --output-path "$SUMMARY_JSON"
+# `--ignore-filename-regex` belongs on the *report* commands, not on collection:
+# the profile data is gathered for everything and filtered when it is reduced.
+# Both reports must carry it or the table and the gated number disagree.
+cargo llvm-cov report --ignore-filename-regex "$IGNORE_REGEX" # human-readable per-file table (informational)
+cargo llvm-cov report --ignore-filename-regex "$IGNORE_REGEX" \
+  --json --summary-only --output-path "$SUMMARY_JSON"
 
 python3 - "$MODE" "$SUMMARY_JSON" "$BASELINE" "$HEAD_SHA" "$TODAY" <<'PY'
 import json, sys
 
 mode, summary_path, baseline_path, head_sha, today = sys.argv[1:6]
 
-# Percentage-point tolerance for float noise; real regressions are larger.
-EPSILON = 0.01
+# Percentage-point tolerance for measurement noise; real regressions are larger.
+#
+# 0.05, not 0.01. The original value was sized for float rounding, but the
+# measurement is not merely rounded — it is nondeterministic. Timing-dependent
+# branches in `crates/botzr-aegis-wrap/src/relay.rs` (the post-EOF shutdown
+# grace, the reap poll) land differently between runs: two runs over an
+# identical tree measured 37 and then 40 missed lines there, which is 0.028
+# percentage points and would have failed a 0.01 gate on unchanged code.
+#
+# 0.05 covers roughly five lines out of ten thousand. A real regression is
+# orders of magnitude larger, so the gate keeps its teeth (AILAB-712).
+EPSILON = 0.05
 
 with open(summary_path) as f:
     totals = json.load(f)["data"][0]["totals"]["lines"]

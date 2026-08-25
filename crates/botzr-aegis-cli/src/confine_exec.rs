@@ -9,6 +9,27 @@
 //! Never `pre_exec`: it is unsafe. Use `CommandExt::exec` instead of it
 //! (allocating in a forked child of a multithreaded process can deadlock
 //! on the allocator lock).
+//!
+//! # This file has a coverage ceiling, and it is not a testing gap
+//!
+//! The success path ends in `exec`, which replaces the process image. LLVM
+//! writes coverage from an `atexit` handler, and a replaced image never runs
+//! one — so a run that confines and execs successfully produces **no profile
+//! data at all**, including for the lines it executed on the way there.
+//! `confine_exec_through_the_aegis_binary` in
+//! `crates/botzr-aegis-cli/tests/confine.rs` exercises the whole path end to
+//! end and asserts a real Landlock ABI plus a seccomp filter that denies
+//! something; none of it can be measured.
+//!
+//! What *is* measurable is every path that returns instead: the refusals, and
+//! the case where confinement succeeds and the exec itself fails. Those are
+//! covered in the same file and are what the reported percentage describes.
+//! Read a number well below 100% here as the shape of the mechanism rather
+//! than as untested code (AILAB-712).
+//!
+//! The control that establishes this is not a general subprocess problem:
+//! `main.rs` measures 100%, and `main.rs` only ever runs inside a spawned
+//! binary. `exec` specifically is what erases the data.
 
 use std::process::ExitCode;
 

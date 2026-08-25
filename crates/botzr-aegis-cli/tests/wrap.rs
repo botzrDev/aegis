@@ -271,3 +271,46 @@ fn a_real_relay_through_the_binary_records_and_verifies() {
         String::from_utf8_lossy(&verified.stderr)
     );
 }
+
+/// A child that cannot be spawned surfaces as an `error:` line and exit 1, not
+/// a panic and not a silent success (AILAB-712).
+///
+/// This is the `run_wrap` error arm in `crates/botzr-aegis-cli/src/wrap.rs`,
+/// which every other case in this file passes over: the argument-level tests
+/// all fail in `parse_args` before a child is spawned, and the one real-relay
+/// test spawns a child that works. The property worth holding is that a wrap
+/// session which never started is distinguishable from one that ran and
+/// recorded nothing — an operator reading exit 0 and an empty record file
+/// cannot tell those apart.
+#[test]
+fn a_child_that_cannot_be_spawned_is_an_error_not_an_empty_session() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let audit = dir.path().join("audit.jsonl");
+    let key = keygen(&dir);
+    let absent = dir.path().join("no-such-program");
+
+    let output = wrap(&[
+        "--audit",
+        audit.to_str().unwrap(),
+        "--signing-key",
+        key.to_str().unwrap(),
+        "--",
+        absent.to_str().unwrap(),
+    ]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an unspawnable child exits 1: {}",
+        stderr(&output)
+    );
+    let err = stderr(&output);
+    assert!(
+        err.starts_with("error: "),
+        "the CLI reports it as an error: {err:?}"
+    );
+    assert!(
+        err.contains(absent.to_str().unwrap()) || err.to_lowercase().contains("spawn"),
+        "the message names what could not be started: {err:?}"
+    );
+}

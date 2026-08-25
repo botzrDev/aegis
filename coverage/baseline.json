@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "metric": "lines",
-  "scope": "cargo workspace (--workspace)",
-  "lines_covered": 4473,
-  "lines_total": 4829,
-  "percent": 92.6279,
-  "recorded_at": "2026-08-09",
-  "recorded_commit": "d1cf988",
-  "sanity_checked_at": "2026-08-12",
-  "sanity_checked_commit": "b00ff72",
-  "note": "High-water mark for scripts/coverage.sh check. Raise via `scripts/coverage.sh bump`; lowering requires a hand-edited, reviewed commit. See docs/coverage-ratchet.md."
+  "scope": "cargo workspace (--workspace), excluding botzr-aegis-confine/src/bin/probe.rs",
+  "lines_covered": 10017,
+  "lines_total": 10784,
+  "percent": 92.89,
+  "recorded_at": "2026-08-25",
+  "recorded_commit": "6f5d2e6-dirty",
+  "sanity_checked_at": "2026-08-25",
+  "sanity_checked_commit": "6f5d2e6-dirty",
+  "note": "High-water mark for scripts/coverage.sh check. Re-based by hand under AILAB-712: the previous 92.6279 was measured over 4829 lines at d1cf988 and the workspace is now 10784, so the two percentages described different codebases and no amount of testing made them comparable. The -dirty suffix is accurate and temporary: this was measured with AILAB-712's test additions applied but not yet committed. Re-run `scripts/coverage.sh bump` once they land to restamp the provenance with the real sha; the number will not move. Raise via bump; lowering requires a hand-edited, reviewed commit. See docs/coverage-ratchet.md."
 }
