@@ -23,12 +23,15 @@ pub use digest::{
     ResponseDigest, Signature,
 };
 pub use error::AegisError;
-pub use grant::{CapabilityGrant, FsGrant, GrantId, HttpGrant, NetGrant, DEFAULT_MAX_OUTPUT_BYTES};
+pub use grant::{
+    CapabilityGrant, FsGrant, GrantId, HttpGrant, NetGrant, DEFAULT_MAX_MEMORY_BYTES,
+    DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_WALL_MS,
+};
 pub use http_check::{http_get_allowed, parse_http_host};
 pub use jcs::{canonical_digest, to_canonical_json, JcsError};
 pub use limits::ResourceCeiling;
 pub use policy::{ApprovalId, PolicyAction};
-pub use tool::{ToolId, ToolKind};
+pub use tool::ToolId;
 
 /// Load-bearing pipeline order (do not reorder).
 pub const PIPELINE_STAGES: &[&str] = &["policy", "capability", "sandbox", "audit"];

@@ -6,15 +6,12 @@ use std::path::{Path, PathBuf};
 
 use botzr_aegis_core::ToolId;
 
-/// Default wall-clock ceiling when the manifest omits `[limits]`.
-pub const DEFAULT_MAX_WALL_MS: u64 = 30_000;
-
-/// Default memory ceiling when the manifest omits `[limits]`.
-pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Default per-call output ceiling when the manifest omits `[limits]`.
-/// Single source of truth lives in `botzr-aegis-core`.
-pub use botzr_aegis_core::DEFAULT_MAX_OUTPUT_BYTES;
+/// The three per-call ceilings a manifest's `[limits]` may lower, defaulted for
+/// a manifest that omits the table. Single source of truth lives in
+/// `botzr-aegis-core`, beside the `CapabilityGrant` fields they default.
+pub use botzr_aegis_core::{
+    DEFAULT_MAX_MEMORY_BYTES, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_WALL_MS,
+};
 
 /// Declared tool identity and classification.
 #[derive(Debug, Clone, PartialEq, Eq)]

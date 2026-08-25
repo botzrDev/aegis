@@ -844,12 +844,11 @@ rules:
             "no axes recorded, so the role-gated rule does not match"
         );
 
-        let gated = record("writer", allowed()).with_decision_axes(DecisionAxes {
-            capability: Some("fs.write".to_string()),
-            role: Some("contractor".to_string()),
-            session: Some("s-1".to_string()),
-            ..DecisionAxes::default()
-        });
+        let mut axes = DecisionAxes::default();
+        axes.capability = Some("fs.write".to_string());
+        axes.role = Some("contractor".to_string());
+        axes.session = Some("s-1".to_string());
+        let gated = record("writer", allowed()).with_decision_axes(axes);
         assert_eq!(
             recheck_record(&engine, &gated).to_string(),
             "newly_blocked was=allowed now=denied"
@@ -864,13 +863,12 @@ rules:
     fn recheck_record_ignores_the_fs_axis_entirely() {
         let engine = PolicyEngine::from_yaml("version: 1\ndefault: allow\nrules: []\n").unwrap();
 
-        let with_fs = record("writer", allowed()).with_decision_axes(DecisionAxes {
-            fs: Some(FsAxis {
-                path_raw: "/nonexistent/aegis-recheck/link".to_string(),
-                path_canonical: "/nonexistent/aegis-recheck/target".to_string(),
-            }),
-            ..DecisionAxes::default()
+        let mut axes = DecisionAxes::default();
+        axes.fs = Some(FsAxis {
+            path_raw: "/nonexistent/aegis-recheck/link".to_string(),
+            path_canonical: "/nonexistent/aegis-recheck/target".to_string(),
         });
+        let with_fs = record("writer", allowed()).with_decision_axes(axes);
         assert_eq!(
             recheck_record(&engine, &with_fs),
             recheck_record(&engine, &record("writer", allowed())),

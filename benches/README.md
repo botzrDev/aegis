@@ -56,7 +56,7 @@ cargo bench -p botzr-aegis-audit --bench sign
 | Cold instantiation | `instantiation/cold` | **&lt; 5 ms** — *missed; target under review, see below* |
 | ed25519 line signing | `audit_signing/sign_outcome_line` | **&lt; 50 µs** (AILAB-620) — *met at 13.765 µs* |
 | Rate-limit path | `policy_eval/rate_limit` | informational only (mutex) |
-| Capability alone | `capability_resolve/registered_tool` | no hard gate |
+| Capability alone | `capability_resolve/mint_from_manifest` | no hard gate |
 | Attribution splits | `instantiation/cold_engine_only`, `instantiation/cold_compile_only`, `audit_emission/serialize_only` | informational only |
 | Audit emission | `audit_emission/begin_complete` | no target set (fsync-bound) |
 | Wrap relay per recorded `tools/call` | `wrap_relay/tools_call_recorded` | **0.5–2 ms** — *informational; missed at 4.371 ms, two fsyncs per call, see [`results/wrap_overhead.md`](results/wrap_overhead.md)* |

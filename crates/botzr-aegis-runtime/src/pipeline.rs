@@ -94,13 +94,14 @@ impl Runtime {
         // short-circuit: a role-gated deny that persists only `tool_id` can
         // neither replay nor explain itself, and the denied call is exactly the
         // record someone comes back to read (ADR-0001).
-        let mut axes = DecisionAxes {
-            capability: policy_request.capability.map(str::to_owned),
-            role: policy_request.role.map(str::to_owned),
-            session: policy_request.session.map(str::to_owned),
-            matched_rule: decision.matched_rule.clone(),
-            ..DecisionAxes::default()
-        };
+        // Built by assignment, not a struct literal: `DecisionAxes` is
+        // `#[non_exhaustive]`, so no crate but core may spell it as a struct
+        // expression — functional-update syntax included.
+        let mut axes = DecisionAxes::default();
+        axes.capability = policy_request.capability.map(str::to_owned);
+        axes.role = policy_request.role.map(str::to_owned);
+        axes.session = policy_request.session.map(str::to_owned);
+        axes.matched_rule = decision.matched_rule.clone();
         session.set_decision_axes(axes.clone());
 
         if !matches!(policy_outcome, PolicyOutcome::Allowed) {

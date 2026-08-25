@@ -304,11 +304,10 @@ mod tests {
         assert!(!bare.contains("grant_id"), "{bare}");
         assert!(!bare.contains("response_digest"), "{bare}");
 
-        session.set_decision_axes(DecisionAxes {
-            role: Some("ops".into()),
-            matched_rule: Some("rule-3".into()),
-            ..DecisionAxes::default()
-        });
+        let mut axes = DecisionAxes::default();
+        axes.role = Some("ops".into());
+        axes.matched_rule = Some("rule-3".into());
+        session.set_decision_axes(axes);
         session.set_grant_id(GrantId::new("grant-1"));
         session.set_response_digest(ResponseDigest::of_response_bytes(b"ok"));
         let record = session.to_record();

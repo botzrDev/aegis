@@ -109,6 +109,32 @@ support.
 
 ### Changed
 
+- **`DecisionAxes` is `#[non_exhaustive]`, and the three `DEFAULT_MAX_*` grant
+  ceilings all live in `botzr-aegis-core`** (AILAB-707). **Breaking:**
+  `botzr_aegis_core::DecisionAxes` can no longer be built with a struct
+  expression outside the crate that defines it. Note that this includes
+  functional-update syntax — `DecisionAxes { role, ..Default::default() }` is
+  rejected just as a bare literal is, which is the language rule and not a
+  choice made here. The migration is to start from `DecisionAxes::default()` and
+  assign the axes you recorded; the fields are all public and stay public, so
+  nothing else about the type changed. Every emitter in this workspace was moved
+  that way, which is the only edit the attribute forced. The reason to close
+  construction now rather than at the first new axis: the set is expected to
+  grow — a semantic risk score is the live candidate — and an added axis would
+  otherwise be a breaking change to every consumer that had ever written one out
+  in full. **This changes no serialized byte**: the attribute is a construction
+  rule, the seven axes and their omit-never-null encoding are untouched, and
+  every golden fixture on disk is unchanged. Separately and **not** a breaking
+  change, `DEFAULT_MAX_WALL_MS` and `DEFAULT_MAX_MEMORY_BYTES` move from
+  `botzr-aegis-capability`'s `manifest.rs` into `botzr-aegis-core`'s `grant.rs`,
+  joining `DEFAULT_MAX_OUTPUT_BYTES` beside the three `CapabilityGrant` fields
+  they default — one home, one set of values, unchanged (30 s, 64 MiB, 1 MiB).
+  `botzr_aegis_capability::DEFAULT_MAX_WALL_MS` and
+  `botzr_aegis_capability::DEFAULT_MAX_MEMORY_BYTES` still resolve, now as
+  re-exports, so no consumer of either path breaks and no new capability surface
+  is added. `botzr_aegis_core::ResourceCeiling` is documented as the canonical
+  import path in `crates/botzr-aegis-core/README.md`; the `botzr-aegis-policy`
+  and `botzr-aegis-capability` re-exports of it are published API and stay.
 - **The default audit sink is in-memory and retains nothing** (AILAB-702).
   `Runtime::default()` builds a `MemoryChainSink`, which declares
   `Retention::Volatile`. Without `--audit`, `aegis`, `aegis run` and the MCP
@@ -177,6 +203,19 @@ support.
   cannot be relicensed after the fact, and none were republished or retagged. The
   dual license reaches the registry with the next release cut. No version bump,
   no runtime change.
+
+### Removed
+
+- **`botzr-aegis-core` no longer defines or re-exports `ToolKind`** (AILAB-707).
+  **Breaking** for anyone importing `botzr_aegis_core::ToolKind`; migrate to
+  `botzr_aegis_capability::ToolKind`. The enum was declared twice, byte for byte
+  identically, in `botzr-aegis-core`'s `tool.rs` and `botzr-aegis-capability`'s
+  `manifest.rs`, and the capability copy is the one every caller in this
+  workspace already used — core's had no importer at all, in this repo or in the
+  examples. Two identical definitions of the same two-variant enum is exactly the
+  shape that lets a third variant land in one of them, and `Wasm` vs `Host` is
+  the Model A / Model B split, so a divergence there is not a cosmetic one. The
+  variants, their names and their meanings are unchanged; only the path is.
 
 ## [0.3.0] — 2026-08-09
 

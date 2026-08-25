@@ -179,6 +179,17 @@ fn outcome_cases() -> Vec<(&'static str, AuditRecord)> {
 /// Carries the decision axes so at least one snapshot pins the populated shape;
 /// `{}` is pinned by every other outcome case.
 fn golden_policy_deny_record() -> AuditRecord {
+    // Assigned rather than spelled as a struct literal because `DecisionAxes`
+    // is `#[non_exhaustive]` outside core. The bytes this pins are unchanged.
+    let mut axes = DecisionAxes::default();
+    axes.capability = Some("fs.read".into());
+    axes.role = Some("ops".into());
+    axes.session = Some("sess-golden".into());
+    axes.matched_rule = Some("block-smoke".into());
+    axes.fs = Some(FsAxis {
+        path_raw: "./notes.md".into(),
+        path_canonical: "/fixtures/notes.md".into(),
+    });
     AuditRecord::new(
         "call-golden-1",
         ToolId::new("smoke"),
@@ -195,17 +206,7 @@ fn golden_policy_deny_record() -> AuditRecord {
             reason: "not executed".into(),
         },
     )
-    .with_decision_axes(DecisionAxes {
-        capability: Some("fs.read".into()),
-        role: Some("ops".into()),
-        session: Some("sess-golden".into()),
-        matched_rule: Some("block-smoke".into()),
-        fs: Some(FsAxis {
-            path_raw: "./notes.md".into(),
-            path_canonical: "/fixtures/notes.md".into(),
-        }),
-        ..DecisionAxes::default()
-    })
+    .with_decision_axes(axes)
 }
 
 fn golden_rate_limit_record() -> AuditRecord {

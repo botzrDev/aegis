@@ -1,4 +1,4 @@
-//! Tool identity and classification.
+//! Tool identity.
 
 use std::fmt;
 
@@ -21,11 +21,4 @@ impl fmt::Display for ToolId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
-}
-
-/// Model A (WASM guest) vs Model B (host functions for effects).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolKind {
-    Wasm,
-    Host,
 }

@@ -9,6 +9,16 @@ use crate::tool::ToolId;
 /// returns — it is not a wasmtime store limit (guest output is host-side).
 pub const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1 << 20;
 
+/// Default ceiling for `CapabilityGrant::max_wall_ms` when nothing declared or
+/// minted lowers it (30 s). The sandbox spends it as an epoch deadline, so it
+/// bounds a Model A guest; a host effect runs in host Rust and has no such clock.
+pub const DEFAULT_MAX_WALL_MS: u64 = 30_000;
+
+/// Default ceiling for `CapabilityGrant::max_memory_bytes` when nothing declared
+/// or minted lowers it (64 MiB). This is the wasmtime store limit a guest grows
+/// linear memory against — it bounds the guest, not the host process.
+pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Newtype for the identifier of a minted grant, as referenced from an audit
 /// record. Distinct from [`crate::policy::ApprovalId`] so the two cannot be
 /// cross-referenced to the wrong thing.

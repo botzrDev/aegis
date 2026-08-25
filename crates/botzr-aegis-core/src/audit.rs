@@ -224,7 +224,21 @@ impl<'de> serde::Deserialize<'de> for AuditLineType {
 /// The object is **always emitted**, possibly as `{}`; its fields follow
 /// omit-never-null. An empty `decision_axes` says "this emitter recorded no
 /// axes"; an absent one would say nothing at all.
+///
+/// `#[non_exhaustive]`: the axis set is expected to grow — a semantic risk score
+/// is the live candidate (AILAB-794) — and an eighth axis must not break every
+/// downstream build that already records these seven. Outside this crate the
+/// attribute forbids the struct expression outright, functional-update syntax
+/// included, so callers build from `DecisionAxes::default()` and assign the axes
+/// they actually recorded; that is the migration, and it is what every emitter
+/// in this workspace now does.
+///
+/// The one bare literal left is in this file's own tests, where the attribute
+/// does not apply, and it is left bare on purpose: a new axis must fail to
+/// compile there until the test names it, which is how the "every axis
+/// canonicalizes" assertion keeps meaning what it says.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct DecisionAxes {
     /// The capability axis the call requested (e.g. `fs.read`, `net.http`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

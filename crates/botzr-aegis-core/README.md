@@ -27,10 +27,16 @@ sandbox station. Isolation is the grant check plus the audit record. See the
 | Surface | Role |
 |---|---|
 | `CapabilityGrant`, `FsGrant`, `NetGrant`, `HttpGrant` | Minted authority a call executes under |
-| `ToolId`, `ToolKind` | Identity; `Wasm` vs `Host` |
+| `ToolId` | Tool identity, carried by grants and audit lines |
 | `AuditIntent`, `AuditRecord`, `AuditOpen`, `AuditClose`, `AuditDecision` | Schema-v2 line types (`AUDIT_SCHEMA_VERSION = 2`) |
 | `DecisionAxes` | Inputs a policy verdict is a function of — never the raw argument tree |
 | `jcs` | Canonical JSON (RFC 8785) used as the hash input for every signed line |
+
+`botzr_aegis_core::ResourceCeiling` is the canonical import path for the three-axis
+ceiling: this is its definition site, and importing it from here is what keeps
+`policy` and `capability` siblings instead of making one depend on the other.
+The `botzr_aegis_policy::ResourceCeiling` and
+`botzr_aegis_capability::ResourceCeiling` re-exports are published API and stay.
 
 The canonical tool WIT world is `wit/aegis/tool/`, not this crate.
 
