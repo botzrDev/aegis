@@ -8,10 +8,10 @@ mod common;
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 
-use botzr_aegis_confine::ConfinementProfile;
+use botzr_aegis_confine::{ConfinementProfile, NetAllow};
 use common::{
     exec_support_paths, landlock_available, probe, profile_for_paths, restrict_exec,
-    restrict_exec_with_report,
+    restrict_exec_with_report, uring_egress_available,
 };
 
 #[test]
@@ -99,6 +99,77 @@ fn connect_with_no_net_grant_is_killed_by_seccomp_sigsys() {
         signal,
         Some(libc::SIGSYS),
         "a seccomp kill is SIGSYS, distinguishable from a non-zero exit; got status={:?} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The route the deny-list does not name (AILAB-808).
+///
+/// `connect_with_no_net_grant_is_killed_by_seccomp_sigsys` proves the *listed*
+/// syscalls are denied; it cannot prove the network is denied, because it only
+/// ever tries `socket(2)`. io_uring dispatches `IORING_OP_SOCKET` and
+/// `IORING_OP_CONNECT` from a shared submission queue that never crosses a
+/// syscall boundary seccomp can inspect, so before AILAB-807 a confined process
+/// reached the network while the record said `seccomp_network_denied: true`.
+///
+/// What this asserts is that the *ring* is unreachable, not that a packet was
+/// stopped mid-flight: the fix denies `io_uring_setup`/`_enter`/`_register`, so
+/// the process dies before it holds a ring at all. The probe's own doc comment
+/// records why the final SQE write is not attempted here (`push` is `unsafe fn`;
+/// this workspace is `unsafe_code = forbid`) and where the packet half was
+/// proven instead.
+#[test]
+fn io_uring_egress_with_no_net_grant_is_killed_by_seccomp_sigsys() {
+    if !landlock_available() {
+        return;
+    }
+    if !uring_egress_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let profile = profile_for_paths(&[dir.path()], &[]);
+    assert!(profile.net.is_empty(), "this case is the no-NetGrant deny");
+
+    let output = restrict_exec(&profile, &[probe().to_str().unwrap(), "uring-egress"]);
+    assert_eq!(
+        output.status.signal(),
+        Some(libc::SIGSYS),
+        "io_uring must not be a way around the network deny-list; a seccomp kill \
+         is SIGSYS, distinguishable from a non-zero exit. got status={:?} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The documented escape hatch, tested rather than asserted (AILAB-807).
+///
+/// Denying the ring whole has a price: a child that uses io_uring for ordinary
+/// file I/O dies under a network-denying profile. `docs/wrap.md` tells the
+/// operator the remedy is `--allow-net`. This is that sentence under test — a
+/// profile carrying a `NetAllow` installs a filter that denies nothing, so the
+/// ring is reachable again. Without this case the trade-off would be a claim in
+/// prose with nothing holding it to the code.
+#[test]
+fn io_uring_is_reachable_again_once_a_net_grant_is_present() {
+    if !landlock_available() {
+        return;
+    }
+    if !uring_egress_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut profile = profile_for_paths(&[dir.path()], &[]);
+    profile.net = vec![NetAllow {
+        host: "example.invalid".to_string(),
+        ports: vec![443],
+    }];
+
+    let output = restrict_exec(&profile, &[probe().to_str().unwrap(), "uring-egress"]);
+    assert!(
+        output.status.success(),
+        "a NetGrant leaves the filter denying nothing, so io_uring must work: \
+         status={:?} stderr={}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );

@@ -114,6 +114,22 @@ support.
 - **Docs site** — the book is published at <https://botzrdev.github.io/aegis/>
   by a `Pages` workflow that reuses the same pinned mdBook tarball and digest
   as the CI gate, so the deployed site is the artifact CI proved builds.
+- **The escape suite tries a route the deny-list does not name** (AILAB-808).
+  `crates/botzr-aegis-confine/tests/escape.rs` gains
+  `io_uring_egress_with_no_net_grant_is_killed_by_seccomp_sigsys`, which spawns
+  a confined child that assembles a network-egress primitive through io_uring —
+  `io_uring_setup`, an `io_uring_register` opcode probe confirming the kernel
+  advertises `IORING_OP_SOCKET` and `IORING_OP_CONNECT`, then `io_uring_enter` —
+  none of which crosses `socket(2)`. It was **observed failing** on the tree
+  before the AILAB-807 fix (the confined child exited 0) and passing after it
+  (`SIGSYS`). **What it does not do:** put a packet on the wire. Writing the
+  submission-queue entry needs `unsafe`, which this workspace forbids, so the
+  case proves the ring is unreachable rather than that a connect was stopped
+  mid-flight; the 2026-08-25 audit proved the packet half in throwaway C. The
+  suite also refuses to run green on a host that cannot use io_uring
+  unconfined, since a seccomp kill would otherwise look identical to a kernel
+  that never had the feature. The `io-uring` dev dependency is optional and
+  gated behind `test-utils`, so it enters no published dependency graph.
 
 ### Changed
 
@@ -227,6 +243,30 @@ support.
   cannot be relicensed after the fact, and none were republished or retagged. The
   dual license reaches the registry with the next release cut. No version bump,
   no runtime change.
+
+### Fixed
+
+- **A confined process could reach the network through io_uring while the
+  record said it could not** (AILAB-807). `botzr-aegis-confine`'s seccomp
+  filter denied eighteen socket-API syscalls with a default action of *allow*.
+  Since Linux 5.19 io_uring dispatches `IORING_OP_SOCKET` and
+  `IORING_OP_CONNECT` from submission-queue entries in memory shared with the
+  kernel, so they never cross a syscall boundary seccomp can inspect. A child
+  under an empty net profile therefore made an outbound TCP connection while
+  `EnforcedConfinement` reported `seccomp_network_denied: true` — the same shape
+  as `e92450a`, a record asserting an enforcement that did not happen.
+  `io_uring_setup`, `io_uring_enter` and `io_uring_register` are now on the
+  deny-list. **Behaviour change worth reading before upgrading:** the ring is
+  denied *whole*, not just its network operations, because seccomp cannot read
+  submission-queue entries and no filter can separate the two. **A child that
+  uses io_uring for ordinary file I/O — some databases, some async runtimes —
+  will now die on `SIGSYS` under a profile with no `NetGrant`.** Grant it
+  `--allow-net` or do not confine it — a second escape case holds that remedy to
+  the code, so the documented way out is tested rather than asserted. The
+  filesystem side was never affected:
+  Landlock enforces at the LSM layer, which io_uring traverses like any other
+  caller. The network claim still rests on enumeration; moving it to Landlock
+  `AccessNet` is AILAB-810 and is not shipped.
 
 ### Removed
 

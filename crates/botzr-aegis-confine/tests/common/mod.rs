@@ -109,3 +109,43 @@ pub fn landlock_available() -> bool {
         }
     }
 }
+
+/// Environment opt-out for a host whose kernel genuinely has no usable
+/// io_uring (`io_uring_disabled=2`, or a kernel below 5.19 with no
+/// `IORING_OP_SOCKET`).
+// `mod common` is compiled into every test binary in this directory; these two
+// are used only by `escape.rs`. Scoped rather than a module-wide allow, so a
+// genuinely dead helper still shows up.
+#[allow(dead_code)]
+pub const NO_IO_URING_OPT_OUT: &str = "AEGIS_ALLOW_NO_IO_URING";
+
+/// True when this host can actually assemble the io_uring egress primitive
+/// **unconfined**; **panics** when it cannot, unless the operator opted out.
+///
+/// Same fail-closed reasoning as [`landlock_available`], and load-bearing for
+/// a different reason. A seccomp `KillProcess` fires *before* the syscall
+/// runs, so on a host where `io_uring_setup` would have failed anyway the
+/// confined case still dies with `SIGSYS` and the assertion still passes —
+/// green on a host that proved nothing. Requiring the unconfined run to
+/// succeed first is what makes the confined `SIGSYS` mean the filter did it.
+#[allow(dead_code)]
+pub fn uring_egress_available() -> bool {
+    let output = Command::new(probe())
+        .arg("uring-egress")
+        .output()
+        .expect("spawn uring-egress");
+    if output.status.success() {
+        return true;
+    }
+    let detail = String::from_utf8_lossy(&output.stderr);
+    if std::env::var(NO_IO_URING_OPT_OUT).as_deref() == Ok("1") {
+        eprintln!("skip: {NO_IO_URING_OPT_OUT}=1 and this host has no usable io_uring ({detail})");
+        return false;
+    }
+    panic!(
+        "this host cannot assemble the io_uring egress primitive unconfined \
+         (status={:?}: {detail}), so a confined SIGSYS would prove nothing. Set \
+         {NO_IO_URING_OPT_OUT}=1 to skip it on purpose.",
+        output.status
+    );
+}

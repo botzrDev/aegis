@@ -15,6 +15,11 @@ autobins = false
 [lints]
 workspace = true
 
+[features]
+# Gates the `uring-egress` probe verb and its `io-uring` dependency. Off by
+# default, so neither reaches a published dependency graph (AILAB-808).
+test-utils = ["dep:io-uring"]
+
 [dependencies]
 botzr-aegis-core = { workspace = true }
 serde = { workspace = true }
@@ -26,8 +31,15 @@ thiserror = { workspace = true }
 libc = { workspace = true }
 landlock = { workspace = true }
 seccompiler = { workspace = true }
+# `test-utils` only: the escape probe's io_uring egress attempt (AILAB-808).
+io-uring = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Self dev-dependency so `cargo test` builds this package -- including the
+# `aegis-confine-probe` bin that `CARGO_BIN_EXE_*` resolves -- with
+# `test-utils` on. Dev-dependencies alone are not visible to bin targets;
+# a feature is. Same shape as botzr-aegis-sandbox.
+botzr-aegis-confine = { path = ".", features = ["test-utils"] }
 tempfile = { workspace = true }
 # SIGSYS in escape tests (`ExitStatus::signal()` compared against libc::SIGSYS).
 libc = { workspace = true }

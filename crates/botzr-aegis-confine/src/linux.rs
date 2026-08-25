@@ -180,6 +180,21 @@ fn openable_paths(
 /// permitted. The ticket's requirement is that network syscalls are denied
 /// without a `NetGrant`, and that is exactly what this does — the returned
 /// [`SeccompOutcome`] says so rather than letting a caller read more into it.
+///
+/// **io_uring is denied whole, and that has a price.** `io_uring_setup`,
+/// `io_uring_enter` and `io_uring_register` are on the deny-list because the
+/// ring's network operations are dispatched from shared memory and never reach
+/// a syscall seccomp can filter (AILAB-807). seccomp cannot read submission
+/// queue entries, so there is no filter that permits io_uring *file* I/O while
+/// denying io_uring *network* I/O. The consequence, stated plainly: **a child
+/// that uses io_uring for ordinary file I/O will die on `SIGSYS` under a
+/// profile with no `NetGrant`.** That is the cost of the claim being true.
+///
+/// **Enumeration is still the model.** This denies the interfaces it names.
+/// A kernel interface that carries a packet without crossing one of them is
+/// an open path that has to be discovered rather than prevented — io_uring was
+/// exactly that until 2026-08-25. AILAB-810 tracks moving the network claim to
+/// Landlock `AccessNet`, which enforces at the LSM layer and does not enumerate.
 pub fn apply_seccomp(profile: &ConfinementProfile) -> Result<SeccompOutcome, ConfineError> {
     let arch = std::env::consts::ARCH
         .try_into()
@@ -216,6 +231,21 @@ pub fn apply_seccomp(profile: &ConfinementProfile) -> Result<SeccompOutcome, Con
     })
 }
 
+/// Syscalls denied when the profile carries no `NetGrant`.
+///
+/// The first eighteen are the socket API. The last three are io_uring, and
+/// they are here for a reason worth stating: since Linux 5.19 the ring
+/// dispatches `IORING_OP_SOCKET` and `IORING_OP_CONNECT` from submission-queue
+/// entries in memory shared with the kernel, so those operations never cross a
+/// syscall boundary seccomp can inspect. Denying the socket API alone left a
+/// confined process able to reach the network while the record said
+/// `seccomp_network_denied: true` (AILAB-807).
+///
+/// **The ring goes, not its network operations.** seccomp cannot read SQEs, so
+/// no filter can permit io_uring file I/O while denying io_uring network I/O —
+/// the only enforceable cut is at `io_uring_setup`. The price is named in
+/// [`apply_seccomp`]: a child that uses io_uring for ordinary file I/O dies
+/// under a network-denying profile.
 fn network_syscalls() -> Vec<i64> {
     vec![
         libc::SYS_socket,
@@ -236,6 +266,10 @@ fn network_syscalls() -> Vec<i64> {
         libc::SYS_getpeername,
         libc::SYS_getsockopt,
         libc::SYS_setsockopt,
+        // io_uring: deny the ring itself. See this function's doc comment.
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
     ]
 }
 

@@ -79,6 +79,24 @@ list before describing wrap as a sandbox, a firewall, or a guard:
   filter is installed and denies nothing, which is why the enforcement
   record carries `seccomp_network_denied` alongside `seccomp_applied`.
   Read the pair, never `seccomp_applied` alone.
+- **With no `--allow-net`, io_uring is unavailable to the child — all of
+  it, not just its network operations.** The ring dispatches socket and
+  connect from memory shared with the kernel, so those operations never
+  cross a syscall seccomp can inspect; until 2026-08-25 a confined process
+  could reach the network that way while the record said
+  `seccomp_network_denied: true` (AILAB-807). seccomp cannot read
+  submission-queue entries, so no filter can permit io_uring file I/O
+  while denying io_uring network I/O. **The price, stated in the same
+  breath: a child that uses io_uring for ordinary file I/O — some
+  databases, some async runtimes — dies on `SIGSYS` under a
+  network-denying profile.** Give it `--allow-net` or do not confine it.
+- **The network claim rests on enumeration, and enumeration has a tail.**
+  The filter denies the interfaces it names. Any kernel interface that
+  carries a packet without crossing one of them is an open path that has
+  to be *discovered* rather than prevented — io_uring was exactly that.
+  Landlock covers the filesystem side at the LSM layer, where io_uring is
+  caught like any other caller; moving the network side there too is
+  AILAB-810 and is **not shipped**.
 - **Not Model A isolation.** Nothing runs inside wasmtime here. This is
   closer to Model B than to Model A, and weaker than either unless
   `--confine` is also given. See

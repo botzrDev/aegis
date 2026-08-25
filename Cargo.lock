@@ -256,7 +256,9 @@ dependencies = [
 name = "botzr-aegis-confine"
 version = "0.3.0"
 dependencies = [
+ "botzr-aegis-confine",
  "botzr-aegis-core",
+ "io-uring",
  "landlock",
  "libc",
  "seccompiler",
@@ -1460,6 +1462,17 @@ name = "io-lifetimes"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06432fb54d3be7964ecd3649233cddf80db2832f47fec34c01f65b3d9d774983"
+
+[[package]]
+name = "io-uring"
+version = "0.7.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64d8ca234d152948ceaede1f419b6a83983a5ecccaac05fb337a809c96d3aa6"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "ipnet"

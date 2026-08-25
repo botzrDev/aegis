@@ -63,6 +63,12 @@ ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 # Already in the tree transitively (via rand_core); this makes the audit crate's
 # use of it a declared, direct dependency rather than a borrowed one.
 getrandom = "0.3"
+# AILAB-808: safe io_uring wrapper, used *only* by the confine escape probe to
+# prove the ring itself is unreachable under a network-denying profile.
+# MIT OR Apache-2.0, both already in deny.toml's allow list; MSRV 1.63 <= 1.86.
+# Optional + `test-utils`-gated in botzr-aegis-confine, so it never enters a
+# published dependency graph.
+io-uring = "0.7"
 # AILAB-628: Landlock LSM helpers for `botzr-aegis-confine`. MIT OR Apache-2.0,
 # both already in deny.toml's allow list; MSRV 1.71 <= 1.86.
 landlock = "0.4.4"

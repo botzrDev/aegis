@@ -1,5 +1,19 @@
 //! `aegis __confine-exec` and `aegis wrap --confine` through the installed
 //! binary. Real child processes (MSRV 1.86 has no `std::io::pipe`).
+//!
+//! **What the `seccomp_network_denied` assertions here are, and are not**
+//! (AILAB-808). They read the field back out of the report the same run just
+//! wrote, so they check the CLI wiring — the flag reached the profile, the
+//! profile reached the filter, the outcome reached the record — and they check
+//! the serializer. They do **not** prove the network is denied; a test that
+//! reads a claim out of the artifact under test cannot.
+//!
+//! The behavioural proof is deliberately elsewhere, in
+//! `crates/botzr-aegis-confine/tests/escape.rs`, which spawns a confined child
+//! and asserts a `SIGSYS` kill on two independent routes: `socket(2)` and
+//! io_uring. Keeping it there means one suite owns enforcement and this one
+//! owns wiring. If the escape suite is ever deleted, these assertions become
+//! self-referential again — that is the failure mode to watch for.
 
 #![cfg(target_os = "linux")]
 
@@ -105,7 +119,9 @@ fn confine_exec_through_the_aegis_binary() {
     );
     assert_eq!(enforced["seccomp_applied"], true, "{enforced}");
     // A filter was installed *and* it denies something. The pair is the
-    // point: `seccomp_applied` alone is true for an empty rule set.
+    // point: `seccomp_applied` alone is true for an empty rule set. This is a
+    // wiring check; the enforcement is proven behaviourally in the confine
+    // escape suite (see the module comment).
     assert_eq!(enforced["seccomp_network_denied"], true, "{enforced}");
 }
 
@@ -220,7 +236,9 @@ fn wrap_confine_end_to_end_with_botzr_aegis_mcp() {
     );
     assert_eq!(enforced["seccomp_applied"], true, "{enforced}");
     // A filter was installed *and* it denies something. The pair is the
-    // point: `seccomp_applied` alone is true for an empty rule set.
+    // point: `seccomp_applied` alone is true for an empty rule set. This is a
+    // wiring check; the enforcement is proven behaviourally in the confine
+    // escape suite (see the module comment).
     assert_eq!(enforced["seccomp_network_denied"], true, "{enforced}");
 }
 
@@ -429,6 +447,7 @@ fn confine_exec_reports_a_failed_exec_after_confining() {
         "the report is written before the exec is attempted: {enforced}"
     );
     assert_eq!(enforced["seccomp_applied"], true, "{enforced}");
+    // Wiring, not enforcement — see the module comment.
     assert_eq!(enforced["seccomp_network_denied"], true, "{enforced}");
 }
 
