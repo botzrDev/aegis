@@ -165,7 +165,7 @@ pub fn verify_line<L: SignedChainLine>(
 /// A verifier meets lines this build has no struct for — a reserved
 /// `Checkpoint`, or a type a newer emitter introduced — and still has to say
 /// whether they are authentic. So the signed bytes are reconstructed from the
-/// JSON itself, by exactly the rule [`botzr_aegis_core::AuditRecord::signing_input`]
+/// JSON itself, by exactly the rule [`botzr_aegis_core::SignedLine::signing_input`]
 /// implements: the canonical form with `signature` removed and `key_id` left in
 /// place. A test pins the two against each other, because two spellings of
 /// "what the signature covers" is the drift ADR-0003 exists to prevent.
@@ -241,10 +241,14 @@ mod tests {
 
     #[test]
     fn the_typed_and_untyped_verifiers_agree_on_what_the_signature_covers() {
-        // LOAD-BEARING: `verify_json_line` reconstructs the signed bytes from
-        // JSON so a verifier can check a line it has no struct for. If it ever
-        // disagrees with `signing_input`, the same line verifies one way and
-        // fails the other — the drift ADR-0003 exists to prevent.
+        // LOAD-BEARING: this is now the *only* fork in "what the signature
+        // covers". The typed side collapsed to a single trait default in
+        // `botzr_aegis_core::SignedLine` (AILAB-706), so no typed line type can
+        // disagree with another; what remains is `verify_json_line`, which
+        // reconstructs the signed bytes from JSON so a verifier can check a line
+        // it has no struct for. Nothing but this test holds that reconstruction
+        // to the trait's rule. If the two ever disagree, the same line verifies
+        // one way and fails the other — the drift ADR-0003 exists to prevent.
         use botzr_aegis_core::{
             AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, PolicySetHash,
             PrevHash, RequestDigest, ToolId,

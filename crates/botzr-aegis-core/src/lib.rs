@@ -16,7 +16,7 @@ pub use audit::{
     line_type_field, line_type_from_value, ApprovalVerdict, ApprovedScope, AuditClose,
     AuditDecision, AuditIntent, AuditLineType, AuditOpen, AuditRecord, AuditSchemaVersion,
     CallMetrics, CapabilityOutcome, DecisionAxes, ExecutionOutcome, FsAxis, NetAxis, PolicyOutcome,
-    SessionCounter, AUDIT_SCHEMA_VERSION,
+    SessionCounter, SignedLine, AUDIT_SCHEMA_VERSION,
 };
 pub use digest::{
     Digest, DigestParseError, KeyId, PolicySetHash, PrevHash, PublicKey, RequestDigest,

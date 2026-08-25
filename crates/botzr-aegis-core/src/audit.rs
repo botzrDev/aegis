@@ -519,11 +519,11 @@ impl AuditRecord {
     /// signature as well — strip a signature and the next line's `prev_hash`
     /// breaks, whereas hashing the pre-signature form would let
     /// signature-stripping leave a clean chain.
+    ///
+    /// The rule itself lives once, in [`SignedLine`]; this is a delegation kept
+    /// public because callers outside the trait's import path depend on it.
     pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        let mut unsigned = self.clone();
-        unsigned.signature = None;
-        unsigned.key_id = Some(*key_id);
-        jcs::to_canonical_json(&unsigned)
+        SignedLine::signing_input(self, key_id)
     }
 }
 
@@ -607,10 +607,7 @@ impl AuditOpen {
 
     /// See [`AuditRecord::signing_input`].
     pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        let mut unsigned = self.clone();
-        unsigned.signature = None;
-        unsigned.key_id = Some(*key_id);
-        jcs::to_canonical_json(&unsigned)
+        SignedLine::signing_input(self, key_id)
     }
 }
 
@@ -693,10 +690,7 @@ impl AuditClose {
 
     /// See [`AuditRecord::signing_input`].
     pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        let mut unsigned = self.clone();
-        unsigned.signature = None;
-        unsigned.key_id = Some(*key_id);
-        jcs::to_canonical_json(&unsigned)
+        SignedLine::signing_input(self, key_id)
     }
 }
 
@@ -779,12 +773,61 @@ impl AuditDecision {
 
     /// See [`AuditRecord::signing_input`].
     pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        let mut unsigned = self.clone();
-        unsigned.signature = None;
-        unsigned.key_id = Some(*key_id);
+        SignedLine::signing_input(self, key_id)
+    }
+}
+
+/// The rule the whole record format rests on: a signature covers the line's
+/// canonical form with the signature field dropped and `key_id` present.
+///
+/// It is written once, here, because a writer and a verifier that disagree
+/// about which bytes a signature covers make every signature in every Chain
+/// meaningless. The four signed line types differ only in whose private fields
+/// get cleared and stamped, and that difference is
+/// [`SignedLine::unsigned_with_key`] — the only per-type part left.
+///
+/// `key_id` sits inside the signed bytes so a signature cannot be replayed
+/// under a different key's fingerprint.
+///
+/// [`AuditIntent`] deliberately does not implement this. That line is fsynced
+/// ahead of execution, so signing it would put key material on the
+/// pre-execution critical path; leaving it off the trait makes "the intent line
+/// is never signed" a property of the type system rather than a rule a writer
+/// has to remember.
+pub trait SignedLine: Clone + serde::Serialize {
+    /// A copy of this line with its signature cleared and `key_id` stamped.
+    ///
+    /// The only method that has to know the type's own sealed fields.
+    fn unsigned_with_key(&self, key_id: &KeyId) -> Self;
+
+    /// The exact bytes a signature covers. Not meant to be overridden — an
+    /// override is a second spelling of the rule, which is the drift ADR-0003
+    /// exists to prevent.
+    fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
+        let unsigned = self.unsigned_with_key(key_id);
         jcs::to_canonical_json(&unsigned)
     }
 }
+
+/// One expansion rather than four hand-written impls, for the same reason the
+/// rule is a trait default at all: the per-type half must not drift either.
+macro_rules! impl_signed_line {
+    ($ty:ty) => {
+        impl SignedLine for $ty {
+            fn unsigned_with_key(&self, key_id: &KeyId) -> Self {
+                let mut line = self.clone();
+                line.signature = None;
+                line.key_id = Some(*key_id);
+                line
+            }
+        }
+    };
+}
+
+impl_signed_line!(AuditRecord);
+impl_signed_line!(AuditOpen);
+impl_signed_line!(AuditClose);
+impl_signed_line!(AuditDecision);
 
 /// What a human decided, and — when they approved — exactly what they approved.
 ///
