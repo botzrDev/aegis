@@ -94,14 +94,24 @@ impl Runtime {
         // short-circuit: a role-gated deny that persists only `tool_id` can
         // neither replay nor explain itself, and the denied call is exactly the
         // record someone comes back to read (ADR-0001).
-        // Built by assignment, not a struct literal: `DecisionAxes` is
-        // `#[non_exhaustive]`, so no crate but core may spell it as a struct
-        // expression — functional-update syntax included.
+        // Built with the fluent `with_*` chain, not a struct literal:
+        // `DecisionAxes` is `#[non_exhaustive]`, so no crate but core may spell
+        // it as a struct expression — functional-update syntax included. Each
+        // axis is set only when the request actually carried one: an unset axis
+        // is omitted, and `""` would be a recorded empty value, not an absence.
         let mut axes = DecisionAxes::default();
-        axes.capability = policy_request.capability.map(str::to_owned);
-        axes.role = policy_request.role.map(str::to_owned);
-        axes.session = policy_request.session.map(str::to_owned);
-        axes.matched_rule = decision.matched_rule.clone();
+        if let Some(capability) = policy_request.capability {
+            axes = axes.with_capability(capability);
+        }
+        if let Some(role) = policy_request.role {
+            axes = axes.with_role(role);
+        }
+        if let Some(session) = policy_request.session {
+            axes = axes.with_session(session);
+        }
+        if let Some(matched_rule) = decision.matched_rule.clone() {
+            axes = axes.with_matched_rule(matched_rule);
+        }
         session.set_decision_axes(axes.clone());
 
         if !matches!(policy_outcome, PolicyOutcome::Allowed) {
@@ -147,8 +157,17 @@ impl Runtime {
                 // call resolved to, recorded only when the grant names exactly
                 // one. Reading them off the minted grant is not a matcher and
                 // not a new resolution step — matcher shapes are AILAB-626.
-                axes.fs = fs_axis(grant);
-                axes.net = net_axis(grant);
+                // Same `with_*` chain as the axes above, and same omit rule: a
+                // grant that names no single resource leaves the axis unset
+                // rather than recording an absence. Both are `None` here — the
+                // only writer is this block — so this records exactly what the
+                // direct assignment it replaced did.
+                if let Some(fs) = fs_axis(grant) {
+                    axes = axes.with_fs(fs);
+                }
+                if let Some(net) = net_axis(grant) {
+                    axes = axes.with_net(net);
+                }
                 session.set_decision_axes(axes.clone());
 
                 match execute_step(grant) {

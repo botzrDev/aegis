@@ -16,6 +16,14 @@ support.
 
 ### Added
 
+- **`DecisionAxes` fluent construction** (AILAB-798). Seven consuming `with_*`
+  setters (`with_capability`, `with_role`, `with_session`, `with_matched_rule`,
+  `with_approval_ref`, `with_fs`, `with_net`) on `botzr_aegis_core::DecisionAxes`.
+  No new type, no `build()`, fields stay public, `#[non_exhaustive]` is
+  unchanged. **Not a break:** assignment still compiles. **No serialized byte
+  moves.** This is the recommended construction the AILAB-707 bullet below now
+  describes; it is documented here so a reader skimming Added vs Breaking does
+  not treat the setters as part of that break.
 - **`aegis verify`'s report formatter is tested in process** (AILAB-705).
   `render` and `label` in `crates/botzr-aegis-cli/src/verify.rs` are pure
   functions of a `Verification`, and they now have a fourteen-case
@@ -115,19 +123,22 @@ support.
   expression outside the crate that defines it. Note that this includes
   functional-update syntax — `DecisionAxes { role, ..Default::default() }` is
   rejected just as a bare literal is, which is the language rule and not a
-  choice made here. The migration is to start from `DecisionAxes::default()` and
-  assign the axes you recorded; the fields are all public and stay public, so
-  nothing else about the type changed. Every emitter in this workspace was moved
-  that way, which is the only edit the attribute forced. The reason to close
-  construction now rather than at the first new axis: the set is expected to
-  grow — a semantic risk score is the live candidate — and an added axis would
-  otherwise be a breaking change to every consumer that had ever written one out
-  in full. **This changes no serialized byte**: the attribute is a construction
-  rule, the seven axes and their omit-never-null encoding are untouched, and
-  every golden fixture on disk is unchanged. Separately and **not** a breaking
-  change, `DEFAULT_MAX_WALL_MS` and `DEFAULT_MAX_MEMORY_BYTES` move from
-  `botzr-aegis-capability`'s `manifest.rs` into `botzr-aegis-core`'s `grant.rs`,
-  joining `DEFAULT_MAX_OUTPUT_BYTES` beside the three `CapabilityGrant` fields
+  choice made here. The recommended construction is the fluent chain —
+  `DecisionAxes::default().with_capability("fs.read").with_role("ops")`, one
+  consuming `with_*` setter per axis (AILAB-798). Assignment from
+  `DecisionAxes::default()` remains legal, because the fields are all public and
+  stay public; nothing else about the type changed. Every emitter in this
+  workspace was moved to the chain, and moving off the struct expression is the
+  only edit the attribute forced. The reason to close construction now rather
+  than at the first new axis: the set is expected to grow — a semantic risk
+  score is the live candidate — and an added axis would otherwise be a breaking
+  change to every consumer that had ever written one out in full. **This changes
+  no serialized byte**: the attribute is a construction rule, the seven axes and
+  their omit-never-null encoding are untouched, and every golden fixture on disk
+  is unchanged. Separately and **not** a breaking change, `DEFAULT_MAX_WALL_MS`
+  and `DEFAULT_MAX_MEMORY_BYTES` move from `botzr-aegis-capability`'s
+  `manifest.rs` into `botzr-aegis-core`'s `grant.rs`, joining
+  `DEFAULT_MAX_OUTPUT_BYTES` beside the three `CapabilityGrant` fields
   they default — one home, one set of values, unchanged (30 s, 64 MiB, 1 MiB).
   `botzr_aegis_capability::DEFAULT_MAX_WALL_MS` and
   `botzr_aegis_capability::DEFAULT_MAX_MEMORY_BYTES` still resolve, now as

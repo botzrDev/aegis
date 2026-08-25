@@ -228,15 +228,18 @@ impl<'de> serde::Deserialize<'de> for AuditLineType {
 /// `#[non_exhaustive]`: the axis set is expected to grow — a semantic risk score
 /// is the live candidate (AILAB-794) — and an eighth axis must not break every
 /// downstream build that already records these seven. Outside this crate the
-/// attribute forbids the struct expression outright, functional-update syntax
-/// included, so callers build from `DecisionAxes::default()` and assign the axes
-/// they actually recorded; that is the migration, and it is what every emitter
-/// in this workspace now does.
+/// attribute forbids the struct expression outright (E0639), functional-update
+/// syntax included, so the recommended construction is the fluent chain —
+/// `DecisionAxes::default().with_capability("fs.read").with_role("ops")` — and
+/// that is what every emitter in this workspace now does. The fields are all
+/// public and stay public, so assignment still compiles; the chain is what the
+/// type recommends, not what it enforces.
 ///
-/// The one bare literal left is in this file's own tests, where the attribute
-/// does not apply, and it is left bare on purpose: a new axis must fail to
-/// compile there until the test names it, which is how the "every axis
-/// canonicalizes" assertion keeps meaning what it says.
+/// The bare literals left are in this file's own tests, where the attribute
+/// does not apply, and they are left bare on purpose: each is an eighth-axis
+/// tripwire. A new axis must fail to compile there until the test names it,
+/// which is how the "every axis canonicalizes" assertion keeps meaning what it
+/// says — a `with_*` chain names one axis at a time and would go on compiling.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct DecisionAxes {
@@ -266,6 +269,52 @@ pub struct DecisionAxes {
     /// Derived network parameter, under the same omit rule as `fs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetAxis>,
+}
+
+impl DecisionAxes {
+    /// Consuming setters, not a builder type: seven methods, no new published
+    /// type, no infallible `build()`. Each future axis adds exactly one method,
+    /// which is the same non-breaking property `#[non_exhaustive]` exists for
+    /// (AILAB-798). Fields stay public; assignment remains legal.
+    ///
+    /// Same shape as [`AuditRecord::with_grant_id`] and
+    /// `PolicyRequest::with_role`: take `self`, set `Some`, return `Self`.
+    /// There is deliberately no clearing setter — an axis the emitter did not
+    /// record is left unset, and unset is what omit-never-null encodes.
+    pub fn with_capability(mut self, capability: impl Into<String>) -> Self {
+        self.capability = Some(capability.into());
+        self
+    }
+
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.role = Some(role.into());
+        self
+    }
+
+    pub fn with_session(mut self, session: impl Into<String>) -> Self {
+        self.session = Some(session.into());
+        self
+    }
+
+    pub fn with_matched_rule(mut self, matched_rule: impl Into<String>) -> Self {
+        self.matched_rule = Some(matched_rule.into());
+        self
+    }
+
+    pub fn with_approval_ref(mut self, approval_ref: ApprovalId) -> Self {
+        self.approval_ref = Some(approval_ref);
+        self
+    }
+
+    pub fn with_fs(mut self, fs: FsAxis) -> Self {
+        self.fs = Some(fs);
+        self
+    }
+
+    pub fn with_net(mut self, net: NetAxis) -> Self {
+        self.net = Some(net);
+        self
+    }
 }
 
 /// The filesystem resource a call resolved to (ADR-0006).
@@ -1209,6 +1258,57 @@ mod tests {
             },
         ))
         .is_ok());
+    }
+
+    /// The fluent chain and the bare literal must produce the same value, so
+    /// migrating an emitter to `with_*` cannot move a serialized byte. The
+    /// tripwire above stays a bare literal on purpose — it fails to compile
+    /// when an eighth axis lands — and this test is what pins the setters to
+    /// it without borrowing that property away (AILAB-798).
+    #[test]
+    fn fluent_construction_equals_the_bare_literal_for_all_seven_axes() {
+        let literal = DecisionAxes {
+            capability: Some("fs.read".into()),
+            role: Some("ops".into()),
+            session: Some("s-1".into()),
+            matched_rule: Some("rule-3".into()),
+            approval_ref: Some(ApprovalId::new("apr-1")),
+            fs: Some(FsAxis {
+                path_raw: "~/notes.md".into(),
+                path_canonical: "/home/a/notes.md".into(),
+            }),
+            net: Some(NetAxis {
+                host: "example.com".into(),
+                port: 443,
+            }),
+        };
+        let fluent = DecisionAxes::default()
+            .with_capability("fs.read")
+            .with_role("ops")
+            .with_session("s-1")
+            .with_matched_rule("rule-3")
+            .with_approval_ref(ApprovalId::new("apr-1"))
+            .with_fs(FsAxis {
+                path_raw: "~/notes.md".into(),
+                path_canonical: "/home/a/notes.md".into(),
+            })
+            .with_net(NetAxis {
+                host: "example.com".into(),
+                port: 443,
+            });
+
+        assert_eq!(fluent.capability, literal.capability);
+        assert_eq!(fluent.role, literal.role);
+        assert_eq!(fluent.session, literal.session);
+        assert_eq!(fluent.matched_rule, literal.matched_rule);
+        assert_eq!(fluent.approval_ref, literal.approval_ref);
+        assert_eq!(fluent.fs, literal.fs);
+        assert_eq!(fluent.net, literal.net);
+        assert_eq!(fluent, literal);
+        assert_eq!(
+            jcs::to_canonical_json(&record().with_decision_axes(fluent)).unwrap(),
+            jcs::to_canonical_json(&record().with_decision_axes(literal)).unwrap(),
+        );
     }
 
     #[test]
