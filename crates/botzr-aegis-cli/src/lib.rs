@@ -62,13 +62,13 @@ pub enum Command {
         policy: PathBuf,
         path: PathBuf,
     },
-    /// Interpose on an existing stdio MCP server and record each single
+    /// Interpose on an existing stdio MCP server and record every
     /// `tools/call` it carries (AILAB-625).
     ///
-    /// "Single" is load-bearing: a `tools/call` sent inside a JSON-RPC **batch
-    /// array** is relayed and **not** recorded. Wrap names that bypass on
-    /// stderr when it happens rather than hiding it — see
-    /// `crates/botzr-aegis-wrap/README.md`.
+    /// "Every" is load-bearing: a `tools/call` sent inside a JSON-RPC **batch
+    /// array** is recorded like one sent in a frame of its own (AILAB-788),
+    /// with the whole array relayed unsplit and the calls it carries sharing
+    /// its digests — see `crates/botzr-aegis-wrap/README.md`.
     ///
     /// Its own verb rather than a mode of `Run`: `run` executes a WASM component
     /// through POLICY → CAPABILITY → SANDBOX → AUDIT, while `wrap` relays an

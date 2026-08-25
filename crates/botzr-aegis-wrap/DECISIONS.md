@@ -115,25 +115,34 @@ What is *not* bounded, and cannot be: a **write** to a client or child that has
 stopped reading its own pipe. That is the transport's backpressure. Bounding it
 would mean dropping protocol bytes, which is worse than blocking.
 
-## A `tools/call` inside a JSON-RPC batch is relayed, not recorded — and it says so
+## A `tools/call` inside a JSON-RPC batch is recorded like a single (AILAB-788)
 
-A top-level array is a legal JSON-RPC batch. Wrap does not record anything
-inside one: it would need a session per element, a response matched element by
-element, and a request digest over bytes that were never a frame of their own.
-None of that is built, and inventing it here would exceed a queue gate that says
-pass-through + recording only.
+*Supersedes the earlier decision to relay a batch without recording it, and the
+one-time stderr diagnostic that named that hole. Both are gone from the code.*
 
-The gate is that wrap does not **block** — so a batch is relayed, as everything
-else is. What was unacceptable was doing that **silently**, because the failure
-mode is an audit tool bypassing itself: the client's call runs, and the record
-file has no row for it. So the first batch of a session produces a named
-diagnostic on the child-stderr sink, and the README lists the gap under "What
-this is not". The crate description says "each single (non-batched)
-`tools/call`" for the same reason — the previous "every `tools/call`" was an
-overclaim.
+A top-level array is a legal JSON-RPC batch, and a call inside one runs exactly
+as a call in its own frame does. So it is recorded exactly the same way: an
+`intent` before the frame reaches the child, an `outcome` when the answer comes
+back. The array is walked element by element; a non-`tools/call` element is
+skipped as a whole `initialize` frame is, and one that cannot name a tool takes
+the same three-axis deny the malformed object path takes.
 
-Closing the gap properly is future work, not a silent to-do: it needs
-per-element sessions and an element-wise response match.
+Two alternatives were on the table and both were worse. **Dropping the frame** so
+it never reaches the child would need wrap to answer the client with a JSON-RPC
+error the child never produced — the one thing this crate refuses to do
+(AILAB-789). **Relaying while recording `Denied` / `not executed`** would sign a
+refusal of a call the child really ran, which is precisely the defect `e92450a`
+exists for.
+
+**The N calls in a batch share one `request_digest`, and their N outcomes share
+one `response_digest`.** A batched element never was a frame; the digests cover
+the arrays the client and child actually wrote. Giving an element a digest of
+its own would mean re-serializing it and committing a signed record to bytes
+that crossed no wire — the `digest.rs` verbatim rule, which outranks the
+convenience of a per-call digest.
+
+The frame is still relayed **whole and unsplit** in both directions. Splitting a
+batch into N object frames would be a rewrite rather than a relay.
 
 ## The pass-through grant is `deny_all`, not `denied`
 
@@ -254,5 +263,6 @@ not tell a fixture that quit from a relay that truncated.
   `execute_tool_call`, no capability resolution
 - Resource metering of the child process
 - HTTP/SSE transport, or Content-Length framing
-- **Recording** a batched `tools/call` — relayed and named, never recorded; see
-  the batch section above
+- **Refusing** a batch, or splitting one into per-element frames on either wire
+  — batched calls are recorded and the array is relayed whole; see the batch
+  section above

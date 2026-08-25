@@ -640,38 +640,132 @@ fn child_stderr_survives_a_non_utf8_byte() {
     );
 }
 
-/// 15. A `tools/call` inside a JSON-RPC batch array is relayed and **not
-///     recorded** — the known gap. Wrap must not hide it.
+/// 15. A `tools/call` inside a JSON-RPC batch array is recorded exactly like
+///     one sent in a frame of its own — and the frame still reaches the child
+///     whole (AILAB-788).
 #[test]
-fn a_batched_tools_call_is_relayed_and_its_audit_bypass_is_named() {
-    let driven =
-        drive(&[r#"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"batched"}}]"#]);
+fn a_batched_tools_call_is_recorded_like_a_single_and_still_relayed() {
+    const BATCH_FRAME: &str =
+        r#"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"batched"}}]"#;
 
-    // Relayed: the child answered with a batch of its own.
+    let driven = drive(&[BATCH_FRAME]);
+
+    // Relayed, unsplit: the child answered with a batch of its own, which it
+    // could only do if it received the array rather than N object frames.
     let out = driven.client_out.lines();
     assert_eq!(out.len(), 1, "one batch response frame: {out:?}");
-    let response: Value = serde_json::from_str(&out[0]).expect("batch response JSON");
-    assert!(response.is_array(), "a batch answers as an array: {out:?}");
+    assert!(
+        driven.response(0).is_array(),
+        "a batch answers as an array: {out:?}"
+    );
     assert!(out[0].contains("batched"), "{out:?}");
 
-    // Not recorded: this is the gap.
+    // Recorded: the same four lines a single-frame call produces.
     assert_eq!(
         driven.line_types(),
-        vec!["open", "close"],
-        "a batched call produces no intent and no outcome: {}",
+        vec!["open", "intent", "outcome", "close"],
+        "a batched call is recorded like a single: {}",
+        driven.audit
+    );
+    let outcome = &driven.outcomes()[0];
+    assert_eq!(outcome["tool_id"], "batched", "{outcome}");
+    assert_eq!(outcome["policy"]["status"], "allowed", "{outcome}");
+    assert_eq!(outcome["capability"]["status"], "granted", "{outcome}");
+    assert_eq!(outcome["execution"]["status"], "success", "{outcome}");
+
+    // The digest commits to the array the client actually wrote. A batched
+    // element never was a frame, so re-serializing it to give it a digest of
+    // its own would commit the record to bytes that crossed no wire.
+    assert_eq!(
+        outcome["request_digest"]
+            .as_str()
+            .expect("a request digest"),
+        RequestDigest::of_request_bytes(BATCH_FRAME.as_bytes()).to_hex(),
+        "the digest covers the batch frame verbatim"
+    );
+
+    // The old bypass diagnostic is gone, not merely quieter: the record file is
+    // the evidence now, so there is nothing left for wrap to confess.
+    let err = driven.child_err.text();
+    assert!(
+        !err.contains("aegis wrap: relayed a JSON-RPC batch array"),
+        "the superseded diagnostic must not survive: {err:?}"
+    );
+    assert!(!err.contains("known gap"), "{err:?}");
+}
+
+/// 15b. Two `tools/call`s in **one** batch array: two records, one frame.
+///
+/// The AC Linear named separately from the single-call case. N intents share
+/// one `request_digest` and N outcomes share one `response_digest`, because on
+/// each wire there was exactly one frame — that shared-digest fact is the whole
+/// difference between a batched call and a single one, so it is asserted rather
+/// than described.
+#[test]
+fn a_batch_of_two_calls_produces_two_records_over_one_frame() {
+    const BATCH_FRAME: &str = r#"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"first"}},{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"second"}}]"#;
+
+    let driven = drive(&[BATCH_FRAME]);
+
+    let out = driven.client_out.lines();
+    assert_eq!(out.len(), 1, "one batch response frame: {out:?}");
+    assert_eq!(
+        driven.response(0).as_array().map(Vec::len),
+        Some(2),
+        "the child answered both elements: {out:?}"
+    );
+
+    assert_eq!(
+        driven.line_types(),
+        vec!["open", "intent", "intent", "outcome", "outcome", "close"],
+        "every call in the batch is accounted for: {}",
         driven.audit
     );
 
-    // Said out loud, exactly once.
-    let err = driven.child_err.text();
+    let outcomes = driven.outcomes();
+    assert_eq!(outcomes[0]["tool_id"], "first", "{}", driven.audit);
+    assert_eq!(outcomes[1]["tool_id"], "second", "{}", driven.audit);
+    assert_eq!(outcomes[0]["execution"]["status"], "success");
+    assert_eq!(outcomes[1]["execution"]["status"], "success");
     assert!(
-        err.contains("batch") && err.contains("NOT recorded"),
-        "the bypass must be named on stderr: {err:?}"
+        outcomes[0]["seq"].as_u64() < outcomes[1]["seq"].as_u64(),
+        "seq must advance across a batch as it does across frames: {outcomes:?}"
+    );
+    // Distinct calls, distinct grants — sharing a frame is not sharing an
+    // identity.
+    assert_ne!(outcomes[0]["call_id"], outcomes[1]["call_id"]);
+    assert_ne!(outcomes[0]["grant_id"], outcomes[1]["grant_id"]);
+
+    // One frame in, one frame out — so one request digest and one response
+    // digest, each shared by both calls.
+    assert_eq!(
+        outcomes[0]["request_digest"], outcomes[1]["request_digest"],
+        "both calls arrived in the same frame"
     );
     assert_eq!(
-        err.matches("known gap").count(),
-        1,
-        "one diagnostic per session, not one per batch: {err:?}"
+        outcomes[0]["request_digest"]
+            .as_str()
+            .expect("a request digest"),
+        RequestDigest::of_request_bytes(BATCH_FRAME.as_bytes()).to_hex(),
+    );
+    assert_eq!(
+        outcomes[0]["response_digest"], outcomes[1]["response_digest"],
+        "both calls were answered by the same frame"
+    );
+    assert_eq!(
+        outcomes[0]["response_digest"]
+            .as_str()
+            .expect("a response digest"),
+        ResponseDigest::of_response_bytes(out[0].as_bytes()).to_hex(),
+        "the digest covers the child's array frame as it was relayed"
+    );
+
+    let verification = verify_chain_file(&driven.audit_path).expect("audit readable");
+    assert_eq!(
+        verification.verdict,
+        Verdict::Verified,
+        "{:?}",
+        verification.verdict
     );
 }
 

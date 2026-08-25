@@ -1,9 +1,9 @@
 # Wrapping an MCP server
 
 `aegis wrap` sits in the middle of an existing MCP session and writes a
-schema-v2 chained, signed audit record for every **single** `tools/call`
-it carries. Calls sent inside a JSON-RPC batch array are relayed but
-**not** recorded — see [the recording gap](#the-batch-recording-gap).
+schema-v2 chained, signed audit record for every `tools/call` it carries —
+including one sent inside a JSON-RPC batch array, see
+[batched calls](#batched-calls).
 
 ```
 client ──stdin──▶ aegis wrap ──stdin──▶ child MCP server
@@ -89,17 +89,19 @@ What wrap does buy is **evidence**: a hash-chained, signed record of
 which tools were called, with digests of the exact request and response
 bytes, that survives the session and can be verified with `aegis verify`.
 
-## The batch recording gap
+## Batched calls
 
-A `tools/call` sent inside a **JSON-RPC batch array** is relayed to the
-child and executed, but no audit record is written for it. The chain
-stays internally valid and `aegis verify` still passes — it simply has no
-line for that call, and nothing in the record says one is missing.
+A `tools/call` sent inside a **JSON-RPC batch array** is recorded exactly
+as one sent in a frame of its own: an `intent` before the array reaches
+the child, an `outcome` when the child's answer comes back. The array is
+relayed whole and unsplit in both directions — wrap does not rewrite a
+batch into per-call frames, and it does not refuse one.
 
-Wrap says so out loud rather than hiding it: the first batch of a session
-prints a diagnostic on the child's stderr sink naming the gap. Treat a
-wrap chain as complete evidence **only** for clients that send one
-request per message.
+The calls in a batch **share the frame's digests**: N intents carry the
+same `request_digest` and their N outcomes the same `response_digest`,
+because on each wire there was exactly one frame. A batched element never
+was a frame of its own, so digesting a re-serialized element would commit
+a signed record to bytes that crossed no wire.
 
 macOS Seatbelt confinement is a later ticket (AILAB-630), not this one.
 `--confine` is Linux-only.

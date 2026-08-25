@@ -1,7 +1,7 @@
 //! Transparent stdio MCP interposer — client ↔ `aegis wrap` ↔ child server.
 //!
 //! Wrap sits in the middle of an existing MCP stdio session and relays it in
-//! both directions, writing a schema-v2 chained audit record for each single
+//! both directions, writing a schema-v2 chained audit record for every
 //! `tools/call` it carries.
 //!
 //! **Framing, precisely.** A frame is the bytes up to and not including the
@@ -12,9 +12,12 @@
 //! frame that arrived without one gains one, and a frame that is empty or all
 //! whitespace is dropped rather than forwarded.
 //!
-//! **A `tools/call` inside a JSON-RPC batch array is relayed and not
-//! recorded.** Wrap says so on the child-stderr sink when it happens; the
-//! README's "What this is not" carries the whole of it.
+//! **A `tools/call` inside a JSON-RPC batch array is recorded like one sent in
+//! a frame of its own**, and the array is still relayed whole and unsplit. The
+//! N calls in one batch therefore share one `request_digest` and one
+//! `response_digest`: a batched element never was a frame, so the digests cover
+//! the arrays that actually crossed the wire. The README's "Batched calls"
+//! carries the whole of it.
 //!
 //! **Wrap confines only when `WrapConfig::confinement` is `Some`**, which the
 //! CLI sets from `--confine` (AILAB-628). Without it there is no policy

@@ -44,8 +44,9 @@
 //!
 //! # Ordering (both directions are load-bearing)
 //!
-//! - Client → child: **record first, relay second.** The intent line must be
-//!   durable before the request can reach the tool.
+//! - Client → child: **record first, relay second.** Every intent line the
+//!   frame carries — a batch array can carry several — must be durable before
+//!   the request can reach the tool.
 //! - Child → client: **relay first, record second.** The client never waits on
 //!   an fsync that can just as correctly happen after its response is on the
 //!   wire.
@@ -77,14 +78,6 @@ const STDERR_DRAIN: Duration = Duration::from_secs(2);
 /// pipe nobody is reading. Blocking here would make one unread pipe an
 /// unbounded wait on wrap's exit path, so the diagnostic is dropped instead.
 const SINK_LOCK_GRACE: Duration = Duration::from_secs(2);
-
-/// Said once per session, the first time a JSON-RPC batch array goes past.
-///
-/// Named on the child-stderr sink rather than hidden: a batched `tools/call` is
-/// relayed with **no** audit record, and an audit tool that bypasses itself in
-/// silence is worse than one that says so. See the crate README.
-const BATCH_BYPASS_DIAGNOSTIC: &str = "aegis wrap: relayed a JSON-RPC batch array \
-     — any tools/call inside a batch is NOT recorded (known gap, see the botzr-aegis-wrap README)";
 
 /// Said once, when the child quits under a client that is still open.
 const CHILD_DIED_EARLY_DIAGNOSTIC: &str =
@@ -148,7 +141,9 @@ pub fn run_wrap_with_streams(config: &WrapConfig, streams: WrapStreams) -> Resul
     // if both readers vanish without one.
     drop(tx);
 
-    let pumped = pump(&writer, &rx, child_stdin, &mut client_out, &shared_err);
+    // No sink here: the pump writes no diagnostics of its own. The one
+    // lifecycle line wrap authors is emitted below, after the child is reaped.
+    let pumped = pump(&writer, &rx, child_stdin, &mut client_out);
     // Reap unconditionally. A pump that failed must not leave a zombie behind,
     // and the child holds the audit-relevant exit status either way.
     let reaped = reap(&mut child);
@@ -181,13 +176,11 @@ fn pump(
     rx: &Receiver<Event>,
     child_stdin: ChildStdin,
     client_out: &mut Box<dyn Write + Send>,
-    child_err: &SharedErr,
 ) -> Result<bool, WrapError> {
     // `Option` because client EOF closes the pipe by dropping the handle.
     let mut child_stdin = Some(child_stdin);
     let mut client_open = true;
     let mut child_died_early = false;
-    let mut batch_named = false;
     // Set once the client is gone. Until then the loop blocks indefinitely,
     // which is correct: a live client may say nothing for hours.
     let mut shutdown_deadline: Option<Instant> = None;
@@ -237,16 +230,19 @@ fn pump(
                 }
                 // Record first: the intent line has to be durable before the
                 // request can reach the tool.
+                // A repeated id replaces the older call, whose `Drop` emits
+                // the fail-closed outcome — one id, one answerable call. That
+                // holds within a batch as much as across frames.
                 match record::observe_client_line(writer, &frame)? {
-                    // A repeated id replaces the older call, whose `Drop` emits
-                    // the fail-closed outcome — one id, one answerable call.
                     Observed::Pending(id_key, call) => {
                         pending.insert(id_key, *call);
                     }
-                    Observed::Batch => {
-                        if !batch_named {
-                            batch_named = true;
-                            diagnose(child_err, BATCH_BYPASS_DIAGNOSTIC);
+                    // One frame, N calls. The frame itself is still relayed
+                    // whole and unsplit below — splitting a batch into N object
+                    // frames would be a rewrite, not a relay.
+                    Observed::Many(calls) => {
+                        for (id_key, call) in calls {
+                            pending.insert(id_key, *call);
                         }
                     }
                     Observed::Ignored => {}
@@ -281,10 +277,15 @@ fn pump(
                 }
                 // Relay first: the client does not wait on our fsync.
                 write_frame(client_out, &frame)?;
-                if let Some(call) =
-                    record::response_id_key(&frame).and_then(|id_key| pending.remove(&id_key))
-                {
-                    record::complete_relayed(call, &frame)?;
+                // One frame can close more than one call: a batch is answered
+                // by a batch, and every response-shaped element in it completes
+                // its own pending call against this same frame — so N outcomes
+                // share one `response_digest`, mirroring the N intents that
+                // shared one `request_digest`.
+                for id_key in record::response_id_keys(&frame) {
+                    if let Some(call) = pending.remove(&id_key) {
+                        record::complete_relayed(call, &frame)?;
+                    }
                 }
             }
             Event::ChildEof => {

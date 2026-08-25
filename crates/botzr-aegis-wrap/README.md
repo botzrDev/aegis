@@ -2,12 +2,12 @@
 
 Transparent **stdio MCP interposer** for Aegis. Wrap sits in the middle of an
 existing MCP session — client ↔ `aegis wrap` ↔ child server — relays it in both
-directions, and writes a schema-v2 chained, signed audit record for each single
+directions, and writes a schema-v2 chained, signed audit record for every
 `tools/call` it carries.
 
-*Each single* rather than *every*: a `tools/call` sent inside a JSON-RPC **batch
-array** is relayed and **not** recorded. That gap is real, named on stderr when
-it happens, and described under [What this is not](#what-this-is-not).
+*Every* means every: a `tools/call` sent inside a JSON-RPC **batch array** is
+recorded the same way one sent in a frame of its own is, and the array still
+reaches the child whole — see [Batched calls](#batched-calls).
 
 ```
 client ──stdin──▶ aegis wrap ──stdin──▶ child MCP server
@@ -30,17 +30,9 @@ started it. Read this list before describing wrap as a sandbox by default:
   the operator's own account. `--confine` (AILAB-628) applies Landlock and
   seccomp from `--allow-read` / `--allow-write` / `--allow-net`.
 - **No approval parking, no schema pinning** (AILAB-629 / AILAB-627).
-- **No record for a batched `tools/call`.** A JSON-RPC **batch** — a top-level
-  array — is relayed like anything else, and *nothing inside it is recorded*.
-  Recording one would mean a session per element, a response matched element by
-  element, and a request digest over bytes that never were a frame; none of that
-  is built. A client that batches its calls therefore gets an audit file with
-  **no** rows for them. Wrap prints
-  `aegis wrap: relayed a JSON-RPC batch array — any tools/call inside a batch is
-  NOT recorded (known gap, …)` to the child-stderr sink the first time it sees
-  one, because an audit tool that bypasses itself in silence is worse than one
-  that says so. (In practice MCP clients send one request per frame; this is a
-  protocol-legal path, not the common one.)
+- **No refusal of a batch.** A JSON-RPC **batch** — a top-level array — is
+  recorded call by call (see [Batched calls](#batched-calls)), but it is still
+  relayed, like everything else. Wrap blocks nothing here either.
 - **Not Model A isolation.** Nothing runs inside wasmtime here. This is closer
   to Model B than to Model A, and weaker than either: wrap does not even enforce
   a grant before an effect, because the effect happens inside a process it does
@@ -72,10 +64,30 @@ through, and one bad byte cannot swallow what follows it.
 
 ## What gets recorded
 
-Only a `tools/call` sent as its own frame. `initialize`, `tools/list`, `ping`,
-notifications, batch arrays, and every method this build has never heard of are
-relayed with **zero** interception — no session, no audit line, and never a
-locally synthesized `-32601`. Wrap is an interposer, not a second server.
+Every `tools/call` — sent as its own frame, or carried inside a batch array.
+`initialize`, `tools/list`, `ping`, notifications, and every method this build
+has never heard of are relayed with **zero** interception — no session, no audit
+line, and never a locally synthesized `-32601`. Wrap is an interposer, not a
+second server.
+
+### Batched calls
+
+A top-level array is walked element by element, and each well-formed
+`tools/call` inside it opens the same `intent` before the frame reaches the
+child and the same `outcome` when the answer comes back. An element that is not
+a `tools/call` is skipped exactly as a whole `initialize` frame is; one that
+cannot name a tool takes the same immediate three-axis deny a malformed object
+frame takes.
+
+**N calls in one batch share one `request_digest`, and their N outcomes share
+one `response_digest`.** A batched element never was a frame, so the digests
+cover the array the client actually wrote and the array the child actually
+answered with. Re-serializing an element to give it a digest of its own would
+commit a signed record to bytes that crossed no wire.
+
+The frame itself is relayed **whole and unsplit** in both directions. Splitting
+a batch into N object frames would be a rewrite rather than a relay, and wrap
+never puts bytes on either wire that it did not receive.
 
 ### Which child frames can close a call
 

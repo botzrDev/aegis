@@ -117,6 +117,19 @@ support.
 
 ### Changed
 
+- **A `tools/call` inside a JSON-RPC batch array is now recorded** (AILAB-788).
+  A reader of a wrap chain can believe the file accounts for every `tools/call`
+  the session carried, not only those the client sent one per frame: a batched
+  call opens the same `intent` and closes with the same `outcome` a single one
+  does, and the one-time stderr diagnostic that used to name the hole is gone
+  because the record file is the evidence. The batch is still **one frame** on
+  each wire — relayed whole and unsplit, never rewritten into per-call frames
+  and never refused — so the N calls it carries share its `request_digest` and
+  their outcomes share the child array's `response_digest`. That is the verbatim
+  rule holding: a batched element never was a frame of its own, and a signed
+  record must not commit to bytes that crossed no wire. Wrap still blocks
+  nothing and still synthesizes no client-facing error.
+
 - **`DecisionAxes` is `#[non_exhaustive]`, and the three `DEFAULT_MAX_*` grant
   ceilings all live in `botzr-aegis-core`** (AILAB-707). **Breaking:**
   `botzr_aegis_core::DecisionAxes` can no longer be built with a struct

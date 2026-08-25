@@ -53,22 +53,25 @@ pub(crate) struct PendingCall<'a> {
 
 /// What one client frame turned out to be.
 pub(crate) enum Observed<'a> {
-    /// Nothing to track. Not JSON, not a `tools/call`, a notification, or a
-    /// malformed `tools/call` that has *already* been recorded as a completed
-    /// deny here.
+    /// Nothing to track. Not JSON, not a `tools/call`, a notification, a batch
+    /// carrying none of those, or a malformed `tools/call` that has *already*
+    /// been recorded as a completed deny here.
     Ignored,
     /// A well-formed `tools/call`: recorded as intent, keyed by the id its
     /// response will carry.
     ///
-    /// Boxed because a `CallSession` is ~680 bytes and the other two variants
-    /// are empty, so an unboxed enum would make every relayed frame — most of
-    /// them not `tools/call` at all — pay for the one that is
+    /// Boxed because a `CallSession` is ~680 bytes and `Ignored` is empty, so
+    /// an unboxed enum would make every relayed frame — most of them not
+    /// `tools/call` at all — pay for the one that is
     /// (`clippy::large_enum_variant`). The allocation happens once per recorded
     /// call, against two fsyncs.
     Pending(String, Box<PendingCall<'a>>),
-    /// A JSON-RPC **batch array**. Relayed like everything else and recorded by
-    /// nothing — see [`observe_client_line`].
-    Batch,
+    /// Every well-formed `tools/call` carried by one JSON-RPC **batch array**,
+    /// in the order its elements appeared.
+    ///
+    /// Never empty: a batch with no call to account for is [`Observed::Ignored`],
+    /// so the caller has one thing to do with each variant rather than two.
+    Many(Vec<(String, Box<PendingCall<'a>>)>),
 }
 
 /// Why a still-pending call is being closed without the child's answer.
@@ -98,21 +101,36 @@ impl Unanswered {
     }
 }
 
-/// Inspect one client frame and, when it is a well-formed `tools/call`, open a
-/// session for it.
+/// Inspect one client frame and open a session for every well-formed
+/// `tools/call` it carries.
 ///
-/// In every case the caller still relays the frame verbatim. Wrap does not
-/// block; a child that dislikes the request answers with its own `-32602`.
+/// In every case the caller still relays the frame verbatim, whole and unsplit.
+/// Wrap does not block; a child that dislikes the request answers with its own
+/// `-32602`.
 ///
-/// # The batch gap
+/// # Batches
 ///
-/// A JSON-RPC **batch** — a top-level array — is relayed and **not recorded**,
-/// including any `tools/call` inside it. Recording one would mean opening a
-/// session per element, matching an array response element by element, and
-/// digesting a "request" that never existed as its own frame; none of that is
-/// built (AILAB-625 is pass-through + recording only). Reporting it is the
-/// honest alternative to hiding it, so this returns [`Observed::Batch`] and the
-/// relay names the bypass on the child-stderr sink.
+/// A JSON-RPC **batch** — a top-level array — is walked element by element, and
+/// each well-formed `tools/call` inside it is recorded exactly as one sent in a
+/// frame of its own: an intent before the frame reaches the child, an outcome
+/// when the child's answer comes back. An element that is not a `tools/call` is
+/// skipped the way a whole `initialize` frame is, and one that cannot name a
+/// tool takes the same immediate three-axis deny a malformed object frame
+/// takes.
+///
+/// **N calls in one batch share one `request_digest`.** A batched element never
+/// was a frame, so the digest covers the array the client actually wrote;
+/// re-serializing an element to give it a digest of its own would commit the
+/// record to bytes that crossed no wire (`digest.rs` verbatim rule). The mirror
+/// of that holds coming back — see [`complete_relayed`].
+///
+/// Recording a batched call **like a single** is the shape this crate chose,
+/// and the two alternatives were both worse. Dropping the frame so it never
+/// reaches the child would need wrap to answer the client with a JSON-RPC error
+/// the child never produced, which wrap does not do (AILAB-789). Relaying the
+/// frame while recording the call `Denied` / `not executed` would sign a
+/// refusal of a call the child really ran — a record stating something other
+/// than what was enforced, which is the defect `e92450a` exists for.
 pub(crate) fn observe_client_line<'a>(
     writer: &'a AuditWriter,
     frame: &[u8],
@@ -120,22 +138,59 @@ pub(crate) fn observe_client_line<'a>(
     let Ok(message) = serde_json::from_slice::<Value>(frame) else {
         return Ok(Observed::Ignored);
     };
-    if message.is_array() {
-        return Ok(Observed::Batch);
+    if let Some(elements) = message.as_array() {
+        let mut calls = Vec::new();
+        for element in elements {
+            // `?` rather than a per-element recovery: an audit write that
+            // fails takes the whole session down, exactly as it does on the
+            // object path. The frame reaches the child only once every intent
+            // it carries is durable.
+            if let Some(call) = observe_tools_call(writer, frame, element)? {
+                calls.push(call);
+            }
+        }
+        return Ok(if calls.is_empty() {
+            Observed::Ignored
+        } else {
+            Observed::Many(calls)
+        });
     }
+    Ok(match observe_tools_call(writer, frame, &message)? {
+        Some((id_key, call)) => Observed::Pending(id_key, call),
+        None => Observed::Ignored,
+    })
+}
+
+/// Open a session for one `tools/call` message — or account for it here and
+/// return `None`.
+///
+/// `frame` is the whole client frame the message arrived in. For a batched
+/// element that is the enclosing array, because the array is the only run of
+/// bytes that ever existed as a frame.
+///
+/// `None` covers three facts that share one consequence — no response left to
+/// match: this is not a `tools/call`; it is a notification no response can ever
+/// answer; or it is a `tools/call` that cannot name a tool, which is recorded
+/// here as a completed deny before returning.
+fn observe_tools_call<'a>(
+    writer: &'a AuditWriter,
+    frame: &[u8],
+    message: &Value,
+) -> Result<Option<(String, Box<PendingCall<'a>>)>, AuditError> {
     if message.get("method").and_then(Value::as_str) != Some("tools/call") {
-        return Ok(Observed::Ignored);
+        return Ok(None);
     }
     // A notification has no id, so no response can ever be matched to it and no
     // outcome could ever be written. Recording an intent that is structurally
     // unanswerable would manufacture a permanent in-flight call.
-    let Some(id_key) = id_key(&message) else {
-        return Ok(Observed::Ignored);
+    let Some(id_key) = id_key(message) else {
+        return Ok(None);
     };
 
     // VERBATIM: the digest covers the frame bytes as they arrived — a trailing
     // `\r` included, the `\n` delimiter excluded — never a re-encoding of the
-    // parsed value (`digest.rs` verbatim rule).
+    // parsed value (`digest.rs` verbatim rule). A batched element has no frame
+    // of its own, so it commits to the array's bytes along with its siblings.
     let request_digest = RequestDigest::of_request_bytes(frame);
     let policy_set_hash = PolicySetHash::of_canonical_bytes(WRAP_PASSTHROUGH_POLICY_SET_ID);
     let tool_id = message
@@ -165,21 +220,27 @@ pub(crate) fn observe_client_line<'a>(
             reason: "not executed".into(),
         });
         session.complete()?;
-        return Ok(Observed::Ignored);
+        return Ok(None);
     };
 
     let session = CallSession::begin(writer, tool_id.clone(), request_digest, policy_set_hash)?;
-    Ok(Observed::Pending(
+    Ok(Some((
         id_key,
         Box::new(PendingCall {
             session,
             tool_id,
             started: Instant::now(),
         }),
-    ))
+    )))
 }
 
 /// Close a call the child answered.
+///
+/// `raw_response` is the child frame as it arrived. When that frame is a batch
+/// array it closes one call per response-shaped element, so N outcomes share
+/// one `response_digest` — the mirror of the N intents that shared one
+/// `request_digest`, and for the same reason: an element inside an array never
+/// was a frame.
 ///
 /// **A JSON-RPC `error` object from the child is still [`ExecutionOutcome::Success`].**
 /// The call ran; the tool erred. `HostDenied` is reserved for the child
@@ -238,14 +299,31 @@ pub(crate) fn complete_unanswered(
     session.complete()
 }
 
-/// The pending-map key for a child **response** frame, or `None` when the frame
-/// is not a response — which includes the child making a request of its own.
-pub(crate) fn response_id_key(frame: &[u8]) -> Option<String> {
-    let message = serde_json::from_slice::<Value>(frame).ok()?;
-    if !is_response_shaped(&message) {
+/// The pending-map keys a child frame closes, in the order they appear in it.
+///
+/// Empty when the frame is not a response at all — which includes the child
+/// making a request of its own. An object frame yields at most one key; a batch
+/// array yields one per **response-shaped** element, and a method-bearing
+/// element inside it contributes nothing, exactly as it would contribute
+/// nothing on its own. The bidirectional-MCP guard below is per element, not
+/// per frame: a server→client request riding in the same array as a real
+/// response must not close anything.
+pub(crate) fn response_id_keys(frame: &[u8]) -> Vec<String> {
+    let Ok(message) = serde_json::from_slice::<Value>(frame) else {
+        return Vec::new();
+    };
+    match message.as_array() {
+        Some(elements) => elements.iter().filter_map(response_key).collect(),
+        None => response_key(&message).into_iter().collect(),
+    }
+}
+
+/// The pending-map key one message closes, if it is a response at all.
+fn response_key(message: &Value) -> Option<String> {
+    if !is_response_shaped(message) {
         return None;
     }
-    id_key(&message)
+    id_key(message)
 }
 
 /// Is this child frame a *response*, or a request the server is making of its
@@ -293,48 +371,72 @@ mod tests {
 
     #[test]
     fn ids_of_different_json_types_do_not_collide() {
-        let number = response_id_key(br#"{"jsonrpc":"2.0","id":1,"result":{}}"#).unwrap();
-        let string = response_id_key(br#"{"jsonrpc":"2.0","id":"1","result":{}}"#).unwrap();
+        let number = response_id_keys(br#"{"jsonrpc":"2.0","id":1,"result":{}}"#);
+        let string = response_id_keys(br#"{"jsonrpc":"2.0","id":"1","result":{}}"#);
+        assert_eq!(number.len(), 1, "{number:?}");
         assert_ne!(number, string);
     }
 
     #[test]
     fn a_null_or_absent_id_is_a_notification() {
-        assert_eq!(response_id_key(br#"{"jsonrpc":"2.0","method":"x"}"#), None);
-        assert_eq!(
-            response_id_key(br#"{"jsonrpc":"2.0","id":null,"result":{}}"#),
-            None
-        );
-        assert_eq!(response_id_key(b"not json"), None);
+        assert!(response_id_keys(br#"{"jsonrpc":"2.0","method":"x"}"#).is_empty());
+        assert!(response_id_keys(br#"{"jsonrpc":"2.0","id":null,"result":{}}"#).is_empty());
+        assert!(response_id_keys(b"not json").is_empty());
     }
 
     /// The bidirectional-MCP guard, at the unit level: a server→client
     /// *request* must never key a completion, however familiar its id looks.
     #[test]
     fn a_server_initiated_request_is_not_a_response() {
+        assert!(response_id_keys(
+            br#"{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage","params":{}}"#
+        )
+        .is_empty());
+        assert!(response_id_keys(br#"{"jsonrpc":"2.0","id":1,"method":"roots/list"}"#).is_empty());
+        // A response shape with the same id *does* complete.
         assert_eq!(
-            response_id_key(
-                br#"{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage","params":{}}"#
-            ),
-            None
+            response_id_keys(br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#).len(),
+            1
         );
         assert_eq!(
-            response_id_key(br#"{"jsonrpc":"2.0","id":1,"method":"roots/list"}"#),
-            None
+            response_id_keys(br#"{"jsonrpc":"2.0","id":1,"error":{"code":-1}}"#).len(),
+            1
         );
-        // A response shape the same id *does* complete.
-        assert!(response_id_key(br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#).is_some());
-        assert!(response_id_key(br#"{"jsonrpc":"2.0","id":1,"error":{"code":-1}}"#).is_some());
         // A `null` result is still a result: `get` sees the key, not the value.
-        assert!(response_id_key(br#"{"jsonrpc":"2.0","id":1,"result":null}"#).is_some());
+        assert_eq!(
+            response_id_keys(br#"{"jsonrpc":"2.0","id":1,"result":null}"#).len(),
+            1
+        );
     }
 
-    /// A batch response is not matched either — the batch gap is symmetric.
+    /// A batch array closes calls too — but only through its response-shaped
+    /// elements. The bidirectional-MCP guard is per element, not per frame.
     #[test]
-    fn an_array_frame_is_never_a_response() {
+    fn a_batch_array_completes_through_response_shaped_elements_only() {
         assert_eq!(
-            response_id_key(br#"[{"jsonrpc":"2.0","id":1,"result":{}}]"#),
-            None
+            response_id_keys(
+                br#"[{"jsonrpc":"2.0","id":1,"result":{}},{"jsonrpc":"2.0","id":2,"error":{"code":-1}}]"#
+            ),
+            vec!["1".to_owned(), "2".to_owned()],
+            "both response elements key their own completion"
+        );
+        assert!(
+            response_id_keys(
+                br#"[{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage"},{"jsonrpc":"2.0","id":2,"method":"roots/list"}]"#
+            )
+            .is_empty(),
+            "an array of server-initiated requests closes nothing"
+        );
+        assert_eq!(
+            response_id_keys(
+                br#"[{"jsonrpc":"2.0","id":1,"method":"roots/list"},{"jsonrpc":"2.0","id":1,"result":{}}]"#
+            ),
+            vec!["1".to_owned()],
+            "a server request riding beside a real response must not close a call of its own"
+        );
+        assert!(
+            response_id_keys(b"[]").is_empty(),
+            "an empty array carries no answer"
         );
     }
 
@@ -342,6 +444,6 @@ mod tests {
     /// an end-of-stream.
     #[test]
     fn invalid_utf8_is_merely_unmatched() {
-        assert_eq!(response_id_key(&[0xff, 0xfe, b'{']), None);
+        assert!(response_id_keys(&[0xff, 0xfe, b'{']).is_empty());
     }
 }

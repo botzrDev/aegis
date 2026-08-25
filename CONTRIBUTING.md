@@ -111,9 +111,11 @@ in a security doc is a security defect.
 - **Distinguish `main` from the published release.** The crates.io `0.3.0`
   crates predate several features documented here. If you document something
   that only exists on `main`, say so at the point of the claim.
-- **Name gaps rather than omitting them.** The batch-recording gap in
-  `aegis wrap` is documented in the crate README, the book, and stderr at
-  runtime. That is the expected standard.
+- **Name gaps rather than omitting them.** When `aegis wrap` is SIGKILLed its
+  `AuditWriter` never drops, so the Session has no signed `close` line and a
+  verifier reports `Indeterminate` rather than `Verified`. That is written down
+  in `crates/botzr-aegis-wrap/DECISIONS.md` rather than glossed. That is the
+  expected standard.
 
 The book lives in `docs/` and is published to
 <https://botzrdev.github.io/aegis/>. Add new chapters to `docs/SUMMARY.md`.
