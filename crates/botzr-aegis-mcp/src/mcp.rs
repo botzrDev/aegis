@@ -157,6 +157,10 @@ fn error_code(err: &AegisError) -> &'static str {
         AegisError::ResourceExceeded { .. } => "RESOURCE_EXCEEDED",
         AegisError::HostDenied { .. } => "HOST_DENIED",
         AegisError::Audit { .. } => "AUDIT_ERROR",
+        // The gateway is sync and owns no tokio runtime, so this is
+        // unreachable from here today; the arm exists because `AegisError` is
+        // exhaustive and the code table must stay total.
+        AegisError::NestedRuntime { .. } => "NESTED_RUNTIME",
     }
 }
 

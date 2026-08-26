@@ -98,9 +98,12 @@ deliberately no public instantiate-only API (adding one to make a bench possible
 is forbidden by PRD §10), so the warm iteration goes through
 `SandboxEngine::execute`. That is, per iteration:
 
-1. `block_on_async` builds a **fresh current-thread tokio runtime**
-   (`crates/botzr-aegis-sandbox/src/engine.rs:366-372`) — one per call, not
-   amortized;
+1. `block_on` runs the guest future on the engine's tokio runtime
+   (`crates/botzr-aegis-sandbox/src/engine.rs`). **These numbers were measured
+   before AILAB-809**, when a fresh current-thread runtime was built per call
+   and was therefore inside the median; the engine now builds one runtime in
+   `SandboxEngine::new` and reuses it, so this step is amortized and the figure
+   below is an upper bound on today's cost (re-measuring is AILAB-796's);
 2. `build_store` — WASI ctx from the grant, memory limiter, epoch deadline;
 3. `tool_pre.instantiate_async` — the actual warm instantiation;
 4. the WIT `run` export.

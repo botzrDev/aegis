@@ -16,6 +16,17 @@ support.
 
 ### Added
 
+- **Async entry points for both trust models** (AILAB-809).
+  `Runtime::execute_tool_call_async` (Model A) and
+  `Runtime::execute_host_call_async` (Model B) run the same pipeline —
+  same stations, same short-circuits, same Agent Action Record — awaited on the
+  caller's tokio runtime instead of blocking on one. An embedder already inside
+  a runtime now has a supported way to make a call. The sandbox gained the
+  matching `SandboxEngine::execute_async` (and `execute_fixture_async` under
+  `test-utils`). There is still exactly one pipeline driver and one execution
+  step per trust model: the sync and async entries share both, so they cannot
+  drift (AEG-41).
+
 - **`DecisionAxes` fluent construction** (AILAB-798). Seven consuming `with_*`
   setters (`with_capability`, `with_role`, `with_session`, `with_matched_rule`,
   `with_approval_ref`, `with_fs`, `with_net`) on `botzr_aegis_core::DecisionAxes`.
@@ -132,6 +143,53 @@ support.
   gated behind `test-utils`, so it enters no published dependency graph.
 
 ### Changed
+
+- **The synchronous entry points refuse a nested tokio runtime instead of
+  panicking, and Model A no longer builds a tokio runtime per call**
+  (AILAB-809). **Breaking:** `AegisError` gains a `NestedRuntime { entry }`
+  variant, and the enum is exhaustive — any `match` on it outside
+  `botzr-aegis-core` must add an arm. (The enum is deliberately *not* marked
+  `#[non_exhaustive]` here; that is a separate decision.)
+
+  What was wrong: `SandboxEngine::execute` built a fresh current-thread tokio
+  runtime for every call and blocked on it. From inside an existing runtime
+  that panicked outright — `Cannot start a runtime from within a runtime` — so
+  `Runtime::execute_tool_call` was unusable from any async embedder, and the
+  per-call runtime construction was on the hot path for everyone else.
+
+  What now happens: `SandboxEngine` builds **one** tokio runtime in `new()` and
+  reuses it. This is not a relaxation of the per-call `Store` rule — a tokio
+  runtime holds no guest state, and the wasmtime `Store` is still built per call
+  from the resolved grant. `execute_tool_call`, `execute_host_call` and
+  `execute_host_call_with` check `Handle::try_current()` and return
+  `AegisError::NestedRuntime` **before** `CallSession::begin`, so a refusal
+  writes no record: a nested runtime is an embedder integration bug, not a call
+  that reached a station, and the Chain must not claim otherwise (ADR-0007). The
+  refusal is deliberately not routed through `SandboxError::to_execution_outcome`,
+  which would have recorded it as a guest trap. Callers inside a runtime should
+  use the `*_async` entries added above.
+
+  Also fixed in the same change: `SandboxEngine` now shuts its runtime down in
+  the background on `Drop`. A tokio runtime's own `Drop` blocks to join its
+  blocking pool, which tokio refuses inside an async context — so owning one
+  would otherwise have traded a call-time panic for a drop-time panic for
+  exactly the embedders this ticket is about.
+
+  **What this narrows, stated plainly.** (a) The guard is
+  `Handle::try_current()`, which is broader than tokio's rule: a
+  `spawn_blocking` thread carries a runtime handle but is not entered as a
+  driver, so a sync call from `spawn_blocking` worked at `0.3.0` and now
+  refuses — route it through the async entry with
+  `Handle::current().block_on(..)`. (b) The `*_async` entries are `async`, not
+  non-blocking: the guest gets an epoch *trap* deadline, not an async-yield
+  one, and audit's fsync is synchronous, so a call occupies its poll for up to
+  `max_wall_ms` plus write latency. (c) Model B handlers now observe a tokio
+  runtime context on both entries, so a handler that builds a runtime of its
+  own panics where it did not before. (d) Sync calls serialize on the engine's
+  runtime mutex; concurrent sync callers no longer overlap. (e) Abandoned
+  `spawn_blocking` work (wasmtime-wasi's p2 file I/O, after a mid-write trap)
+  is no longer joined at the end of each call, so those bytes can land after
+  the record that closed the call.
 
 - **A `tools/call` inside a JSON-RPC batch array is now recorded** (AILAB-788).
   A reader of a wrap chain can believe the file accounts for every `tools/call`

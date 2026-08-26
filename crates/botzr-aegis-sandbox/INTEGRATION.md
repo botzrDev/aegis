@@ -88,10 +88,16 @@ match run.output {
 
 - `SandboxEngine::new` / `prepare` / `execute` — the WIT `tool` world path
   (Model A guests that export `run`).
-- `prepare_fixture` / `execute_fixture` — raw component fixtures with no WIT
-  exports (used by the deny-suite / resource-metering tests). Behind the
-  **`test-utils`** feature, off by default: a production consumer has no business
-  instantiating a component that never declared the WIT `tool` world.
+- `execute_async` — the same call awaited on the caller's runtime. `execute`
+  blocks on the engine's own tokio runtime (built once in `new`, not per call),
+  and tokio forbids that from inside another runtime: **an async consumer must
+  use `execute_async`, or `execute` will panic.** The engine shuts its runtime
+  down without blocking on `Drop`, so dropping it from an async context is safe.
+- `prepare_fixture` / `execute_fixture` / `execute_fixture_async` — raw component
+  fixtures with no WIT exports (used by the deny-suite / resource-metering
+  tests). Behind the **`test-utils`** feature, off by default: a production
+  consumer has no business instantiating a component that never declared the WIT
+  `tool` world.
 - Failing exit paths classify into
   [`SandboxError`](https://docs.rs/botzr-aegis-sandbox): `Trap`,
   `ResourceExceeded { kind }`, `ComponentLoad`, `StoreConfig`, … — each already

@@ -118,6 +118,7 @@ mutation is deliberately not exposed.
 
 ```rust
 pub fn execute_tool_call(&self, req: ToolCallRequest<'_>) -> Result<Vec<u8>, AegisError>;
+pub async fn execute_tool_call_async(&self, req: ToolCallRequest<'_>) -> Result<Vec<u8>, AegisError>;
 ```
 
 ```rust
@@ -141,10 +142,33 @@ cannot be made to record a digest that does not match the payload.
 A Model B host tool reaching this entry point fails closed — use
 `execute_host_call`.
 
+**Pick the entry that matches your context.** The sync entry blocks on the
+sandbox engine's tokio runtime, and tokio forbids blocking from inside another
+runtime. Called from an async context it returns
+`AegisError::NestedRuntime { entry }` rather than panicking, and it does so
+*before* the pipeline opens a Call Session — a nested runtime is an embedder
+integration bug, not a call that reached a station, so **no audit record is
+written for it**. Inside a runtime, use `execute_tool_call_async`: same
+stations, same short-circuits, same record.
+
+Two things that entry is not:
+
+- **Not non-blocking.** A guest gets an epoch *trap* deadline, not an
+  async-yield one, so it runs to completion or to `max_wall_ms` inside a single
+  poll; audit's append+fsync is synchronous on the same thread. On a
+  current-thread runtime that stalls the whole reactor for the call's duration.
+- **Not the only thing the guard catches.** The refusal tests
+  `Handle::try_current()`, which is broader than tokio's own rule: a
+  `spawn_blocking` thread carries a runtime handle but is not entered as a
+  driver, so `block_on` would succeed there and the sync entry still refuses.
+  From a blocking thread use
+  `Handle::current().block_on(rt.execute_tool_call_async(req))`.
+
 ## Execution — Model B (host effect)
 
 ```rust
 pub fn execute_host_call(&self, req: HostCallRequest<'_>) -> Result<Vec<u8>, AegisError>;
+pub async fn execute_host_call_async(&self, req: HostCallRequest<'_>) -> Result<Vec<u8>, AegisError>;
 
 pub struct HostCallRequest<'a> {
     pub tool_id: ToolId,
@@ -191,6 +215,9 @@ not invoked (`botzr_aegis_core::HOST_PIPELINE_STAGES` is
 `policy → capability → audit`). A WASM
 tool reaching this entry point fails closed, as does an unregistered tool.
 `HostCallRequest` has no `request_digest` field for the same reason as Model A.
+The sync/async split is the same as Model A's, and for the same reason: Model B
+runs no sandbox station, but it shares the one pipeline driver, which is async
+because Model A's execution step is.
 
 ## Model B host effects
 
@@ -203,14 +230,17 @@ filesystem only through cap-std `Dir` handles opened from the grant.
 the registered handler and is a **research escape hatch**: the runtime hands the
 closure a `&CapabilityGrant`, checks nothing before it runs, and applies only the
 output cap after it returns — so the closure author owns enforcement. It is not
-a supported way to ship an effect. Neither path is sandbox isolation — see
+a supported way to ship an effect. It has no async twin — like the other sync
+entries it returns `AegisError::NestedRuntime` from inside a runtime, and an
+async research caller should register the handler and use
+`execute_host_call_async`. Neither path is sandbox isolation — see
 [`docs/threat-model.md`](../../docs/threat-model.md) §3.
 
 ## Guarantees
 
 - **Short-circuit:** a policy denial never reaches capability or sandbox
 - **Ceiling folding:** policy limits are folded into grants but can never raise them
-- **Audit on every exit:** success, denial, trap, and panic all produce records
+- **Audit on every exit:** success, denial, trap, and panic all produce records — a `NestedRuntime` refusal is the one non-exit, and produces none because no call ran
 - **Runtime-derived digest:** the audited `request_digest` is computed from the call's own raw input bytes; callers cannot supply one
 - **Atomic registration:** manifest and executable are written together, after all checks — a failed `register_tool` mutates nothing
 - **SHA-256 pinning:** registration rejects component bytes that don't match the manifest digest (G10)

@@ -69,9 +69,12 @@ Execution Report §7 retired the target rather than the bench being reshaped.
 See [`results/cell_and_audit.md`](results/cell_and_audit.md).
 
 `instantiation/warm` goes through `SandboxEngine::execute`, so its median also
-includes a fresh per-call tokio runtime, `build_store`, and a trivial WIT `run`
-on the echo fixture — it is an upper bound on warm re-instantiation, not an
-isolated instantiate cost. `PreparedTool.tool_pre` is private and no
+includes `build_store` and a trivial WIT `run` on the echo fixture — it is an
+upper bound on warm re-instantiation, not an isolated instantiate cost. The
+published median additionally carries a **fresh per-call tokio runtime**, which
+is how the engine worked when it was measured; AILAB-809 amortized that runtime
+into `SandboxEngine::new`, so the number is now an upper bound for that reason
+too, pending AILAB-796. `PreparedTool.tool_pre` is private and no
 instantiate-only public API may be added to narrow it.
 
 The compile-bound groups are noisy on the reference machine (`cold` swings

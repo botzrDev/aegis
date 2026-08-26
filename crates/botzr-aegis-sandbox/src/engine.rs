@@ -4,14 +4,20 @@
 //! The `Store` is per-call and dropped when the call ends — stores never share
 //! mutable state. The sandbox is configured *from the resolved grant*, never
 //! from the raw request.
+//!
+//! The tokio runtime that polls the guest future is built once alongside the
+//! `Engine`, not per call: it carries no guest state, so amortizing it is not
+//! a relaxation of the per-call `Store` rule (AILAB-809).
 
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use botzr_aegis_core::CallMetrics;
 use botzr_aegis_core::CapabilityGrant;
+use tokio::runtime::Runtime as TokioRuntime;
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder};
@@ -36,6 +42,33 @@ pub struct SandboxRun {
 pub struct SandboxEngine {
     engine: Engine,
     linker: Linker<ToolState>,
+    /// One tokio runtime for the life of the engine, built in
+    /// [`SandboxEngine::new`].
+    ///
+    /// wasmtime's component API is async, so *something* has to poll the guest
+    /// future on the sync entry points. That something used to be a brand-new
+    /// current-thread runtime per call, which cost a runtime construction on
+    /// every invocation and — worse — panicked outright when the caller was
+    /// already inside a tokio runtime (AILAB-809).
+    ///
+    /// **This is not a wasmtime `Store`.** The per-call rule this module opens
+    /// with is about `Store`: mutable guest state, never shared across calls.
+    /// A tokio runtime holds no guest state, so amortizing it costs no
+    /// isolation — the `Store` is still built per call in
+    /// [`SandboxEngine::build_store`].
+    ///
+    /// `std::sync::Mutex` is the deliberate choice: the guard serializes the
+    /// **sync** entry points' `block_on` calls, and it must never be held
+    /// across an `.await`. The async entry points never take it — they poll
+    /// the same futures on the caller's runtime.
+    ///
+    /// `Option` exists only so [`Drop`] can move the runtime out and shut it
+    /// down in the background. Dropping a tokio runtime the ordinary way
+    /// *blocks* to join its blocking pool, and tokio panics if that happens
+    /// inside an async context — which is exactly where an embedder that hit
+    /// AILAB-809 in the first place would be dropping this engine. It is
+    /// `Some` for the whole observable life of the engine.
+    runtime: Mutex<Option<TokioRuntime>>,
     // Field is never read directly; held so the ticker thread lives as long as
     // the engine and is stopped on drop.
     _epoch: EpochTicker,
@@ -56,10 +89,18 @@ impl SandboxEngine {
         Tool::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)
             .map_err(SandboxError::EngineInit)?;
 
+        // One runtime, built here rather than per call. `enable_all` keeps the
+        // time and I/O drivers available to WASI host functions that need them.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| SandboxError::EngineInit(e.into()))?;
+
         let epoch = EpochTicker::spawn(engine.clone());
         Ok(Self {
             engine,
             linker,
+            runtime: Mutex::new(Some(runtime)),
             _epoch: epoch,
         })
     }
@@ -119,14 +160,69 @@ impl SandboxEngine {
         Ok(store)
     }
 
+    /// Run `future` to completion on the engine's own tokio runtime.
+    ///
+    /// This is the one place the sandbox blocks. It **panics if called from
+    /// inside a tokio runtime** — that is tokio's rule for `block_on`, not a
+    /// policy of this crate — so every sync public entry point above it is
+    /// responsible for refusing a nested runtime *before* it gets here. The
+    /// runtime crate does that check on all three of its sync entries
+    /// (`execute_tool_call`, `execute_host_call`, `execute_host_call_with`) and
+    /// returns `AegisError::NestedRuntime`, so no call arrives here from an
+    /// async context by that route. A consumer calling this method directly
+    /// owns the same check.
+    ///
+    /// The lock is taken and released inside this call and is never held across
+    /// an `.await`. It is a plain `std::sync::Mutex` and therefore **not
+    /// reentrant**: reaching this method again on the same engine from inside
+    /// the future it is already driving deadlocks rather than panicking. No
+    /// path in `botzr-aegis-runtime` can do that — Model A's execution step
+    /// uses [`SandboxEngine::execute_async`], which takes no lock — but a
+    /// consumer wiring this crate directly must not call `execute` from inside
+    /// an effect that `execute` invoked.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        let guard = self.runtime();
+        guard
+            .as_ref()
+            .expect("engine runtime is taken only in Drop")
+            .block_on(future)
+    }
+
+    /// The engine's tokio runtime, recovering from poisoning.
+    ///
+    /// A guest panic unwinds through `block_on` and poisons the mutex. The
+    /// runtime itself is not left in a broken state by that — the panic came
+    /// from the future, not from tokio — so the guard is recovered rather than
+    /// turning one panicking call into a permanently dead engine.
+    fn runtime(&self) -> MutexGuard<'_, Option<TokioRuntime>> {
+        self.runtime.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Invoke a prepared tool's WIT `run` export with the grant-scoped store.
+    ///
+    /// Synchronous: blocks on the engine's runtime. A caller that is already
+    /// inside a tokio runtime must use [`SandboxEngine::execute_async`].
     pub fn execute(
         &self,
         tool: &PreparedTool,
         grant: &CapabilityGrant,
         input: &[u8],
     ) -> SandboxRun {
-        block_on_async(tool.run(self, grant, input))
+        self.block_on(tool.run(self, grant, input))
+    }
+
+    /// [`SandboxEngine::execute`] for a caller that already has a runtime.
+    ///
+    /// Same store, same grant configuration, same metering — the only
+    /// difference is that the guest future is polled by the caller's executor
+    /// instead of the engine's. Takes no lock.
+    pub async fn execute_async(
+        &self,
+        tool: &PreparedTool,
+        grant: &CapabilityGrant,
+        input: &[u8],
+    ) -> SandboxRun {
+        tool.run(self, grant, input).await
     }
 
     /// Invoke a raw fixture export (deny-suite / resource-cap tests). Requires
@@ -138,7 +234,48 @@ impl SandboxEngine {
         grant: &CapabilityGrant,
         export: &str,
     ) -> SandboxRun {
-        block_on_async(fixture.call_unit(self, grant, export))
+        self.block_on(fixture.call_unit(self, grant, export))
+    }
+
+    /// [`SandboxEngine::execute_fixture`] for a caller that already has a
+    /// runtime. Requires the `test-utils` feature.
+    #[cfg(feature = "test-utils")]
+    pub async fn execute_fixture_async(
+        &self,
+        fixture: &PreparedFixture,
+        grant: &CapabilityGrant,
+        export: &str,
+    ) -> SandboxRun {
+        fixture.call_unit(self, grant, export).await
+    }
+}
+
+impl Drop for SandboxEngine {
+    /// Shut the owned tokio runtime down **without blocking**.
+    ///
+    /// `Runtime`'s own `Drop` waits for the blocking pool to join, and tokio
+    /// panics when that wait happens inside an async context. An engine built
+    /// by an embedder that lives on tokio is dropped exactly there, so relying
+    /// on the default drop would trade AILAB-809's call-time panic for a
+    /// drop-time one.
+    ///
+    /// **What this gives up.** No *call* can still be running — `Drop` takes
+    /// `&mut self` — but abandoned `spawn_blocking` work can be: wasmtime-wasi
+    /// runs p2 file I/O on the blocking pool, and a guest trapped mid-write
+    /// leaves a task whose `abort()` is a no-op once it is running. The
+    /// per-call runtime this replaced joined that pool at the end of every
+    /// call, so those bytes landed before `execute` returned; they may now land
+    /// after it, and a process that exits promptly may lose them. Joining here
+    /// is not an option — it is the blocking wait that panics.
+    fn drop(&mut self) {
+        if let Some(runtime) = self
+            .runtime
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            runtime.shutdown_background();
+        }
     }
 }
 
@@ -150,9 +287,12 @@ impl std::fmt::Debug for SandboxEngine {
 
 impl Default for SandboxEngine {
     fn default() -> Self {
-        // The config is static and valid; `Engine::new` only fails on an
-        // internal wasmtime invariant break, which is not recoverable here.
-        Self::new().expect("static wasmtime config must build a valid Engine")
+        // The wasmtime config is static and valid, so `Engine::new` only fails
+        // on an internal wasmtime invariant break. `new` also builds the
+        // engine's tokio runtime, which can fail on a genuinely exhausted host
+        // (file descriptors, threads). Neither is recoverable here — a caller
+        // that needs to handle the second should use `SandboxEngine::new`.
+        Self::new().expect("wasmtime config and tokio runtime must both build")
     }
 }
 
@@ -364,14 +504,6 @@ fn build_wasi_ctx(grant: &CapabilityGrant) -> anyhow::Result<WasiCtx> {
     Ok(b.build())
 }
 
-fn block_on_async<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio current-thread runtime must build")
-        .block_on(future)
-}
-
 /// Background thread that increments the engine epoch on a fixed tick so
 /// per-store epoch deadlines fire. Stopped and joined on drop.
 struct EpochTicker {
@@ -404,5 +536,32 @@ impl Drop for EpochTicker {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The engine owns a tokio runtime, and a tokio runtime's own `Drop` blocks
+    /// to join its blocking pool — which tokio refuses to do inside an async
+    /// context. An embedder on tokio drops the engine exactly there, so without
+    /// [`SandboxEngine`]'s non-blocking `Drop` this test panics with "Cannot
+    /// drop a runtime in a context where blocking is not allowed", trading
+    /// AILAB-809's call-time panic for a drop-time one.
+    #[tokio::test]
+    async fn engine_drops_inside_a_tokio_context() {
+        let engine = SandboxEngine::new().expect("engine builds");
+        drop(engine);
+    }
+
+    /// Two engines in the same async context: the shutdown is per-engine and
+    /// leaves nothing behind that would trip the next one.
+    #[tokio::test]
+    async fn engines_drop_independently_inside_a_tokio_context() {
+        let first = SandboxEngine::new().expect("first engine builds");
+        let second = SandboxEngine::new().expect("second engine builds");
+        drop(first);
+        drop(second);
     }
 }

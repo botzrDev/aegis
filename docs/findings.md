@@ -278,8 +278,11 @@ No raw number in this report originates here; each is a citation:
   missed**, with engine construction only ~1–2% of it and component
   compile/link ~29.4 ms, so the target is retired pending a
   precompiled-artifact or compilation-cache mechanism. Warm is an upper bound:
-  it runs through `SandboxEngine::execute`, so a per-call tokio runtime,
-  `build_store`, and a trivial WIT `run` are all inside the median.
+  it runs through `SandboxEngine::execute`, so `build_store` and a trivial WIT
+  `run` are inside the median — as was a per-call tokio runtime, which the
+  engine built on every call when this was measured and no longer does
+  (AILAB-809 moved it into `SandboxEngine::new`); the figure has not been
+  re-measured since.
   `audit_emission/begin_complete` is 4.7185 ms and is write+fsync latency, not
   an Aegis-side overhead figure — a `serialize_only` control measures the serde
   half of the same cycle at 468.46 ns, ~0.01% of it. The compile-bound groups

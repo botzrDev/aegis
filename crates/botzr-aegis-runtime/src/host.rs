@@ -3,11 +3,11 @@
 //! Host tools skip the WASM sandbox station; the grant is enforced by the
 //! effect handler before any I/O. Audit still wraps the full call.
 
-use botzr_aegis_core::{AegisError, ExecutionOutcome, ToolId};
+use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId};
 use botzr_aegis_policy::PolicyRequest;
 
 use crate::pipeline::ExecutionStep;
-use crate::{ExecutableSlot, HostEffectContext, Runtime};
+use crate::{refuse_nested_runtime, ExecutableSlot, HostEffectContext, Runtime};
 
 /// A WASM slot reached through the Model B entry point: fail closed.
 fn wasm_via_host_entry() -> ExecutionStep {
@@ -77,7 +77,48 @@ impl Runtime {
     /// Model B adapter: the shared [`Runtime::drive_pipeline`] owns policy,
     /// capability, output-cap, and audit; this method only supplies the host
     /// effect as the execution step.
+    ///
+    /// **Synchronous.** The driver is shared with Model A and therefore async,
+    /// so this entry blocks on the sandbox engine's runtime even though no
+    /// sandbox station runs. Called from inside a tokio runtime it returns
+    /// [`AegisError::NestedRuntime`] without opening a Call Session — use
+    /// [`Runtime::execute_host_call_async`] there.
     pub fn execute_host_call(&self, req: HostCallRequest<'_>) -> Result<Vec<u8>, AegisError> {
+        refuse_nested_runtime("execute_host_call")?;
+        let HostCallRequest {
+            tool_id,
+            input,
+            policy,
+        } = req;
+        let registry_id = tool_id.clone();
+        self.sandbox.block_on(self.drive_pipeline(
+            tool_id,
+            input,
+            &policy,
+            async move |grant: &CapabilityGrant| {
+                self.host_registry_step(&registry_id, grant, input)
+            },
+        ))
+    }
+
+    /// [`Runtime::execute_host_call`] for a caller that already has a tokio
+    /// runtime.
+    ///
+    /// Model B's effect is host-side and synchronous; this exists because the
+    /// *driver* is async. Without it, making the driver async would have turned
+    /// a Model B call from inside tokio — which worked before AILAB-809 — into
+    /// a refusal.
+    ///
+    /// The handler still runs to completion inside one poll, and audit's
+    /// append+fsync is synchronous on the same thread: this is `async`, not
+    /// non-blocking. Note also that the handler now observes a tokio runtime
+    /// context on **both** entries (the sync one blocks on the engine's
+    /// runtime), so a handler that builds a runtime of its own will panic where
+    /// it did not before.
+    pub async fn execute_host_call_async(
+        &self,
+        req: HostCallRequest<'_>,
+    ) -> Result<Vec<u8>, AegisError> {
         let HostCallRequest {
             tool_id,
             input,
@@ -88,36 +129,51 @@ impl Runtime {
             tool_id,
             input,
             &policy,
-            // Execution step: resolve the registered handler and run it behind
-            // the AEG-43 choke point. It never reports sandbox metrics; the
-            // driver still applies the output cap to its bytes.
-            move |grant| match self.tools.get(&registry_id) {
-                Some(registration) => match &registration.slot {
-                    ExecutableSlot::Host(handler) => {
-                        let ctx = HostEffectContext::new(grant);
-                        match handler(&ctx, input) {
-                            Ok(bytes) => ExecutionStep::Produced {
-                                bytes,
-                                metrics: None,
-                            },
-                            Err(err) => ExecutionStep::Failed {
-                                outcome: err.to_execution_outcome(),
-                                metrics: None,
-                            },
-                        }
-                    }
-                    ExecutableSlot::Wasm(_) => wasm_via_host_entry(),
-                    #[cfg(feature = "test-utils")]
-                    ExecutableSlot::WasmFixture { .. } => wasm_via_host_entry(),
-                },
-                None => ExecutionStep::Failed {
-                    outcome: ExecutionOutcome::HostDenied {
-                        reason: "tool not registered in runtime".into(),
-                    },
-                    metrics: None,
-                },
+            async move |grant: &CapabilityGrant| {
+                self.host_registry_step(&registry_id, grant, input)
             },
         )
+        .await
+    }
+
+    /// Model B's registry execution step, shared verbatim by the sync and async
+    /// entry points.
+    ///
+    /// Resolves the registered handler and runs it behind the AEG-43 choke
+    /// point. It never reports sandbox metrics; the driver still applies the
+    /// output cap to its bytes.
+    fn host_registry_step(
+        &self,
+        registry_id: &ToolId,
+        grant: &CapabilityGrant,
+        input: &[u8],
+    ) -> ExecutionStep {
+        match self.tools.get(registry_id) {
+            Some(registration) => match &registration.slot {
+                ExecutableSlot::Host(handler) => {
+                    let ctx = HostEffectContext::new(grant);
+                    match handler(&ctx, input) {
+                        Ok(bytes) => ExecutionStep::Produced {
+                            bytes,
+                            metrics: None,
+                        },
+                        Err(err) => ExecutionStep::Failed {
+                            outcome: err.to_execution_outcome(),
+                            metrics: None,
+                        },
+                    }
+                }
+                ExecutableSlot::Wasm(_) => wasm_via_host_entry(),
+                #[cfg(feature = "test-utils")]
+                ExecutableSlot::WasmFixture { .. } => wasm_via_host_entry(),
+            },
+            None => ExecutionStep::Failed {
+                outcome: ExecutionOutcome::HostDenied {
+                    reason: "tool not registered in runtime".into(),
+                },
+                metrics: None,
+            },
+        }
     }
 
     /// Execute a Model B host tool with a caller-supplied effect closure.
@@ -139,26 +195,32 @@ impl Runtime {
     /// Model B adapter: the shared [`Runtime::drive_pipeline`] owns policy,
     /// capability, output-cap, and audit; this method only supplies the host
     /// effect as the execution step.
+    ///
+    /// **Synchronous**, and there is no async twin: like the other sync
+    /// entries it returns [`AegisError::NestedRuntime`] when called from inside
+    /// a tokio runtime. An async research caller should use
+    /// [`Runtime::execute_host_call_async`] with a registered handler.
     pub fn execute_host_call_with<F>(
         &self,
         req: HostCallRequest<'_>,
         effect: F,
     ) -> Result<Vec<u8>, AegisError>
     where
-        F: FnOnce(&botzr_aegis_core::CapabilityGrant, &[u8]) -> Result<Vec<u8>, HostEffectError>,
+        F: FnOnce(&CapabilityGrant, &[u8]) -> Result<Vec<u8>, HostEffectError>,
     {
+        refuse_nested_runtime("execute_host_call_with")?;
         let HostCallRequest {
             tool_id,
             input,
             policy,
         } = req;
-        self.drive_pipeline(
+        self.sandbox.block_on(self.drive_pipeline(
             tool_id,
             input,
             &policy,
             // Execution step: run the host effect. It never reports sandbox
             // metrics; the driver still applies the output cap to its bytes.
-            move |grant| match effect(grant, input) {
+            async move |grant: &CapabilityGrant| match effect(grant, input) {
                 Ok(bytes) => ExecutionStep::Produced {
                     bytes,
                     metrics: None,
@@ -168,7 +230,7 @@ impl Runtime {
                     metrics: None,
                 },
             },
-        )
+        ))
     }
 }
 

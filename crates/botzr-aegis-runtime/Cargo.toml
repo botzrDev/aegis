@@ -29,6 +29,10 @@ botzr-aegis-sandbox = { workspace = true }
 cap-std = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+# `Handle::try_current` (the nested-runtime refusal on the sync entry points)
+# and `block_on` on the sandbox engine's owned runtime. Workspace features are
+# `rt` + `macros`; the multi-thread scheduler is a dev-dependency only.
+tokio = { workspace = true }
 
 [dev-dependencies]
 # Self dev-dependency so this crate's own integration tests
@@ -39,6 +43,10 @@ botzr-aegis-audit = { workspace = true }
 criterion = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+# Tests only: `#[tokio::test(flavor = "multi_thread")]` is how the sync entries'
+# nested-runtime refusal is exercised. Not a feature of the published crate —
+# no production path needs the multi-thread scheduler.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [[bench]]
 name = "hot_path"

@@ -327,7 +327,59 @@ impl Runtime {
     ///
     /// A Model B host tool reaching this entry point fails closed: use
     /// [`Runtime::execute_host_call`].
+    ///
+    /// **Synchronous.** This method blocks on the sandbox engine's tokio
+    /// runtime, which tokio forbids from inside another runtime. Called from an
+    /// async context it returns [`AegisError::NestedRuntime`] *without* opening
+    /// a Call Session — use [`Runtime::execute_tool_call_async`] there.
+    ///
+    /// The guard is `Handle::try_current()`, which is **broader than tokio's
+    /// own rule**: a `tokio::task::spawn_blocking` thread carries a runtime
+    /// handle but is not entered as a driver, so `block_on` would in fact
+    /// succeed there and this method still refuses. From a blocking thread,
+    /// reach the tool through the async entry —
+    /// `Handle::current().block_on(rt.execute_tool_call_async(req))` — rather
+    /// than this one.
     pub fn execute_tool_call(&self, req: ToolCallRequest<'_>) -> Result<Vec<u8>, AegisError> {
+        // Refused here, before `drive_pipeline` calls `CallSession::begin`: a
+        // nested runtime is an embedder integration bug, not a call that
+        // reached a station. Auditing it would put an intent + outcome pair in
+        // the Chain for something the pipeline never ran (ADR-0007).
+        refuse_nested_runtime("execute_tool_call")?;
+        let ToolCallRequest {
+            tool_id,
+            input,
+            policy,
+        } = req;
+        // The outer `block_on` is the engine's *owned* runtime — the one built
+        // once in `SandboxEngine::new`. The step below awaits the wasmtime
+        // future directly (`execute_async`), so nothing blocks inside the block.
+        self.sandbox.block_on(self.drive_pipeline(
+            tool_id.clone(),
+            input,
+            &policy,
+            async |grant: &CapabilityGrant| self.model_a_step(&tool_id, grant, input).await,
+        ))
+    }
+
+    /// [`Runtime::execute_tool_call`] for a caller that already has a tokio
+    /// runtime.
+    ///
+    /// Same pipeline, same stations, same audit — the driver is awaited on the
+    /// caller's executor instead of the sandbox engine's, so there is no
+    /// `block_on` and no nested-runtime refusal.
+    ///
+    /// **It is `async`, not non-blocking.** A guest gets an epoch *trap*
+    /// deadline, not an async-yield one, so it runs to completion or to its
+    /// wall cap inside a single poll; audit's append+fsync is synchronous on
+    /// the same thread. Awaiting this on a current-thread runtime stalls that
+    /// whole reactor for the call's duration, and on a multi-thread runtime it
+    /// occupies a worker. Budget for `max_wall_ms` plus audit write latency,
+    /// or drive it on a runtime you are willing to block.
+    pub async fn execute_tool_call_async(
+        &self,
+        req: ToolCallRequest<'_>,
+    ) -> Result<Vec<u8>, AegisError> {
         let ToolCallRequest {
             tool_id,
             input,
@@ -337,43 +389,77 @@ impl Runtime {
             tool_id.clone(),
             input,
             &policy,
-            // Execution step: run the prepared component or fixture in the
-            // wasmtime sandbox. A tool that was never registered here is a host
-            // denial. The sandbox reports metrics on every run (success or trap).
-            |grant| match self.tools.get(&tool_id) {
-                Some(registration) => {
-                    // Routing is on the slot alone; `register_tool` already
-                    // proved the slot agrees with the declared kind.
-                    debug_assert_eq!(
-                        matches!(registration.slot, ExecutableSlot::Host(_)),
-                        matches!(registration.kind, ToolKind::Host),
-                        "registration kind and executable slot must agree",
-                    );
-                    match &registration.slot {
-                        ExecutableSlot::Wasm(prepared) => {
-                            sandbox_step(self.sandbox.execute(prepared, grant, input))
-                        }
-                        #[cfg(feature = "test-utils")]
-                        ExecutableSlot::WasmFixture { prepared, export } => {
-                            sandbox_step(self.sandbox.execute_fixture(prepared, grant, export))
-                        }
-                        ExecutableSlot::Host(_) => ExecutionStep::Failed {
-                            outcome: ExecutionOutcome::HostDenied {
-                                reason: "host tool must be invoked via execute_host_call".into(),
-                            },
-                            metrics: None,
-                        },
-                    }
-                }
-                None => ExecutionStep::Failed {
-                    outcome: ExecutionOutcome::HostDenied {
-                        reason: "tool not registered in runtime".into(),
-                    },
-                    metrics: None,
-                },
-            },
+            async |grant: &CapabilityGrant| self.model_a_step(&tool_id, grant, input).await,
         )
+        .await
     }
+
+    /// Model A's execution step, shared verbatim by the sync and async entry
+    /// points so the two can never drift (AEG-41 applies to the step as much as
+    /// to the driver).
+    ///
+    /// Runs the prepared component or fixture in the wasmtime sandbox. A tool
+    /// that was never registered here is a host denial. The sandbox reports
+    /// metrics on every run (success or trap).
+    async fn model_a_step(
+        &self,
+        tool_id: &ToolId,
+        grant: &CapabilityGrant,
+        input: &[u8],
+    ) -> ExecutionStep {
+        match self.tools.get(tool_id) {
+            Some(registration) => {
+                // Routing is on the slot alone; `register_tool` already
+                // proved the slot agrees with the declared kind.
+                debug_assert_eq!(
+                    matches!(registration.slot, ExecutableSlot::Host(_)),
+                    matches!(registration.kind, ToolKind::Host),
+                    "registration kind and executable slot must agree",
+                );
+                match &registration.slot {
+                    ExecutableSlot::Wasm(prepared) => {
+                        sandbox_step(self.sandbox.execute_async(prepared, grant, input).await)
+                    }
+                    #[cfg(feature = "test-utils")]
+                    ExecutableSlot::WasmFixture { prepared, export } => sandbox_step(
+                        self.sandbox
+                            .execute_fixture_async(prepared, grant, export)
+                            .await,
+                    ),
+                    ExecutableSlot::Host(_) => ExecutionStep::Failed {
+                        outcome: ExecutionOutcome::HostDenied {
+                            reason: "host tool must be invoked via execute_host_call".into(),
+                        },
+                        metrics: None,
+                    },
+                }
+            }
+            None => ExecutionStep::Failed {
+                outcome: ExecutionOutcome::HostDenied {
+                    reason: "tool not registered in runtime".into(),
+                },
+                metrics: None,
+            },
+        }
+    }
+}
+
+/// Refuse a synchronous entry point that was called from inside a tokio runtime.
+///
+/// The sync entries drive the pipeline with `Runtime::block_on`, and tokio
+/// panics if that is called from an async context. The check lives on the
+/// public entry points and nowhere else — one check, one place — so the sandbox
+/// engine's `block_on` can stay a plain blocking primitive, and so the refusal
+/// happens before any Call Session exists. It is deliberately *not* routed
+/// through `SandboxError::to_execution_outcome`: that would record an embedder
+/// integration bug as a guest trap.
+pub(crate) fn refuse_nested_runtime(entry: &str) -> Result<(), AegisError> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(AegisError::NestedRuntime {
+            entry: entry.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Verify a manifest's optional SHA-256 pin against the artifact bytes (G10).

@@ -52,7 +52,16 @@ impl Runtime {
     /// The audited `request_digest` is computed here from the exact `input`
     /// bytes the execution step will see (AEG-44 §3.C) — no public API accepts a
     /// caller-supplied digest, so audit cannot be made to lie about the payload.
-    pub(crate) fn drive_pipeline<E>(
+    ///
+    /// The driver is `async` because Model A's execution step is: wasmtime's
+    /// component API returns a future. There is still exactly one driver
+    /// (AEG-41) — the sync entry points run *this* future on the sandbox
+    /// engine's owned tokio runtime, and the async entry points await it on the
+    /// caller's. `execute_step` is an `AsyncFnOnce` rather than a
+    /// `FnOnce(&CapabilityGrant) -> impl Future` so the step's future may borrow
+    /// the grant, which is what lets Model A hand `&CapabilityGrant` straight to
+    /// the sandbox without cloning it onto the hot path.
+    pub(crate) async fn drive_pipeline<E>(
         &self,
         tool_id: ToolId,
         input: &[u8],
@@ -60,7 +69,7 @@ impl Runtime {
         execute_step: E,
     ) -> Result<Vec<u8>, AegisError>
     where
-        E: FnOnce(&CapabilityGrant) -> ExecutionStep,
+        E: AsyncFnOnce(&CapabilityGrant) -> ExecutionStep,
     {
         // SHA-256 over the **raw** input bytes, never a canonicalized or
         // re-encoded copy of them: this digest is what content-addresses the
@@ -170,7 +179,7 @@ impl Runtime {
                 }
                 session.set_decision_axes(axes.clone());
 
-                match execute_step(grant) {
+                match execute_step(grant).await {
                     ExecutionStep::Produced { bytes, metrics } => {
                         if let Some(metrics) = metrics {
                             session.set_metrics(metrics);
@@ -337,8 +346,8 @@ mod tests {
         .expect("register host tool");
     }
 
-    #[test]
-    fn policy_deny_never_invokes_execution_adapter() {
+    #[tokio::test]
+    async fn policy_deny_never_invokes_execution_adapter() {
         // Even with the tool registered (so capability *would* grant), a policy
         // deny must short-circuit before capability: the fake never runs and the
         // audited capability reason is the load-bearing "policy blocked…" signal.
@@ -362,7 +371,7 @@ rules:
                 tool.clone(),
                 b"digest-input",
                 &PolicyRequest::for_tool(&tool),
-                |_grant| {
+                async |_grant| {
                     called.set(true);
                     ExecutionStep::Produced {
                         bytes: b"unreachable".to_vec(),
@@ -370,6 +379,7 @@ rules:
                     }
                 },
             )
+            .await
             .unwrap_err();
 
         assert_eq!(
@@ -391,8 +401,8 @@ rules:
         );
     }
 
-    #[test]
-    fn capability_deny_never_invokes_execution_adapter() {
+    #[tokio::test]
+    async fn capability_deny_never_invokes_execution_adapter() {
         // allow-all policy but an unregistered tool → capability denies. The fake
         // must not run; the audited execution reason is "capability denied".
         let (rt, audit) = audited_runtime();
@@ -404,7 +414,7 @@ rules:
                 tool.clone(),
                 b"digest-input",
                 &PolicyRequest::for_tool(&tool),
-                |_grant| {
+                async |_grant| {
                     called.set(true);
                     ExecutionStep::Produced {
                         bytes: b"unreachable".to_vec(),
@@ -412,6 +422,7 @@ rules:
                     }
                 },
             )
+            .await
             .unwrap_err();
 
         assert!(
@@ -427,8 +438,8 @@ rules:
         assert!(outcome.contains("capability denied"), "got: {outcome}");
     }
 
-    #[test]
-    fn allowed_grant_invokes_fake_exactly_once() {
+    #[tokio::test]
+    async fn allowed_grant_invokes_fake_exactly_once() {
         // allow-all + registered tool → the fake runs once, receives a grant, and
         // its bytes flow back to the caller as success.
         let (mut rt, audit) = audited_runtime();
@@ -441,7 +452,7 @@ rules:
                 tool.clone(),
                 b"digest-input",
                 &PolicyRequest::for_tool(&tool),
-                |_grant| {
+                async |_grant| {
                     calls.set(calls.get() + 1);
                     ExecutionStep::Produced {
                         bytes: b"pong".to_vec(),
@@ -449,6 +460,7 @@ rules:
                     }
                 },
             )
+            .await
             .expect("granted call succeeds");
 
         assert_eq!(out, b"pong");
@@ -458,8 +470,8 @@ rules:
         assert!(outcome.contains("\"status\":\"success\""), "got: {outcome}");
     }
 
-    #[test]
-    fn output_cap_applies_after_fake_produces_oversize_bytes() {
+    #[tokio::test]
+    async fn output_cap_applies_after_fake_produces_oversize_bytes() {
         // Ordering: output-cap runs *after* the fake produces bytes. An 8-byte
         // cap with a 100-byte fake output fails closed to resource_exceeded, and
         // the bytes are never returned as success.
@@ -472,11 +484,12 @@ rules:
                 tool.clone(),
                 b"digest-input",
                 &PolicyRequest::for_tool(&tool),
-                |_grant| ExecutionStep::Produced {
+                async |_grant| ExecutionStep::Produced {
                     bytes: vec![b'x'; 100],
                     metrics: None,
                 },
             )
+            .await
             .unwrap_err();
 
         assert_eq!(
@@ -494,8 +507,8 @@ rules:
         assert!(outcome.contains("\"kind\":\"output\""), "got: {outcome}");
     }
 
-    #[test]
-    fn host_denied_is_surfaced_as_typed_error() {
+    #[tokio::test]
+    async fn host_denied_is_surfaced_as_typed_error() {
         // A Failed step carrying HostDenied surfaces as AegisError::HostDenied
         // (no more map_error callback — the driver maps uniformly).
         let mut rt = Runtime::new();
@@ -507,13 +520,14 @@ rules:
                 tool.clone(),
                 b"digest-input",
                 &PolicyRequest::for_tool(&tool),
-                |_grant| ExecutionStep::Failed {
+                async |_grant| ExecutionStep::Failed {
                     outcome: ExecutionOutcome::HostDenied {
                         reason: "path outside grant".into(),
                     },
                     metrics: None,
                 },
             )
+            .await
             .unwrap_err();
 
         assert_eq!(

@@ -29,6 +29,18 @@ pub enum AegisError {
     Audit {
         message: String,
     },
+    /// A synchronous entry point was called from inside a tokio runtime.
+    ///
+    /// The runtime's sync entry points block on an executor, which tokio
+    /// forbids from an async context. Rather than let that panic — or record
+    /// an audit line for a call that never reached a station — the entry point
+    /// refuses before the session opens. This is an embedder integration bug,
+    /// not a denied call: no Agent Action Record is written for it.
+    NestedRuntime {
+        /// The sync entry that was called: `execute_tool_call`,
+        /// `execute_host_call`, or `execute_host_call_with`.
+        entry: String,
+    },
 }
 
 impl fmt::Display for AegisError {
@@ -47,6 +59,10 @@ impl fmt::Display for AegisError {
             Self::ResourceExceeded { kind } => write!(f, "resource exceeded: {kind}"),
             Self::HostDenied { reason } => write!(f, "host denied: {reason}"),
             Self::Audit { message } => write!(f, "audit error: {message}"),
+            Self::NestedRuntime { entry } => write!(
+                f,
+                "cannot call {entry} from inside a tokio runtime; use the async entry point"
+            ),
         }
     }
 }
@@ -102,6 +118,12 @@ mod tests {
                     message: "m".into(),
                 },
                 "audit error: m",
+            ),
+            (
+                AegisError::NestedRuntime {
+                    entry: "execute_tool_call".into(),
+                },
+                "cannot call execute_tool_call from inside a tokio runtime; use the async entry point",
             ),
         ];
         for (err, expected) in cases {
