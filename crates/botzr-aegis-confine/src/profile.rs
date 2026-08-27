@@ -1,8 +1,12 @@
 //! The requested profile and the facts the kernel actually enforced.
 
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use botzr_aegis_core::CapabilityGrant;
+
+use crate::error::ConfineError;
 
 /// Environment variable carrying the JSON [`ConfinementProfile`].
 ///
@@ -138,6 +142,34 @@ pub struct EnforcedConfinement {
     /// that is true for a filter denying nothing is precisely the overclaim
     /// that rule exists to prevent (AILAB-628 verification, 2026-08-13).
     pub seccomp_network_denied: bool,
+}
+
+/// Load the profile from `AEGIS_CONFINE_PROFILE`.
+pub fn load_profile_from_env() -> Result<ConfinementProfile, ConfineError> {
+    let raw = std::env::var(crate::PROFILE_ENV)
+        .map_err(|_| ConfineError::Profile("AEGIS_CONFINE_PROFILE is unset".into()))?;
+    serde_json::from_str(&raw).map_err(|e| ConfineError::Profile(e.to_string()))
+}
+
+/// Open the report file **before** `restrict_self`.
+///
+/// Landlock does not revoke already-open fds. Writing after restrict to a
+/// path that is not in the grant would fail with `EACCES`, and putting the
+/// report path in the grant would publish a writable hole. Open first, write
+/// through the fd after.
+pub fn open_report() -> Result<Option<File>, ConfineError> {
+    let Ok(path) = std::env::var(crate::REPORT_ENV) else {
+        return Ok(None);
+    };
+    Ok(Some(File::create(Path::new(&path))?))
+}
+
+/// Write [`EnforcedConfinement`] through a fd opened by [`open_report`].
+pub fn write_report(file: &mut File, enforced: &EnforcedConfinement) -> Result<(), ConfineError> {
+    let bytes = serde_json::to_vec(enforced).map_err(|e| ConfineError::Profile(e.to_string()))?;
+    file.write_all(&bytes)?;
+    file.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]

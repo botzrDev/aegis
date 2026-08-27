@@ -1,4 +1,11 @@
-//! Linux Landlock + seccomp confinement derived from a [`CapabilityGrant`].
+//! Confinement derived from a [`CapabilityGrant`]: a [`Confiner`] narrows the
+//! calling process to a [`ConfinementProfile`] and reports what the kernel
+//! actually enforced.
+//!
+//! Linux is one impl of that trait — `LinuxConfiner`, Landlock plus a seccomp
+//! deny-list. On every other target [`UnsupportedConfiner`] refuses every
+//! profile, so [`active_confiner`] resolves everywhere and a caller names the
+//! trait instead of branching on the target OS.
 //!
 //! # Authority-reducing only
 //!
@@ -16,24 +23,21 @@
 //! [`CapabilityGrant`]: botzr_aegis_core::CapabilityGrant
 //! [ADR-0007]: https://github.com/botzrDev/aegis/blob/main/docs/adr/0007-confinement-via-self-restricting-re-exec.md
 
+mod confiner;
 mod error;
 mod profile;
 
+pub use confiner::{active_confiner, Confiner, UnsupportedConfiner};
 pub use error::ConfineError;
 pub use profile::{
-    exec_support_paths, ConfinementProfile, EnforcedConfinement, NetAllow, EXEC_SUPPORT_PATHS,
-    PROFILE_ENV, REPORT_ENV,
+    exec_support_paths, load_profile_from_env, open_report, write_report, ConfinementProfile,
+    EnforcedConfinement, NetAllow, EXEC_SUPPORT_PATHS, PROFILE_ENV, REPORT_ENV,
 };
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    apply_landlock, apply_seccomp, load_profile_from_env, open_report, probe_landlock_abi,
-    restrict_self, write_report, LandlockOutcome, SeccompOutcome,
+    apply_landlock, apply_seccomp, probe_landlock_abi, LandlockOutcome, LinuxConfiner,
+    SeccompOutcome,
 };
-
-#[cfg(not(target_os = "linux"))]
-pub fn restrict_self(_profile: &ConfinementProfile) -> Result<EnforcedConfinement, ConfineError> {
-    Err(ConfineError::Unsupported)
-}

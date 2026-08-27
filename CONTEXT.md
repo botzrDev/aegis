@@ -31,6 +31,10 @@ A tool whose logic runs inside wasmtime. Strong isolation.
 **Model B**:
 A tool whose effect runs in host Rust. Capability check and audit only — **not** sandbox isolation, and docs must say so plainly.
 
+**Confiner**:
+The mechanism that narrows the calling process to a `ConfinementProfile` and reports what the kernel actually enforced. Linux (Landlock + seccomp) is one impl; the Unsupported one refuses every profile.
+_Avoid_: backend, sandbox (that is the pipeline stage), jail
+
 ### The evidence
 
 **Agent Action Record (AAR)**:

@@ -223,7 +223,7 @@ fn restrict_exec(args: &[String]) {
                 std::process::exit(1);
             }
         };
-        let enforced = match botzr_aegis_confine::restrict_self(&profile) {
+        let enforced = match botzr_aegis_confine::active_confiner().restrict_self(&profile) {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("aegis-confine-probe: {e}");

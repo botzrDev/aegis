@@ -6,9 +6,6 @@
 //! subsequent `execve` (ADR-0007).
 
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
 
 use landlock::{
     path_beneath_rules, Access, AccessFs, CompatLevel, Compatible, LandlockStatus, PathFd, Ruleset,
@@ -25,19 +22,26 @@ use crate::profile::{ConfinementProfile, EnforcedConfinement};
 /// newer).
 const ABI_PROBE_MAX: i32 = 9;
 
-/// Restricts **the calling process** and returns what was enforced.
-///
-/// Fails closed: if `best_effort` is false and the kernel cannot enforce the
-/// full profile, this is an error and the caller must not exec.
-pub fn restrict_self(profile: &ConfinementProfile) -> Result<EnforcedConfinement, ConfineError> {
-    let landlock = apply_landlock(profile)?;
-    let seccomp = apply_seccomp(profile)?;
-    Ok(EnforcedConfinement {
-        landlock_abi: landlock.abi,
-        landlock_fully_enforced: landlock.fully,
-        seccomp_applied: seccomp.applied,
-        seccomp_network_denied: seccomp.network_denied,
-    })
+/// Landlock + seccomp, applied to this process. See [`crate::Confiner`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LinuxConfiner;
+
+impl crate::Confiner for LinuxConfiner {
+    /// Fails closed: if `best_effort` is false and the kernel cannot enforce
+    /// the full profile, this is an error and the caller must not exec.
+    fn restrict_self(
+        &self,
+        profile: &ConfinementProfile,
+    ) -> Result<EnforcedConfinement, ConfineError> {
+        let landlock = apply_landlock(profile)?;
+        let seccomp = apply_seccomp(profile)?;
+        Ok(EnforcedConfinement {
+            landlock_abi: landlock.abi,
+            landlock_fully_enforced: landlock.fully,
+            seccomp_applied: seccomp.applied,
+            seccomp_network_denied: seccomp.network_denied,
+        })
+    }
 }
 
 /// What the installed seccomp filter actually does, kept apart from the fact
@@ -271,32 +275,4 @@ fn network_syscalls() -> Vec<i64> {
         libc::SYS_io_uring_enter,
         libc::SYS_io_uring_register,
     ]
-}
-
-/// Load the profile from `AEGIS_CONFINE_PROFILE`.
-pub fn load_profile_from_env() -> Result<ConfinementProfile, ConfineError> {
-    let raw = std::env::var(crate::PROFILE_ENV)
-        .map_err(|_| ConfineError::Profile("AEGIS_CONFINE_PROFILE is unset".into()))?;
-    serde_json::from_str(&raw).map_err(|e| ConfineError::Profile(e.to_string()))
-}
-
-/// Open the report file **before** `restrict_self`.
-///
-/// Landlock does not revoke already-open fds. Writing after restrict to a
-/// path that is not in the grant would fail with `EACCES`, and putting the
-/// report path in the grant would publish a writable hole. Open first, write
-/// through the fd after.
-pub fn open_report() -> Result<Option<File>, ConfineError> {
-    let Ok(path) = std::env::var(crate::REPORT_ENV) else {
-        return Ok(None);
-    };
-    Ok(Some(File::create(Path::new(&path))?))
-}
-
-/// Write [`EnforcedConfinement`] through a fd opened by [`open_report`].
-pub fn write_report(file: &mut File, enforced: &EnforcedConfinement) -> Result<(), ConfineError> {
-    let bytes = serde_json::to_vec(enforced).map_err(|e| ConfineError::Profile(e.to_string()))?;
-    file.write_all(&bytes)?;
-    file.flush()?;
-    Ok(())
 }

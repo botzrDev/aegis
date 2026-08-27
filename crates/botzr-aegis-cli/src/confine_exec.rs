@@ -42,42 +42,33 @@ pub(crate) fn run(child_argv: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        let profile = match botzr_aegis_confine::load_profile_from_env() {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("aegis __confine-exec: {e}");
-                return ExitCode::from(1);
-            }
-        };
-        // Open before restrict_self: Landlock does not revoke already-open fds.
-        let mut report = match botzr_aegis_confine::open_report() {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("aegis __confine-exec: {e}");
-                return ExitCode::from(1);
-            }
-        };
-        let enforced = match botzr_aegis_confine::restrict_self(&profile) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("aegis __confine-exec: {e}");
-                return ExitCode::from(1);
-            }
-        };
-        if let Some(file) = report.as_mut() {
-            if let Err(e) = botzr_aegis_confine::write_report(file, &enforced) {
-                eprintln!("aegis __confine-exec: {e}");
-                return ExitCode::from(1);
-            }
+    let profile = match botzr_aegis_confine::load_profile_from_env() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("aegis __confine-exec: {e}");
+            return ExitCode::from(1);
         }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        eprintln!("aegis __confine-exec: confinement is only implemented on Linux");
-        return ExitCode::from(1);
+    };
+    // Open before restrict_self: Landlock does not revoke already-open fds.
+    let mut report = match botzr_aegis_confine::open_report() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("aegis __confine-exec: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let enforced = match botzr_aegis_confine::active_confiner().restrict_self(&profile) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("aegis __confine-exec: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if let Some(file) = report.as_mut() {
+        if let Err(e) = botzr_aegis_confine::write_report(file, &enforced) {
+            eprintln!("aegis __confine-exec: {e}");
+            return ExitCode::from(1);
+        }
     }
 
     let err = std::process::Command::new(&child_argv[0])
