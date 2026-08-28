@@ -161,7 +161,10 @@ record. The two alternatives are worse:
 
 `deny_all` says precisely what happened: *this call was relayed under zero
 capability authority from Aegis.* Spec §3.1 and pre-flight fact 7 mandate it.
-AILAB-626/628 replace it with a resolved grant once wrap can actually confine.
+Nothing replaces it with a resolved grant. Argument matchers were canceled in
+AILAB-626, and `--confine` (AILAB-628) shipped but applies OS confinement without
+minting a capability grant — `record.rs` does not branch on it, so a confined run
+records `deny_all` too.
 
 ## Only a response-shaped frame can close a call — because MCP is bidirectional
 
@@ -200,7 +203,9 @@ and covered by two tests.
 is no Policy Set to hash. The schema requires the field — a verdict whose ruleset
 is unknown cannot be rechecked — so it carries a stable, named constant that says
 "relayed under the wrap pass-through regime, version 0" rather than a hash of a
-set that was never evaluated. AILAB-626 replaces it.
+set that was never evaluated. Nothing is scheduled to replace it: argument
+matchers were canceled in AILAB-626, so the stand-in is shipped behaviour rather
+than a placeholder awaiting work.
 
 ## The CLI verb is `wrap`, not `run`
 
@@ -255,8 +260,10 @@ not tell a fixture that quit from a relay that truncated.
 
 ## Non-goals (this crate, this slice)
 
-- Argument matchers (AILAB-626), Landlock/seccomp (AILAB-628), approval parking
-  (AILAB-629), schema-hash pinning (AILAB-627)
+- Argument matchers — canceled in AILAB-626, so permanently out of scope rather
+  than deferred — approval parking (AILAB-629), schema-hash pinning (AILAB-627)
+- Landlock/seccomp was a non-goal for this slice and has since shipped as
+  `--confine` (AILAB-628)
 - Changing `botzr-aegis-mcp`'s catalog behaviour — from wrap's point of view it
   is just another unmodified stdio MCP server
 - Driving the enforcement pipeline: no `RuntimeBuilder`, no `PolicyEngine`, no

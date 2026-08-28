@@ -14,8 +14,9 @@
 //!
 //! # What this number does not license
 //!
-//! - **It is not a sandbox overhead figure.** Wrap records; it does not confine
-//!   (AILAB-626/628). Nothing here is the cost of isolating anything.
+//! - **It is not a sandbox overhead figure.** This benchmark sets
+//!   `confinement: None`, so wrap records without confining and nothing here is
+//!   the cost of isolating anything.
 //! - **It is not portable.** A recorded call is two JSONL lines and therefore
 //!   **two `sync_all` calls** (`crates/botzr-aegis-audit/src/writer.rs:218`), the
 //!   shipped G3 durability default. On this box the audit crate's own two-line

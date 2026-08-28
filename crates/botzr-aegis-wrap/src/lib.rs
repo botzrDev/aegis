@@ -28,7 +28,9 @@
 //!
 //! Nothing here drives the enforcement pipeline. Wrap's only station is AUDIT:
 //! do not reach for `PolicyEngine`, `RuntimeBuilder`, or `execute_tool_call`
-//! from this crate — capability resolution arrives with AILAB-626/628.
+//! from this crate. Capability resolution is not coming here either: argument
+//! matchers were canceled in AILAB-626, and `--confine` (AILAB-628) shipped but
+//! confines at the OS level without minting a grant.
 
 mod config;
 mod error;

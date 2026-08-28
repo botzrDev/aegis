@@ -346,8 +346,9 @@ fn a_granted_call_records_the_resources_it_resolved_to() {
 #[test]
 fn an_ambiguous_grant_omits_the_axis_rather_than_guessing_which_resource() {
     // Two granted roots and two granted hosts: the runtime has not resolved the
-    // call to *a* resource — which one it touched is AILAB-626's bindings — so
-    // recording either would be evidence that reads as fact and is not.
+    // call to *a* resource, and nothing downstream will — the Bindings that
+    // would have were canceled in AILAB-626 — so recording either would be
+    // evidence that reads as fact and is not.
     let dir = tempfile::tempdir().unwrap();
     let audit_path = dir.path().join("session.jsonl");
     let first = dir.path().join("first");

@@ -42,3 +42,11 @@ open when 0008 was written, and 0008 says so in the same sentence that
 rules `.aar` out. ADR-0014 later fixed it as `.aarl`. Read every
 `session.<ext>` in 0008 as `session.aarl`. Left unedited for the same
 reason as 0001.
+
+ADR-0006 decides that argument matchers target derived capability
+parameters, and its status line says it *lands in AILAB-626*. It does
+not: that work was canceled in AILAB-626 on 2026-08-14 and will not be
+built, so the **no** in the table above is permanent rather than pending.
+The derived parameters themselves did ship — they are the `decision_axes`
+a Chain Line carries — and only the matchers that would have consumed
+them were dropped. Left unedited for the same reason as 0001.

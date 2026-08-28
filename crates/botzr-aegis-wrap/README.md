@@ -24,8 +24,8 @@ started it. Read this list before describing wrap as a sandbox by default:
 
 - **No policy evaluation.** No `PolicyEngine`, no rules, no allow/deny decision.
   Every `tools/call` is relayed. Nothing is ever blocked at this layer.
-- **No argument matching.** Wrap does not look at `params.arguments` at all
-  (AILAB-626).
+- **No argument matching.** Wrap does not look at `params.arguments` at all, and
+  will not: argument matching was canceled in AILAB-626.
 - **No filesystem or network restriction unless `--confine`.** Default wrap is
   the operator's own account. `--confine` (AILAB-628) applies Landlock and
   seccomp from `--allow-read` / `--allow-write` / `--allow-net`.

@@ -32,7 +32,8 @@ document implements.
   Rotation is the one part that *is* format surface, and it is normative in §8.4.
 - Envelope reader/writer behaviour beyond the boundary in §9. No Envelope code
   ships in this version.
-- Argument matchers and the Bindings that produce them (AILAB-626).
+- Argument matchers and the Bindings that produce them. That work was canceled,
+  so this is a permanent omission rather than a deferral.
 
 **`aegis recheck` is specified, as of AILAB-622:** `aegis recheck --policy <YAML>
 <PATH>` re-evaluates every recorded outcome in `<PATH>` against the Policy Set in
@@ -422,8 +423,9 @@ grant naming several roots has not resolved the Call to *a* path, and the axis i
 evidence that reads as fact and is not.
 
 Both `path_raw` and `path_canonical` are recorded because a difference between
-them is itself evidence. The pair exists now so that AILAB-626 resolving a
-caller-supplied path against a root is not a breaking change to the shape.
+them is itself evidence. The pair exists so that an emitter resolving a
+caller-supplied path against a root can record both spellings without a breaking
+change to the shape.
 
 **The two are independent fields, and a verifier MUST NOT assume they are
 equal.** The *shipped emitter* in this version always writes the same string
@@ -432,8 +434,9 @@ grant therefore only ever holds the canonical form
 ([`crates/botzr-aegis-runtime/src/pipeline.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-runtime/src/pipeline.rs),
 `fs_axis`). That is a property of this emitter, not a constraint of the format:
 the test vector in §11.2 deliberately carries divergent values so that an
-implementation built from this document handles the post-AILAB-626 shape today
-rather than hard-coding today's equality and breaking later.
+implementation built from this document handles divergent values today rather
+than hard-coding this emitter's equality and breaking on one that does not
+share it.
 
 #### `decision`
 
@@ -670,9 +673,9 @@ rather than papered over:
 
 Per ADR-0006 the Envelope is **purely forensic, not a recheck prerequisite.**
 Argument matchers target derived capability parameters, and those parameters are
-decision axes carried in the Chain (§5.3), so `aegis recheck` works chain-only
-even after AILAB-626 lands. The Envelope exists for human investigation after an
-incident, and as the seam a future execution journal grows into.
+decision axes carried in the Chain (§5.3), so `aegis recheck` works chain-only.
+The Envelope exists for human investigation after an incident, and as the seam a
+future execution journal grows into.
 
 The boundary, normatively:
 

@@ -32,7 +32,8 @@ use serde_json::Value;
 /// Not a real Policy Set: wrap runs **no** policy engine, and naming a set it
 /// did not evaluate would be the more dishonest option. This constant is a
 /// stable, documented stand-in that says "relayed under the wrap pass-through
-/// regime, version 0" — AILAB-626 replaces it with the hash of an actual set.
+/// regime, version 0". Nothing is scheduled to replace it with the hash of an
+/// actual set: argument matchers were canceled in AILAB-626.
 pub const WRAP_PASSTHROUGH_POLICY_SET_ID: &[u8] = b"aegis-wrap-passthrough-v0";
 
 /// `tool_id` for a `tools/call` that never named a tool.
@@ -262,8 +263,11 @@ pub(crate) fn complete_relayed(
     session.set_policy(PolicyOutcome::Allowed);
     session.set_grant_id(GrantId::new(grant_id.clone()));
     // `deny_all` is the honest grant for a pass-through: wrap confined nothing,
-    // so it must not record fs or net authority it never minted. AILAB-626/628
-    // replace this with a resolved grant once wrap can actually confine.
+    // so it must not record fs or net authority it never minted. Nothing
+    // replaces it with a resolved grant: argument matchers were canceled in
+    // AILAB-626, and `--confine` confines at the OS level without minting a
+    // capability grant — this function does not branch on it, so a confined run
+    // records `deny_all` too.
     session.set_capability(CapabilityOutcome::Granted {
         grant: CapabilityGrant::deny_all(tool_id, grant_id),
     });
@@ -275,7 +279,8 @@ pub(crate) fn complete_relayed(
         wall_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         // Wrap does not meter the child process — it is an ordinary OS process
         // outside any resource ceiling — so 0 is "not measured", not "used
-        // nothing". Metering lands with confinement (AILAB-628).
+        // nothing". Confinement shipped and metering did not follow it: wrap
+        // does not meter, and no ticket currently promises that it will.
         peak_memory_bytes: 0,
     });
     session.set_execution(ExecutionOutcome::Success);

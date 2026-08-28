@@ -165,7 +165,8 @@ impl Runtime {
                 // Derived capability parameters (ADR-0006): the resources this
                 // call resolved to, recorded only when the grant names exactly
                 // one. Reading them off the minted grant is not a matcher and
-                // not a new resolution step — matcher shapes are AILAB-626.
+                // not a new resolution step. Argument matchers were canceled
+                // in AILAB-626, so no matcher shape is coming to anticipate.
                 // Same `with_*` chain as the axes above, and same omit rule: a
                 // grant that names no single resource leaves the axis unset
                 // rather than recording an absence. Both are `None` here — the
@@ -252,17 +253,19 @@ impl Runtime {
 /// The filesystem resource this call resolved to, when the grant names exactly
 /// one (ADR-0006).
 ///
-/// A grant carrying several roots has not resolved the call to *a* path — which
-/// of them the call touched is what AILAB-626's bindings decide — so the axis is
-/// **omitted entirely rather than guessed**. Recording an arbitrary one of N
-/// roots would be evidence that reads as fact and is not.
+/// A grant carrying several roots has not resolved the call to *a* path, and
+/// nothing downstream resolves it either — the Bindings that would have were
+/// canceled in AILAB-626 — so the axis is **omitted entirely rather than
+/// guessed**. Recording an arbitrary one of N roots would be evidence that
+/// reads as fact and is not.
 ///
 /// Both spellings carry the same string today: the capability resolver
 /// canonicalizes at mint time (`botzr-aegis-capability`'s `mint.rs`), so a grant
-/// only ever holds the canonical form. The pair exists because AILAB-626
-/// resolves a caller-supplied path *against* this root, and that is where raw
-/// and canonical diverge; recording one field now would make the shape a
-/// breaking change then.
+/// only ever holds the canonical form. The pair is kept anyway — resolving a
+/// caller-supplied path *against* this root is where raw and canonical would
+/// diverge, and the format forbids a verifier from assuming they are equal.
+/// Argument matchers were canceled in AILAB-626, so nothing pending will
+/// produce that divergence; the two fields stay because the wire shape is fixed.
 fn fs_axis(grant: &CapabilityGrant) -> Option<FsAxis> {
     let fs = grant.fs.as_ref()?;
     let mut roots: Vec<&String> = fs.read_paths.iter().chain(fs.write_paths.iter()).collect();

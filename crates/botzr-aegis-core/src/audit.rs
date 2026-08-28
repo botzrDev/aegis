@@ -319,10 +319,11 @@ impl DecisionAxes {
 
 /// The filesystem resource a call resolved to (ADR-0006).
 ///
-/// Both spellings are recorded: matchers target the canonical path, and the raw
-/// path is what the caller actually asked for — a diff between them is itself
-/// evidence. SPEC.md must say plainly that derived paths appear in the
-/// publishable Chain.
+/// Both spellings are recorded: the canonical path is the spelling a matcher
+/// would have targeted, and the raw path is what the caller actually asked for
+/// — a diff between them is itself evidence. `spec/SPEC.md` §10 (Threat model
+/// and non-guarantees) states that derived paths appear in the Chain and that
+/// the Chain is the publishable artifact.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FsAxis {
     pub path_raw: String,

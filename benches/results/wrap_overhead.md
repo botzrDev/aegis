@@ -6,9 +6,10 @@ MCP client and a stdio child server. Per iteration a whole
 child spawned, 50 scripted JSON-RPC lines relayed and answered, child reaped,
 `close` line written.
 
-**What it deliberately does not cover.** This is not a confinement cost: wrap
-records, it does not confine, and the capability/sandbox stations never run here
-(AILAB-626/628). It is not a policy or wasmtime number either — those live in
+**What it deliberately does not cover.** This is not a confinement cost: this
+run sets `confinement: None`, so wrap records without confining and the
+capability/sandbox stations never run here. It is not a policy or wasmtime
+number either — those live in
 [`hot_path.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/hot_path.md)
 and
 [`cell_and_audit.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/cell_and_audit.md).
