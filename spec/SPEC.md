@@ -904,6 +904,90 @@ cargo test -p botzr-aegis-audit --test golden
 not a freshly written Session, so a golden edited by hand fails there rather than
 passing as "expected output".
 
+### 11.4 Tamper vectors
+
+Source: the committed files in
+[`crates/botzr-aegis-audit/tests/tampered/`](https://github.com/botzrDev/aegis/tree/main/crates/botzr-aegis-audit/tests/tampered/),
+one per `Tampered` class in §8.1, each read back and checked by
+`crates/botzr-aegis-audit/tests/tampered.rs`.
+
+**These files have a different shape from §11.2's.** There, one file is the
+canonical form of one Line. Here, **one file is one whole Chain** — seven of the
+eight classes are only meaningful in the context of the Lines around them, and
+the session-boundary class needs two Sessions in one file. The extension is
+`.aarl` (ADR-0014) for the same reason: these are whole record files, where a
+single Line is not one.
+
+Every vector is signed by the same fixed-seed development key §11.2 publishes, so
+`key_id` `77a2c2f5…` and `public_key` `3de537a0…` are the values to expect
+throughout. The warning under §11.2 applies unchanged: that key is public and
+worthless.
+
+| File | §8.1 class | Verdict and reason | How it is damaged |
+|---|---|---|---|
+| `prev_hash_mismatch.aarl` | A Line's `prev_hash` is not the hash of the Line before it | `Tampered` — chain broken at (session 0, seq 3) | The `close` Line's `prev_hash` is overwritten with 64 `f`s |
+| `seq_out_of_order.aarl` | `seq` repeated or went backwards | `Tampered` — seq out of order in session 0: expected 4, found 1 | The unsigned `intent` Line is replayed at the end, keeping `seq` 1, with its hash link repaired |
+| `bad_signature.aarl` | A Line in the signed set carries no signature | `Tampered` — bad signature at (session 0, seq 2): line carries no signature | The `close` is dropped and the `outcome` Line it exposes loses its `signature` member |
+| `key_id_mismatch.aarl` | A Line's `key_id` does not match the key its Session published | `Tampered` — bad signature at (session 0, seq 3): signed under `dbc29825…`, not `77a2c2f5…` | The `close` Line's `key_id` is swapped for another key's fingerprint; its signature is left untouched |
+| `session_boundary_broken.aarl` | An `open` Line's `prev_session_tail` does not match the previous Session's final Line | `Tampered` — session boundary broken at session 1 | Two Sessions in one file, with the first Session's `close` removed |
+| `malformed_line.aarl` | A Line outside the format | `Tampered` — malformed line 3 | The bytes `not json at all` are inserted before the final Line |
+| `untrusted_key.aarl` | An `open` Line publishes a key that is not in a trust slice the caller supplied | `Verified` with no trust slice; `Tampered` — untrusted key at (session 0, seq 0) against one | **Not damaged at all.** See below |
+| `duplicate_decision.aarl` | A second `decision` Line for an `approval_id` already decided in the file | `Tampered` — duplicate decision at (session 0, seq 2) for `apr-vector-8` | Two `decision` Lines are emitted for `apr-vector-8`, both validly signed |
+
+**`untrusted_key.aarl` is a valid Chain, and that is the point.** Its bytes
+contradict nothing; every signature verifies and every link holds. The finding
+exists only relative to a trust slice the caller supplied from outside the file,
+so the vector is the file *plus that input*. Verified with no trust slice it is
+`Verified (unpinned)`; verified against any slice not containing
+`3de537a0…` it is `Tampered`. The suite uses the key from a seed of
+thirty-two `0x09` bytes, whose fingerprint is `dbc29825…`. An implementation
+that reports `Verified (unpinned)` in the second case has ignored the key it was
+gated on, which is why this class is published rather than left implicit.
+
+Two derived values for `prev_hash_mismatch.aarl`, since a chain break is the one
+class where an implementer needs both halves to confirm they are looking at the
+same contradiction:
+
+| Quantity | Value |
+|---|---|
+| What the `close` Line claims as `prev_hash` | `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` |
+| What the Line before it actually hashes to | `9a2c3c9f6c9f58effd1636bbb31c30fad2fcbcbd25ea5d2679c835740370cb9c` |
+
+`bad_signature.aarl` in full, as the smallest vector — three Lines, and the
+damage is an absence rather than a substitution, so it reads clearly:
+
+```
+{"key_id":"77a2c2f5952039243c043b69e7e812a2deb69e3271adb3013b8f24d3b8ea40f6","line_type":"open","prev_hash":"0000000000000000000000000000000000000000000000000000000000000000","public_key":"3de537a06e04b2ffe1fb0558ea16d3c0f042ed99f7e392698aa5120f568d4e2c","schema_version":2,"seq":0,"signature":"f27b7f566bce4e0e8126a30dd951411a5ea82333b7b41740ee047f0382788b3239d382aa9506cf3ef7f34137cf9cd7f57388018c67a46b2c3285af8fcc2a7901"}
+{"call_id":"call-vector-3","line_type":"intent","prev_hash":"ace4118a6a4ec1bf47503431aaa769ebb74de9c61174bf64470561a99abf4066","request_digest":"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","schema_version":2,"seq":1,"tool_id":"echo"}
+{"call_id":"call-vector-3","capability":{"reason":"not evaluated","status":"denied"},"decision_axes":{},"execution":{"status":"success"},"key_id":"77a2c2f5952039243c043b69e7e812a2deb69e3271adb3013b8f24d3b8ea40f6","line_type":"outcome","policy":{"status":"allowed"},"policy_set_hash":"d19fc5aa391e8220c634b40bef26894b83ae1493f8a8628e8ab667a6fd7e0e67","prev_hash":"de66ac5fac6432fca53cebba4fb926d54dd31aac03a6c4f721198ee601d1fdb2","request_digest":"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","schema_version":2,"seq":2,"tool_id":"echo"}
+```
+
+The third Line is an `outcome` with no `signature` member, sitting in the
+unverified tail. §8.3 is what makes that decidable: the tail may hold `intent`
+Lines and at most one torn final Line, never an `outcome`. Note that it kept its
+`key_id`: a verifier that decides which Lines are signed by looking for a
+`key_id` will not notice that this one's signature is gone.
+
+**`Indeterminate` vectors are not yet published.** The six §8.2 classes have no
+committed files in this version, and the omission is worth stating rather than
+leaving to be discovered: §8's central claim is that a binary pass/fail verdict
+is wrong, and `Indeterminate` is the verdict a naive implementation collapses
+into one or the other. An implementation can therefore pass every vector
+published here while still being the two-state verifier §8 argues against.
+Until those vectors ship, §8.2 is prose an implementer must read rather than a
+fixture they can run.
+
+**Reproducing them.** Same properties as §11.3 — fixed seed, deterministic
+signatures, constant records — so every vector is byte-reproducible:
+
+```bash
+cargo test -p botzr-aegis-audit --test tampered
+```
+
+`every_committed_tamper_vector_is_byte_reproducible` compares each committed file
+against a freshly built one, so a vector edited by hand fails there rather than
+passing as its own expected output.
+
 ---
 
 ## 12. Versioning and compatibility
