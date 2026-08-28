@@ -26,6 +26,7 @@ narrower surface still ([CLI](cli.md)).
 | [0011](adr/0011-dual-apache-2.0-or-mit-supersedes-oq1.md) | The workspace and the spec are dual `Apache-2.0 OR MIT`; this supersedes OQ-1 | yes — crates.io `0.3.0` metadata stays MIT |
 | [0012](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md) | The audit sink is a public seam that declares its own retention | yes |
 | [0013](adr/0013-verify-and-recheck-share-a-classifier-not-a-walk.md) | Verify and Recheck share a line classifier, not a walk | yes |
+| [0014](adr/0014-the-record-file-extension-is-aarl.md) | The record file extension is `.aarl` | yes — every example writes it; no code parses an extension, by design |
 
 The bold **no** rows carry an above-the-fold *Not implemented*
 banner on the ADR itself. They are kept here, unedited, because an ADR is
@@ -35,3 +36,9 @@ reality disagrees with it.
 ADR-0001 says `aegis replay` throughout. That command was renamed the
 same day by ADR-0008. Read every `replay` in 0001 as `recheck`. Left
 unedited because an ADR records what was decided when.
+
+ADR-0008 writes `session.<ext>` three times. The extension was genuinely
+open when 0008 was written, and 0008 says so in the same sentence that
+rules `.aar` out. ADR-0014 later fixed it as `.aarl`. Read every
+`session.<ext>` in 0008 as `session.aarl`. Left unedited for the same
+reason as 0001.

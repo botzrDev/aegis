@@ -109,9 +109,9 @@ Reads one Agent Action Record chain file and reports whether it verifies. The
 walk itself lives in `botzr-aegis-audit`; this command is the surface over it.
 No policy is loaded, no runtime is built, no tool is executed.
 
-`<PATH>` is a positional argument and any path is accepted — the record file's
-name and extension are not specified yet (AILAB-623), so examples here write
-`session.<ext>`.
+`<PATH>` is a positional argument and any path is accepted. The record file's
+extension is `.aarl` (ADR-0014), so examples here write `session.aarl`, but the
+name is a convention and this command validates nothing about it.
 
 | Flag | Description |
 |------|-------------|
@@ -146,14 +146,14 @@ sections are omitted. Read errors print `error: …` on stderr and leave stdout
 empty.
 
 ```
-$ aegis verify session.<ext>
+$ aegis verify session.aarl
 Verified (unpinned)
 key_id 77a2c2f5952039243c043b69e7e812a2deb69e3271adb3013b8f24d3b8ea40f6
 coverage session 0 seq 3
 ```
 
 ```
-$ aegis verify --key 3de537a06e04b2ffe1fb0558ea16d3c0f042ed99f7e392698aa5120f568d4e2c session.<ext>
+$ aegis verify --key 3de537a06e04b2ffe1fb0558ea16d3c0f042ed99f7e392698aa5120f568d4e2c session.aarl
 Verified (pinned to 77a2c2f5952039243c043b69e7e812a2deb69e3271adb3013b8f24d3b8ea40f6)
 key_id 77a2c2f5952039243c043b69e7e812a2deb69e3271adb3013b8f24d3b8ea40f6
 coverage session 0 seq 3
@@ -194,8 +194,8 @@ The verdicts come from `botzr-aegis-policy`; this command is the surface over
 them.
 
 `<PATH>` is a positional argument and any path is accepted, as with `verify` —
-the record file's name and extension are not specified yet (AILAB-623), so
-examples here write `session.<ext>`.
+the record file's extension is `.aarl` (ADR-0014), so examples here write
+`session.aarl`, and nothing here validates it.
 
 | Flag | Description |
 |------|-------------|
@@ -244,7 +244,7 @@ order, addressed by the same `session {i} seq {n}` coordinates `aegis verify`
 prints, so a finding carries from one report to the other.
 
 ```
-$ aegis recheck --policy new-rules.yaml session.<ext>
+$ aegis recheck --policy new-rules.yaml session.aarl
 call call-1 session 0 seq 2: newly_blocked was=allowed now=denied
 call call-2 session 0 seq 3: unchanged denied
 call call-3 session 0 seq 4: unchanged pending_approval

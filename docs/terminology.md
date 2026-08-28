@@ -58,7 +58,8 @@ plainly that Model B is not sandbox isolation.
 
 **Agent Action Record (AAR).** The signed, hash-chained record of one Call's
 decision and outcome. The artifact third parties emit and verify. The file
-extension is not specified yet (`.aar` is the Android Archive format).
+extension is `.aarl` (ADR-0014); `.aar` was ruled out because it is the Android
+Archive format. Nothing parses the name — the extension is a convention.
 *Avoid:* audit log, log line, event.
 
 **Chain.** The ordered, signed sequence of AARs whose integrity

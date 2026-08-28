@@ -1,6 +1,10 @@
 # Agent Action Record — format specification, schema version 2
 
-**Status:** draft, tracks the code shipped by AILAB-619 · **Schema version:** `2`
+**Status:** **v0.1** (2026-08-28) — this document's own version; it tracks the code
+shipped by AILAB-619 · **Wire `schema_version`:** `2` — the number written inside
+every record, and a different counter (§12)
+**Cite as:** *Agent Action Record format specification*, document v0.1,
+`schema_version` 2 — `spec/SPEC.md` in `botzrDev/aegis`.
 **Normative source of truth:** the record types in
 [`crates/botzr-aegis-core/src/audit.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/audit.rs),
 the canonicalizer in [`crates/botzr-aegis-core/src/jcs.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-core/src/jcs.rs),
@@ -20,8 +24,6 @@ document implements.
 
 **Not specified by this version, deliberately:**
 
-- The record file's name and extension (AILAB-623). Examples below write
-  `session.<ext>`. Do not infer an extension from anything here.
 - Key lifecycle — where a private key lives, its permissions, how it is
   generated. Deliberately **out of the format** (ADR-0004), not merely deferred:
   what a Line carries is a `key_id` and a published `public_key`, and a verifier
@@ -74,9 +76,10 @@ ships, and its surface is fixed here because CI gates script it:
 aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>
 ```
 
-`<PATH>` is the record file; any path is accepted, since its name and extension
-are the first open question above. `--key` is repeatable and takes a **public
-key** in the same 64-lowercase-hex wire form the `open` Line publishes — not a
+`<PATH>` is the record file; any path is accepted. `.aarl` (§1.1) is the format's
+extension, but it is a naming convention and this command deliberately validates
+nothing about it. `--key` is repeatable and takes a **public key** in the same
+64-lowercase-hex wire form the `open` Line publishes — not a
 `key_id` fingerprint. `--trust-store` names a file of those keys, one per line,
 with blank lines and `#` comment lines skipped. The union of the two is the trust
 slice. Supplying **neither** flag is an unpinned walk (§8.4); supplying either
@@ -140,8 +143,14 @@ recompute a Line's hash from the bytes on disk without re-canonicalizing —
 although a verifier SHOULD canonicalize anyway, so that a foreign emitter's
 spacing cannot change a Line hash.
 
-This version does not fix the file's name or extension. Write `session.<ext>`
-until AILAB-623 decides one.
+**The file extension is `.aarl`** (ADR-0014) — the AAR acronym followed by the `l`
+of JSON Lines. Examples in this document write `session.aarl`.
+
+The extension is a convention for humans and their tooling, not a wire fact.
+Nothing in the format is carried by the filename, and nothing in this repository
+reads one: `aegis verify` and `aegis recheck` accept any path. A verifier MUST
+NOT reject a record file because of its name — the format states no requirement
+on it, and the file's contents are the whole of the evidence.
 
 ---
 
@@ -913,6 +922,25 @@ Within version 2, an emitter MAY add fields and MAY add line types. A verifier:
 A change to the canonicalization rules, to the signing input, or to what
 `line_hash` covers is a **version bump**, not an addition — each one silently
 changes every hash in every file.
+
+**This document has a version of its own, and it is not the wire version.**
+`schema_version` is the only version on the wire: it is the number inside a
+record, and it is the one a consumer keys off. No implementation should ever
+need to know which revision of this document it was written from in order to
+parse a file.
+
+The document version — `v0.1`, on the status line at the top — moves whenever
+this document changes materially, and that includes clarifications which break
+no compatibility and therefore do **not** move `schema_version`. The two
+consequently run at different rates, and they are linked in one direction only:
+a `schema_version` bump always implies a document version bump, because a
+document that describes the wire format cannot describe a new one without
+changing. The converse does not hold, so a reader who infers a format change
+from a document version has inferred wrongly.
+
+Cite both when it matters. "Conforms to `schema_version` 2" states what an
+implementation reads; "written against document v0.1" states which description
+of it the author had.
 
 ### 12.1 Downstream consumers
 
