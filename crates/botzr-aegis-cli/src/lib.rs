@@ -421,10 +421,11 @@ fn parse_verify(args: &[String]) -> Result<Command, String> {
     }
 
     Ok(Command::Verify {
-        // The record file's name and extension are unresolved (SPEC.md, "Not
-        // specified by this version", AILAB-623), so any path is accepted
-        // as-is. Do not start validating an extension here — that would invent
-        // the format's spelling by accident.
+        // The record file's extension is `.aarl` (ADR-0014), which names the
+        // file for humans and their tooling; none of the evidence lives in the
+        // name, so any path is accepted as-is. Do not start validating an
+        // extension here — a record with an unexpected name is still a record,
+        // and turning the naming habit into a gate would reject valid evidence.
         path: path.ok_or("verify requires <PATH>")?,
         keys,
         trust_store,
@@ -472,9 +473,9 @@ fn parse_recheck(args: &[String]) -> Result<Command, String> {
 
     Ok(Command::Recheck {
         policy: policy.ok_or("recheck requires --policy <PATH>")?,
-        // Any extension, like `verify`: the record file's name is unresolved
-        // (SPEC.md, AILAB-623), and validating one here would invent the
-        // format's spelling by accident.
+        // Any extension, like `verify`: `.aarl` (ADR-0014) names the file, it
+        // does not qualify it, so gating on the name here would reject records
+        // the format calls valid.
         path: path.ok_or("recheck requires <PATH>")?,
     })
 }
@@ -1276,8 +1277,8 @@ mod tests {
         }
     }
 
-    /// Any extension, including none: the record file's name is unresolved
-    /// (AILAB-623) and the CLI must not invent one by validating here.
+    /// Any extension, including none: `.aarl` (ADR-0014) names the file rather
+    /// than qualifying it, and the CLI must not gate on the name.
     #[test]
     fn parse_verify_accepts_any_extension() {
         for path in ["session.log", "session", "session.jsonl", "/var/log/a.b.c"] {
@@ -1362,7 +1363,7 @@ mod tests {
                 path: PathBuf::from("session.jsonl"),
             }
         );
-        // Any extension, for `verify`'s reason (AILAB-623).
+        // Any extension, for `verify`'s reason (ADR-0014).
         for path in ["session.log", "session", "session.jsonl", "/var/log/a.b.c"] {
             match parse_args(&sv(&["aegis", "recheck", "--policy", "p.yaml", path])).unwrap() {
                 Command::Recheck { path: parsed, .. } => assert_eq!(parsed, PathBuf::from(path)),

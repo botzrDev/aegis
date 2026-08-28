@@ -55,8 +55,8 @@ use crate::signing::{verify_json_line, VerifyError};
 /// file, counted from the first `Open` line by [`SessionCounter`], which is
 /// also what `aegis recheck` counts with — so an address printed by one verb
 /// names the same Session as an address printed by the other (ADR-0013).
-/// SPEC.md (AILAB-623) must state this; the ADR's wording is under-specified
-/// rather than wrong.
+/// `spec/SPEC.md` §7 (Sessions) states this normatively; the ADR's wording is
+/// under-specified rather than wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     pub session_index: usize,
