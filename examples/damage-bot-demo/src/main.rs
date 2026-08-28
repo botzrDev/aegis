@@ -2,7 +2,7 @@ use std::path::Path;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::ToolId;
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 fn main() -> Result<(), String> {
@@ -39,7 +39,7 @@ fn main() -> Result<(), String> {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .map_err(|e| format!("execute: {e}"))?;
     println!("damage-bot output: {}", String::from_utf8_lossy(&output));

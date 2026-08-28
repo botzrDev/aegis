@@ -132,7 +132,7 @@ mod tests {
     use super::*;
     use botzr_aegis_audit::Retention;
     use botzr_aegis_core::{AegisError, ToolId};
-    use botzr_aegis_policy::PolicyRequest;
+    use botzr_aegis_policy::CallAxes;
 
     use crate::ToolCallRequest;
 
@@ -172,7 +172,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert!(
@@ -193,7 +193,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert_eq!(
@@ -242,7 +242,7 @@ rules:
         let _ = rt.execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ));
         let text = std::fs::read_to_string(&path).expect("audit file written");
         // The writer is the Session owner, so the file opens with an `open`

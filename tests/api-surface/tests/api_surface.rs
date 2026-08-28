@@ -10,4 +10,8 @@ fn public_api_surface_is_contracted() {
     t.compile_fail("tests/ui/fixture_api_needs_test_utils.rs");
     t.compile_fail("tests/ui/policy_ast_not_exported.rs");
     t.compile_fail("tests/ui/capability_register_is_runtime_internal.rs");
+    // AILAB-710: the tool identity a call request carries is the one policy
+    // judges. The divergent state is unrepresentable, so the assertion that it
+    // fails closed is a compile error, not a runtime error.
+    t.compile_fail("tests/ui/call_request_cannot_name_a_second_tool.rs");
 }

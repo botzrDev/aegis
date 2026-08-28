@@ -12,7 +12,7 @@ use botzr_aegis_capability::{
     FsNeeds, HttpNeed, NetNeeds, PathNeed, ToolInfo, ToolKind, ToolManifest,
 };
 use botzr_aegis_core::{AegisError, AuditRecord, PolicyAction, PolicyOutcome, ToolId};
-use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
+use botzr_aegis_policy::{CallAxes, PolicyEngine, PolicyRequest};
 use botzr_aegis_runtime::{
     HostCallRequest, HostEffectError, Runtime, RuntimeBuilder, ToolCallRequest, ToolExecutable,
 };
@@ -102,7 +102,7 @@ fn a_role_gated_deny_is_reconstructable_from_the_record_alone() {
         .execute_host_call(HostCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool)
+            CallAxes::default()
                 .with_capability("fs.read")
                 .with_role("contractor")
                 .with_session("sess-42"),
@@ -202,7 +202,7 @@ fn a_role_gated_deny_fires_for_a_wasm_tool_too() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool)
+            CallAxes::default()
                 .with_capability("fs.read")
                 .with_role("contractor")
                 .with_session("sess-42"),
@@ -222,7 +222,7 @@ fn a_role_gated_deny_fires_for_a_wasm_tool_too() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool).with_capability("fs.read"),
+            CallAxes::default().with_capability("fs.read"),
         ))
         .expect("without the contractor role the same call is allowed");
     assert_eq!(allowed, b"{}");
@@ -264,7 +264,7 @@ fn a_call_with_no_fs_or_net_need_omits_both_axes_rather_than_nulling_them() {
     rt.execute_host_call(HostCallRequest::new(
         tool.clone(),
         b"ping",
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
     .expect("plain call succeeds");
     drop(rt);
@@ -320,7 +320,7 @@ fn a_granted_call_records_the_resources_it_resolved_to() {
     rt.execute_host_call(HostCallRequest::new(
         tool.clone(),
         b"ping",
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
     .expect("reader call succeeds");
     drop(rt);
@@ -393,7 +393,7 @@ fn an_ambiguous_grant_omits_the_axis_rather_than_guessing_which_resource() {
     rt.execute_host_call(HostCallRequest::new(
         tool.clone(),
         b"ping",
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
     .expect("wide call succeeds");
     drop(rt);

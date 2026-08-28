@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, PublicKey, RequestDigest, ToolId};
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{Runtime, RuntimeBuilder, ToolCallRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -814,7 +814,7 @@ pub fn execute_run(args: &RunArgs) -> Result<Vec<u8>, AegisError> {
     rt.execute_tool_call(ToolCallRequest::new(
         tool.clone(),
         &input,
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
 }
 

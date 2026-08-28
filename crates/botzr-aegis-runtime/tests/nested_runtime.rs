@@ -22,7 +22,7 @@ use std::path::Path;
 use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{sha256_hex, HostCallRequest, Runtime, ToolCallRequest, ToolExecutable};
 
 const ECHO_WASM: &[u8] = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm");
@@ -122,7 +122,7 @@ async fn sync_tool_call_inside_a_runtime_refuses_instead_of_panicking() {
         rt.execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
     }));
     let result = match caught {
@@ -152,7 +152,7 @@ async fn async_tool_call_completes_inside_a_runtime() {
         .execute_tool_call_async(ToolCallRequest::new(
             tool.clone(),
             input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .await
         .expect("echo runs on the caller's runtime");
@@ -179,7 +179,7 @@ async fn sync_host_call_refuses_and_async_host_call_completes() {
         rt.execute_host_call(HostCallRequest::new(
             tool.clone(),
             input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
     }));
     let result = match caught {
@@ -198,7 +198,7 @@ async fn sync_host_call_refuses_and_async_host_call_completes() {
         .execute_host_call_async(HostCallRequest::new(
             tool.clone(),
             input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .await
         .expect("host echo runs on the caller's runtime");
@@ -222,7 +222,7 @@ async fn sync_escape_hatch_refuses_inside_a_runtime() {
     let tool = ToolId::new("raw");
     let err = rt
         .execute_host_call_with(
-            HostCallRequest::new(tool.clone(), b"raw", PolicyRequest::for_tool(&tool)),
+            HostCallRequest::new(tool.clone(), b"raw", CallAxes::default()),
             |_grant, input| Ok(input.to_vec()),
         )
         .unwrap_err();
@@ -256,7 +256,7 @@ async fn from_spawn_blocking_the_sync_entry_refuses_and_the_async_entry_is_the_r
             rt.execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"hello-aegis",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
         })
         .await
@@ -282,7 +282,7 @@ async fn from_spawn_blocking_the_sync_entry_refuses_and_the_async_entry_is_the_r
             handle.block_on(rt.execute_tool_call_async(ToolCallRequest::new(
                 tool.clone(),
                 b"hello-aegis",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             )))
         })
         .await

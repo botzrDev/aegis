@@ -25,7 +25,7 @@ use botzr_aegis_core::{
     AegisError, AuditClose, AuditIntent, AuditLineType, AuditOpen, AuditRecord, CapabilityOutcome,
     ExecutionOutcome, PolicyOutcome, PrevHash, ToolId, AUDIT_SCHEMA_VERSION,
 };
-use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
+use botzr_aegis_policy::{CallAxes, PolicyEngine};
 use botzr_aegis_runtime::{HostCallRequest, HostHandler, Runtime, ToolCallRequest, ToolExecutable};
 
 /// LOAD-BEARING: the whole suite drives one `Runtime` by `&self` from many
@@ -187,7 +187,7 @@ fn run_call(rt: &Runtime, class: Class) {
             let out = rt.execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ));
             assert!(out.is_ok(), "noop must succeed: {out:?}");
         }
@@ -197,7 +197,7 @@ fn run_call(rt: &Runtime, class: Class) {
                 .execute_tool_call(ToolCallRequest::new(
                     tool.clone(),
                     b"{}",
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .unwrap_err();
             assert!(
@@ -211,7 +211,7 @@ fn run_call(rt: &Runtime, class: Class) {
                 .execute_tool_call(ToolCallRequest::new(
                     tool.clone(),
                     b"{}",
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .unwrap_err();
             assert!(
@@ -225,7 +225,7 @@ fn run_call(rt: &Runtime, class: Class) {
                 .execute_tool_call(ToolCallRequest::new(
                     tool.clone(),
                     b"{}",
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .unwrap_err();
             assert!(
@@ -239,7 +239,7 @@ fn run_call(rt: &Runtime, class: Class) {
                 .execute_tool_call(ToolCallRequest::new(
                     tool.clone(),
                     b"{}",
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .unwrap_err();
             assert!(
@@ -253,7 +253,7 @@ fn run_call(rt: &Runtime, class: Class) {
                 .execute_tool_call(ToolCallRequest::new(
                     tool.clone(),
                     b"{}",
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .unwrap_err();
             assert!(
@@ -267,7 +267,7 @@ fn run_call(rt: &Runtime, class: Class) {
                 .execute_tool_call(ToolCallRequest::new(
                     tool.clone(),
                     b"{}",
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .unwrap_err();
             assert!(
@@ -280,7 +280,7 @@ fn run_call(rt: &Runtime, class: Class) {
             let out = rt.execute_host_call(HostCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ));
             assert!(out.is_ok(), "host-echo must succeed: {out:?}");
         }
@@ -480,7 +480,7 @@ fn audit_is_exactly_once_under_concurrency() {
                     let _ = rt.execute_host_call(HostCallRequest::new(
                         tool.clone(),
                         b"{}",
-                        PolicyRequest::for_tool(&tool),
+                        CallAxes::default(),
                     ));
                 })
             })

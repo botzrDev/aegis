@@ -15,7 +15,7 @@ use aegis_stage2_demo::native::scan_native;
 use botzr_aegis_audit::{insecure_dev_key, to_json_line, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{FsNeeds, PathNeed, ToolInfo, ToolKind, ToolLimits, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditRecord, ExecutionOutcome, ToolId};
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{sha256_hex, Runtime, ToolCallRequest};
 use serde_json::Value;
 
@@ -107,7 +107,7 @@ fn run_detector(rt: &Runtime, input: &[u8]) -> Result<Vec<u8>, AegisError> {
     rt.execute_tool_call(ToolCallRequest::new(
         tool.clone(),
         input,
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
 }
 
@@ -254,7 +254,7 @@ fn wall_clock_cap_trips() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(

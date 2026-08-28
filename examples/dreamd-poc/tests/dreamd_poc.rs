@@ -45,7 +45,7 @@ fn append_episodic_allowed_with_audit_success() {
         .execute_host_call(HostCallRequest::new(
             tool.clone(),
             &bytes,
-            botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
+            botzr_aegis_policy::CallAxes::default().with_capability(CAP_FS_EPISODIC),
         ))
         .expect("episodic append allowed");
 
@@ -78,7 +78,7 @@ fn append_personal_denied_without_owner_role() {
         .execute_host_call(HostCallRequest::new(
             tool.clone(),
             &bytes,
-            botzr_aegis_policy::PolicyRequest::for_tool(&tool).with_capability(CAP_FS_PERSONAL),
+            botzr_aegis_policy::CallAxes::default().with_capability(CAP_FS_PERSONAL),
         ))
         .unwrap_err();
 
@@ -113,7 +113,7 @@ fn append_personal_allowed_with_owner_role() {
     rt.execute_host_call(HostCallRequest::new(
         tool.clone(),
         &bytes,
-        botzr_aegis_policy::PolicyRequest::for_tool(&tool)
+        botzr_aegis_policy::CallAxes::default()
             .with_capability(CAP_FS_PERSONAL)
             .with_role("owner"),
     ))
@@ -140,7 +140,7 @@ fn search_nodes_returns_seeded_hit() {
     rt.execute_host_call(HostCallRequest::new(
         append_tool.clone(),
         &seed_bytes,
-        botzr_aegis_policy::PolicyRequest::for_tool(&append_tool).with_capability(CAP_FS_EPISODIC),
+        botzr_aegis_policy::CallAxes::default().with_capability(CAP_FS_EPISODIC),
     ))
     .unwrap();
 
@@ -152,7 +152,7 @@ fn search_nodes_returns_seeded_hit() {
         .execute_host_call(HostCallRequest::new(
             search_tool.clone(),
             &query_bytes,
-            botzr_aegis_policy::PolicyRequest::for_tool(&search_tool),
+            botzr_aegis_policy::CallAxes::default(),
         ))
         .expect("search allowed");
 
@@ -176,7 +176,7 @@ fn dream_consolidation_requires_approval() {
         .execute_host_call(HostCallRequest::new(
             tool.clone(),
             input,
-            botzr_aegis_policy::PolicyRequest::for_tool(&tool),
+            botzr_aegis_policy::CallAxes::default(),
         ))
         .unwrap_err();
 

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{CapabilityResolver, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId};
-use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
+use botzr_aegis_policy::{CallAxes, PolicyEngine, PolicyRequest};
 #[cfg(feature = "test-utils")]
 use botzr_aegis_sandbox::PreparedFixture;
 use botzr_aegis_sandbox::{PreparedTool, SandboxEngine, SandboxRun};
@@ -110,20 +110,41 @@ pub struct Runtime {
 /// tool id alone, so a rule gated on `role` or `capability` could never match a
 /// Model A call — the trust model with real sandbox isolation was the one that
 /// silently ignored those rules.
+///
+/// The caller supplies [`CallAxes`], not a whole `PolicyRequest`: the tool
+/// judged by policy is this request's own `tool_id`, derived by the runtime,
+/// so it cannot disagree with the tool the registry executes (AILAB-710).
 #[derive(Debug, Clone)]
 pub struct ToolCallRequest<'a> {
     pub tool_id: ToolId,
     pub input: &'a [u8],
-    pub policy: PolicyRequest<'a>,
+    pub axes: CallAxes<'a>,
 }
 
 impl<'a> ToolCallRequest<'a> {
-    pub fn new(tool_id: ToolId, input: &'a [u8], policy: PolicyRequest<'a>) -> Self {
+    pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<'a>) -> Self {
         Self {
             tool_id,
             input,
-            policy,
+            axes,
         }
+    }
+}
+
+/// Build the policy request for a Call from the tool the runtime is actually
+/// about to execute.
+///
+/// The single place the tool identity crosses from a call request into policy
+/// evaluation, shared by all five entry points so they cannot drift apart the
+/// way Model A and Model B did before AILAB-708. Deliberately not public API:
+/// an embedder that could call it could rebuild the two-tool-ids state this
+/// exists to remove.
+pub(crate) fn policy_request<'a>(tool_id: &'a ToolId, axes: CallAxes<'a>) -> PolicyRequest<'a> {
+    PolicyRequest {
+        tool_id,
+        capability: axes.capability,
+        role: axes.role,
+        session: axes.session,
     }
 }
 
@@ -321,9 +342,10 @@ impl Runtime {
     /// `request_digest` is derived from the raw `input` bytes inside the
     /// pipeline — callers cannot supply one.
     ///
-    /// The caller supplies the Decision Axes in the request's
-    /// [`PolicyRequest`], so a rule gated on `role` or `capability` reaches a
-    /// Model A call exactly as it reaches a Model B one.
+    /// The caller supplies the Decision Axes in the request's [`CallAxes`], so
+    /// a rule gated on `role` or `capability` reaches a Model A call exactly as
+    /// it reaches a Model B one. The tool policy judges is this request's own
+    /// `tool_id`, not a second one the caller supplies alongside it.
     ///
     /// A Model B host tool reaching this entry point fails closed: use
     /// [`Runtime::execute_host_call`].
@@ -349,8 +371,9 @@ impl Runtime {
         let ToolCallRequest {
             tool_id,
             input,
-            policy,
+            axes,
         } = req;
+        let policy = policy_request(&tool_id, axes);
         // The outer `block_on` is the engine's *owned* runtime — the one built
         // once in `SandboxEngine::new`. The step below awaits the wasmtime
         // future directly (`execute_async`), so nothing blocks inside the block.
@@ -383,8 +406,9 @@ impl Runtime {
         let ToolCallRequest {
             tool_id,
             input,
-            policy,
+            axes,
         } = req;
+        let policy = policy_request(&tool_id, axes);
         self.drive_pipeline(
             tool_id.clone(),
             input,
@@ -616,7 +640,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         // Policy reason surfaces — proves station 1 rejected, not capability.
@@ -650,7 +674,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert!(
@@ -683,7 +707,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 input,
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .expect("echo run succeeds");
         assert_eq!(out, input);
@@ -714,7 +738,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 input,
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert_eq!(
@@ -753,7 +777,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 input,
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .expect("payload at the cap succeeds");
         assert_eq!(out, input);
@@ -785,7 +809,7 @@ rules:
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 input,
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .expect("normal payload under default cap succeeds");
         assert_eq!(out, input);

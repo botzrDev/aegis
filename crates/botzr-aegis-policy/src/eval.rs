@@ -52,6 +52,46 @@ impl<'a> PolicyRequest<'a> {
     }
 }
 
+/// The Decision Axes a caller asserts for a Call, minus `tool_id`.
+///
+/// `tool_id` is deliberately absent: the runtime derives it from the call
+/// request's own tool, so a request cannot name one tool and be judged as
+/// another (AILAB-710). Before this type existed, a call request carried both
+/// its own `tool_id` and a whole [`PolicyRequest`] with a second one, and
+/// nothing reconciled the two — the registry executed one tool while policy
+/// judged another, and the audit record carried a verdict about a tool that
+/// never ran.
+///
+/// The fix is structural rather than a check. A `debug_assert!` comparing the
+/// two ids was considered and rejected: it is compiled out of release builds,
+/// so it would leave the mismatch reachable in exactly the builds that matter.
+/// Returning an error on mismatch was also rejected — it still lets a caller
+/// build the contradictory request, and only reports it afterwards. Removing
+/// the second id makes the bad state unrepresentable instead of detectable.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CallAxes<'a> {
+    pub capability: Option<&'a str>,
+    pub role: Option<&'a str>,
+    pub session: Option<&'a str>,
+}
+
+impl<'a> CallAxes<'a> {
+    pub fn with_role(mut self, role: &'a str) -> Self {
+        self.role = Some(role);
+        self
+    }
+
+    pub fn with_capability(mut self, capability: &'a str) -> Self {
+        self.capability = Some(capability);
+        self
+    }
+
+    pub fn with_session(mut self, session: &'a str) -> Self {
+        self.session = Some(session);
+        self
+    }
+}
+
 /// The outcome of evaluating a request: the verdict plus any ceiling the winning
 /// rule imposes and the id of the rule that decided it (for the audit trail).
 #[derive(Debug, Clone, PartialEq, Eq)]

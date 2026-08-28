@@ -8,7 +8,7 @@ use botzr_aegis_core::{
     AegisError, AuditRecord, ExecutionOutcome, GrantId, KeyId, PrevHash, PublicKey, RequestDigest,
     Signature, ToolId,
 };
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 const SPIN: &str = r#"
@@ -59,7 +59,7 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(
@@ -112,7 +112,7 @@ fn golden_resource_exceeded_orchestrator_shape() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
 

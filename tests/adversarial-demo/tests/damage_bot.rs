@@ -14,7 +14,7 @@ use botzr_aegis_capability::{
 use botzr_aegis_core::{
     AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, PolicyOutcome, ToolId,
 };
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 const DAMAGE_BOT_WASM: &[u8] = include_bytes!("../../fixtures/damage-bot/damage-bot.wasm");
@@ -104,7 +104,7 @@ fn guest_write_under_readonly_grant_is_refused() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             &input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("write to ro preopen must fail");
     assert!(
@@ -138,7 +138,7 @@ fn guest_dotdot_escape_is_refused() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             &input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("dotdot escape must fail");
     assert!(
@@ -176,7 +176,7 @@ fn guest_symlink_escape_is_refused() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             &input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("symlink escape must fail");
     assert!(
@@ -204,7 +204,7 @@ fn guest_http_without_net_grant_is_refused() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             &input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("http without net grant must fail");
     assert!(
@@ -232,7 +232,7 @@ fn guest_http_to_disallowed_host_is_refused() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             &input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("http to evil host must fail");
     assert!(
@@ -260,7 +260,7 @@ fn guest_http_to_allowed_host_passes_grant_then_stubs() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             &input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("v1 http stub still denies the effect");
     assert!(

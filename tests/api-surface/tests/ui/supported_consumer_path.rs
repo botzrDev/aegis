@@ -5,7 +5,7 @@
 //! API exercise lives in never-called functions.
 use botzr_aegis_capability::{CapabilityResolver, ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditIntent, CapabilityOutcome, PrevHash, RequestDigest, ToolId};
-use botzr_aegis_policy::{PolicyEngine, PolicyRequest, SUPPORTED_POLICY_VERSION};
+use botzr_aegis_policy::{CallAxes, PolicyEngine, SUPPORTED_POLICY_VERSION};
 use botzr_aegis_runtime::{
     HostCallRequest, Runtime, RuntimeBuilder, ToolCallRequest, ToolExecutable,
 };
@@ -51,7 +51,7 @@ fn model_a(rt: &mut Runtime, manifest: ToolManifest, bytes: Vec<u8>) -> Result<V
     rt.execute_tool_call(ToolCallRequest::new(
         tool.clone(),
         b"hello",
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
 }
 
@@ -66,7 +66,7 @@ fn model_b(rt: &mut Runtime, manifest: ToolManifest) -> Result<Vec<u8>, AegisErr
     rt.execute_host_call(HostCallRequest::new(
         tool.clone(),
         b"{}",
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
 }
 

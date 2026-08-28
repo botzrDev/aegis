@@ -126,13 +126,13 @@ let tool = ToolId::new("echo");
 let output = rt.execute_tool_call(ToolCallRequest::new(
     tool.clone(),
     b"hello-aegis",
-    PolicyRequest::for_tool(&tool),
+    CallAxes::default(),
 ))?;
 ```
 
 One request struct, mirroring `HostCallRequest`. The caller names the Decision
 Axes it asserts, so a rule gated on `role` or `capability` reaches a WASM call
-exactly as it reaches a host one; `PolicyRequest::for_tool` asserts tool
+exactly as it reaches a host one; `CallAxes::default()` asserts tool
 identity and nothing else. **The caller does not supply a digest.** The pipeline computes
 `RequestDigest::of_request_bytes(input)` internally from the exact — raw,
 unreformatted — bytes the execution step will see, and that is what lands in the
@@ -173,14 +173,14 @@ pub async fn execute_host_call_async(&self, req: HostCallRequest<'_>) -> Result<
 pub struct HostCallRequest<'a> {
     pub tool_id: ToolId,
     pub input: &'a [u8],
-    pub policy: PolicyRequest<'a>,
+    pub axes: CallAxes<'a>,
 }
 ```
 
 ```rust
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::ToolId;
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{HostCallRequest, LogLevel, ToolExecutable};
 
 let tool = ToolId::new("append_node");
@@ -205,7 +205,7 @@ rt.register_tool(
 let output = rt.execute_host_call(HostCallRequest::new(
     tool.clone(),
     b"{}",
-    PolicyRequest::for_tool(&tool),
+    CallAxes::default(),
 ))?;
 ```
 

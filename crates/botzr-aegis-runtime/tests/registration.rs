@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, AuditIntent, RequestDigest, ToolId};
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{
     HostCallRequest, HostEffectError, RegisterError, Runtime, RuntimeBuilder, ToolCallRequest,
     ToolExecutable,
@@ -62,7 +62,7 @@ fn duplicate_registration_is_rejected() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"still-here",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect("original registration survives");
     assert_eq!(out, b"still-here");
@@ -148,7 +148,7 @@ fn audit_intent_digest_is_derived_from_the_input_bytes() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect("echo run succeeds");
     assert_eq!(out, input);
@@ -181,7 +181,7 @@ fn host_tool_via_execute_tool_call_is_denied() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"ping",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("Model B tool must not run through the Model A entry point");
     assert_eq!(
@@ -206,7 +206,7 @@ fn wasm_tool_via_execute_host_call_is_denied() {
         .execute_host_call(HostCallRequest::new(
             tool.clone(),
             b"ping",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("Model A tool must not run through the Model B entry point");
     assert_eq!(
@@ -252,7 +252,7 @@ fn failed_registration_leaves_no_partial_state() {
             .execute_tool_call(ToolCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .expect_err("a tool that failed registration must not execute");
         assert!(
@@ -290,7 +290,7 @@ fn host_handler_runs_behind_the_effect_context() {
         .execute_host_call(HostCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect_err("ungranted read must deny");
     assert!(

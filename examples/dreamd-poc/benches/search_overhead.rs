@@ -6,7 +6,7 @@ use std::hint::black_box;
 use std::path::PathBuf;
 
 use botzr_aegis_core::ToolId;
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{HostCallRequest, Runtime};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dreamd_poc::{
@@ -34,7 +34,7 @@ fn seed_store(dir: &TempDir) -> (Runtime, PathBuf, Vec<u8>) {
         rt.execute_host_call(HostCallRequest::new(
             tool.clone(),
             &bytes,
-            PolicyRequest::for_tool(&tool).with_capability(CAP_FS_EPISODIC),
+            CallAxes::default().with_capability(CAP_FS_EPISODIC),
         ))
         .expect("seed append");
     }
@@ -64,7 +64,7 @@ fn bench_search_overhead(c: &mut Criterion) {
                 rt.execute_host_call(HostCallRequest::new(
                     tool.clone(),
                     black_box(&query_bytes),
-                    PolicyRequest::for_tool(&tool),
+                    CallAxes::default(),
                 ))
                 .expect("wrapped search"),
             )

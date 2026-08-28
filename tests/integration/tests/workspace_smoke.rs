@@ -5,7 +5,7 @@ use std::path::Path;
 use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::ToolId;
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{sha256_hex, Runtime, ToolCallRequest};
 
 #[test]
@@ -38,7 +38,7 @@ fn echo_tool_e2e_through_pipeline() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             input,
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .expect("pipeline run succeeds");
     assert_eq!(out, input);

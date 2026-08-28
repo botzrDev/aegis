@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use botzr_aegis_capability::{ToolInfo, ToolKind, ToolManifest};
 use botzr_aegis_core::{AegisError, ToolId};
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 use botzr_aegis_runtime::{sha256_hex, Runtime, RuntimeBuilder, ToolCallRequest};
 
 /// Allow-path Model A tool on the MCP catalog.
@@ -129,7 +129,7 @@ pub fn call_tool(rt: &Runtime, tool_id: &str, text: &str) -> Result<Vec<u8>, Aeg
     rt.execute_tool_call(ToolCallRequest::new(
         tool.clone(),
         text.as_bytes(),
-        PolicyRequest::for_tool(&tool),
+        CallAxes::default(),
     ))
 }
 

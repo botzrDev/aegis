@@ -4,10 +4,10 @@
 //! effect handler before any I/O. Audit still wraps the full call.
 
 use botzr_aegis_core::{AegisError, CapabilityGrant, ExecutionOutcome, ToolId};
-use botzr_aegis_policy::PolicyRequest;
+use botzr_aegis_policy::CallAxes;
 
 use crate::pipeline::ExecutionStep;
-use crate::{refuse_nested_runtime, ExecutableSlot, HostEffectContext, Runtime};
+use crate::{policy_request, refuse_nested_runtime, ExecutableSlot, HostEffectContext, Runtime};
 
 /// A WASM slot reached through the Model B entry point: fail closed.
 fn wasm_via_host_entry() -> ExecutionStep {
@@ -24,19 +24,24 @@ fn wasm_via_host_entry() -> ExecutionStep {
 /// There is deliberately no `request_digest` field: the runtime derives it
 /// from the raw `input` bytes inside the pipeline so audit cannot record a
 /// digest the caller made up (AEG-44 §3.C).
+///
+/// Nor is there a caller-supplied `PolicyRequest`. The caller asserts
+/// [`CallAxes`]; the tool policy judges is this request's own `tool_id`,
+/// derived by the runtime, so it cannot disagree with the tool the registry
+/// executes (AILAB-710).
 #[derive(Debug, Clone)]
 pub struct HostCallRequest<'a> {
     pub tool_id: ToolId,
     pub input: &'a [u8],
-    pub policy: PolicyRequest<'a>,
+    pub axes: CallAxes<'a>,
 }
 
 impl<'a> HostCallRequest<'a> {
-    pub fn new(tool_id: ToolId, input: &'a [u8], policy: PolicyRequest<'a>) -> Self {
+    pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<'a>) -> Self {
         Self {
             tool_id,
             input,
-            policy,
+            axes,
         }
     }
 }
@@ -91,16 +96,14 @@ impl Runtime {
         let HostCallRequest {
             tool_id,
             input,
-            policy,
+            axes,
         } = req;
-        let registry_id = tool_id.clone();
+        let policy = policy_request(&tool_id, axes);
         self.sandbox.block_on(self.drive_pipeline(
-            tool_id,
+            tool_id.clone(),
             input,
             &policy,
-            async move |grant: &CapabilityGrant| {
-                self.host_registry_step(&registry_id, grant, input)
-            },
+            async |grant: &CapabilityGrant| self.host_registry_step(&tool_id, grant, input),
         ))
     }
 
@@ -125,16 +128,14 @@ impl Runtime {
         let HostCallRequest {
             tool_id,
             input,
-            policy,
+            axes,
         } = req;
-        let registry_id = tool_id.clone();
+        let policy = policy_request(&tool_id, axes);
         self.drive_pipeline(
-            tool_id,
+            tool_id.clone(),
             input,
             &policy,
-            async move |grant: &CapabilityGrant| {
-                self.host_registry_step(&registry_id, grant, input)
-            },
+            async |grant: &CapabilityGrant| self.host_registry_step(&tool_id, grant, input),
         )
         .await
     }
@@ -215,10 +216,11 @@ impl Runtime {
         let HostCallRequest {
             tool_id,
             input,
-            policy,
+            axes,
         } = req;
+        let policy = policy_request(&tool_id, axes);
         self.sandbox.block_on(self.drive_pipeline(
-            tool_id,
+            tool_id.clone(),
             input,
             &policy,
             // Execution step: run the host effect. It never reports sandbox
@@ -343,7 +345,7 @@ rules:
             .execute_host_call(HostCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert_eq!(
@@ -370,7 +372,7 @@ rules:
             .execute_host_call(HostCallRequest::new(
                 tool.clone(),
                 input,
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .expect("host echo succeeds");
         assert_eq!(out, input);
@@ -400,7 +402,7 @@ rules:
             .execute_host_call(HostCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert_eq!(
@@ -440,7 +442,7 @@ rules:
             .execute_host_call(HostCallRequest::new(
                 tool.clone(),
                 b"{}",
-                PolicyRequest::for_tool(&tool),
+                CallAxes::default(),
             ))
             .unwrap_err();
         assert_eq!(
@@ -474,7 +476,7 @@ rules:
         let tool = ToolId::new("gated");
         let out = rt
             .execute_host_call_with(
-                HostCallRequest::new(tool.clone(), b"raw", PolicyRequest::for_tool(&tool)),
+                HostCallRequest::new(tool.clone(), b"raw", CallAxes::default()),
                 |grant: &CapabilityGrant, input| {
                     assert_eq!(grant.tool_id, tool);
                     Ok(input.to_vec())

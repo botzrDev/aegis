@@ -26,7 +26,7 @@ use botzr_aegis_core::{
     to_canonical_json, AegisError, AuditRecord, CapabilityOutcome, ExecutionOutcome, GrantId,
     PolicyOutcome, ResourceCeiling, ToolId,
 };
-use botzr_aegis_policy::{PolicyEngine, PolicyRequest};
+use botzr_aegis_policy::{CallAxes, PolicyEngine};
 use botzr_aegis_runtime::{Runtime, ToolCallRequest};
 
 // Component fixtures — tiny WAT, no `wasm32-wasip2` toolchain required.
@@ -172,7 +172,7 @@ rules:
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert_eq!(
@@ -215,7 +215,7 @@ rules:
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(
@@ -249,7 +249,7 @@ fn unregistered_tool_is_capability_denied() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(
@@ -294,7 +294,7 @@ fn unresolvable_fs_need_is_capability_denied() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(
@@ -342,7 +342,7 @@ fn wildcard_net_need_is_capability_denied() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(
@@ -385,7 +385,7 @@ fn wall_clock_cap_trips_through_pipeline() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(
@@ -424,7 +424,7 @@ fn memory_cap_trips_through_pipeline() {
         .execute_tool_call(ToolCallRequest::new(
             tool.clone(),
             b"{}",
-            PolicyRequest::for_tool(&tool),
+            CallAxes::default(),
         ))
         .unwrap_err();
     assert!(

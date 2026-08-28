@@ -1,0 +1,44 @@
+error[E0308]: mismatched types
+  --> tests/ui/call_request_cannot_name_a_second_tool.rs:29:9
+   |
+26 |     let _a = ToolCallRequest::new(
+   |              -------------------- arguments to this function are incorrect
+...
+29 |         PolicyRequest::for_tool(&judged),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `CallAxes<'_>`, found `PolicyRequest<'_>`
+   |
+note: associated function defined here
+  --> $WORKSPACE/crates/botzr-aegis-runtime/src/lib.rs
+   |
+   |     pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<'a>) -> Self {
+   |            ^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/call_request_cannot_name_a_second_tool.rs:31:60
+   |
+31 |     let _b = HostCallRequest::new(executed.clone(), b"{}", PolicyRequest::for_tool(&judged));
+   |              --------------------                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `CallAxes<'_>`, found `PolicyRequest<'_>`
+   |              |
+   |              arguments to this function are incorrect
+   |
+note: associated function defined here
+  --> $WORKSPACE/crates/botzr-aegis-runtime/src/host.rs
+   |
+   |     pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<'a>) -> Self {
+   |            ^^^
+
+error[E0560]: struct `ToolCallRequest<'_>` has no field named `policy`
+  --> tests/ui/call_request_cannot_name_a_second_tool.rs:37:9
+   |
+37 |         policy: PolicyRequest::for_tool(&judged),
+   |         ^^^^^^ `ToolCallRequest<'_>` does not have this field
+   |
+   = note: available fields are: `axes`
+
+error[E0560]: struct `HostCallRequest<'_>` has no field named `policy`
+  --> tests/ui/call_request_cannot_name_a_second_tool.rs:42:9
+   |
+42 |         policy: PolicyRequest::for_tool(&judged),
+   |         ^^^^^^ `HostCallRequest<'_>` does not have this field
+   |
+   = note: available fields are: `axes`

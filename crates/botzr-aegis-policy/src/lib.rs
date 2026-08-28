@@ -23,7 +23,7 @@ mod set;
 pub use botzr_aegis_core::{PolicySetHash, ResourceCeiling};
 pub use engine::{PolicyEngine, ReloadOutcome, ReloadSource};
 pub use error::PolicyError;
-pub use eval::{PolicyDecision, PolicyRequest};
+pub use eval::{CallAxes, PolicyDecision, PolicyRequest};
 pub use parse::SUPPORTED_POLICY_VERSION;
 // Forensic re-evaluation (`aegis recheck`). `PolicyEngine::preview` is the
 // side-effect-free twin of `evaluate` and stays a method on the engine, so the

@@ -144,6 +144,35 @@ support.
 
 ### Changed
 
+- **A call request can no longer name one tool and be judged as another**
+  (AILAB-710). **Breaking:** `ToolCallRequest` and `HostCallRequest` carry
+  `axes: CallAxes<'a>` in place of `policy: PolicyRequest<'a>`, and their
+  `new()` constructors take `CallAxes` in the third position. A caller that
+  asserted no axes passes `CallAxes::default()` where it passed
+  `PolicyRequest::for_tool(&tool)`; `with_role`, `with_capability` and
+  `with_session` carry over unchanged. `PolicyRequest` itself is unchanged and
+  remains the input to `PolicyEngine::evaluate` and `PolicyEngine::preview`.
+
+  What was wrong: both request types carried the tool identity **twice** — once
+  as their own `tool_id`, which the registry looked up and executed, and again
+  inside a caller-supplied `PolicyRequest`, which is what policy actually
+  evaluated. Nothing reconciled the two. A request naming `echo` with a
+  `PolicyRequest` for `admin.shell` would execute `echo` under `admin.shell`'s
+  verdict, and the Agent Action Record would then carry a verdict about a tool
+  that never ran. That is the same defect class as `e92450a`, where the record
+  claimed an enforcement that had not happened: the record must state what was
+  enforced, not what was asked for (ADR-0007).
+
+  What now happens: the runtime derives the `PolicyRequest` from the call
+  request's own `tool_id`, in one internal helper shared by all five entry
+  points (Model A sync and async, Model B sync and async, and
+  `execute_host_call_with`). The caller supplies only the axes it can honestly
+  assert — capability, role, session. **The mismatch is not detected, it is
+  unrepresentable:** there is no longer a second tool id to disagree with the
+  first. A `debug_assert!` comparing the two was considered and rejected
+  because it is compiled out of release builds, and an error return was
+  rejected because it still lets the contradictory request be built.
+
 - **The synchronous entry points refuse a nested tokio runtime instead of
   panicking, and Model A no longer builds a tokio runtime per call**
   (AILAB-809). **Breaking:** `AegisError` gains a `NestedRuntime { entry }`
