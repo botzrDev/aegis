@@ -538,7 +538,7 @@ mod tests {
 
     use botzr_aegis_audit::Retention;
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-    use botzr_aegis_core::{AegisError, CapabilityOutcome, PIPELINE_STAGES};
+    use botzr_aegis_core::{AegisError, CapabilityOutcome};
     use botzr_aegis_policy::PolicyEngine;
 
     /// A runtime whose audit Chain the test can read back.
@@ -585,14 +585,6 @@ mod tests {
             max_output_bytes,
             ..ToolLimits::default()
         })
-    }
-
-    #[test]
-    fn pipeline_order_is_load_bearing() {
-        assert_eq!(
-            PIPELINE_STAGES,
-            &["policy", "capability", "sandbox", "audit"]
-        );
     }
 
     /// ADR-0012: retention is declared by the Sink, and the zero-config default

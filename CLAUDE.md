@@ -67,7 +67,7 @@ Five components carry enforcement:
 4. **`botzr-aegis-audit`** — schema-versioned records, always emitted (including deny/trap/panic)
 5. **Resource accounting** — epoch + memory limiter per call
 
-The edge crates (`mcp`, `wrap`, `confine`, `cli`) wire these up; they do not add enforcement of their own, and `wrap` deliberately depends on nothing below `audit` + `core`.
+The edge crates (`mcp`, `wrap`, `confine`, `cli`) wire these up; they do not add enforcement of their own, and `wrap` depends only on `audit`, `core` and `confine` — never on `policy`, `capability`, `sandbox` or `runtime`.
 
 **Out of locked scope:** multi-agent orchestration, dashboards, crypto audit proofs, SaaS hosting, support for every tool/LLM. Layer 2 governance lives in-repo under `governance/` as a separate Python service (not a Cargo workspace member).
 
@@ -84,7 +84,7 @@ aegis/                          # GitHub repo: botzrDev/aegis; product name: Aeg
 │   ├── botzr-aegis-audit/
 │   ├── botzr-aegis-runtime/    # orchestrator (library mode entry)
 │   ├── botzr-aegis-mcp/        # MCP stdio gateway
-│   ├── botzr-aegis-wrap/       # stdio interposer; depends only on audit + core
+│   ├── botzr-aegis-wrap/       # stdio interposer; audit + core + confine only
 │   ├── botzr-aegis-confine/    # OS confinement (Landlock/seccomp); depends only on core
 │   └── botzr-aegis-cli/        # binary name: aegis
 ├── spec/SPEC.md                # the AAR format — the durable asset

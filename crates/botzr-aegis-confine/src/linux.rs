@@ -18,8 +18,19 @@ use crate::profile::{ConfinementProfile, EnforcedConfinement};
 
 /// Highest ABI variant this crate's `landlock` pin knows about. Used only as
 /// the ceiling of a probe; the negotiated number is whatever the kernel
-/// returned, and tests must not assert a fixed value (dev is ABI 4, CI is
-/// newer).
+/// returned, and tests must not assert a fixed value — it varies per kernel.
+///
+/// Measured, not assumed. The dev box returned 3 on 2026-08-28 (kernel
+/// 6.6.87.2-microsoft-standard-WSL2). Re-check it with
+/// `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`
+/// (syscall 444 on x86_64), which returns the highest ABI the running kernel
+/// honours. The runner's number is deliberately not stated here — this tree
+/// cannot verify it — and is printed by the "Landlock ABI (runner)" step in
+/// `.github/workflows/ci.yml`.
+///
+/// This matters beyond bookkeeping: ABI 4 (kernel 6.7) is what adds
+/// `AccessNet`, so an ABI 3 machine cannot exercise network confinement at
+/// all. See AILAB-810.
 const ABI_PROBE_MAX: i32 = 9;
 
 /// Landlock + seccomp, applied to this process. See [`crate::Confiner`].

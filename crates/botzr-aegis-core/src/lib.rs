@@ -34,9 +34,22 @@ pub use policy::{ApprovalId, PolicyAction};
 pub use tool::ToolId;
 
 /// Load-bearing pipeline order (do not reorder).
+///
+/// This constant is documentation, not the guarantee. The order is enforced by
+/// `policy_deny_never_invokes_execution_adapter` and
+/// `capability_deny_never_invokes_execution_adapter` in
+/// `crates/botzr-aegis-runtime/src/pipeline.rs`, which drive the pipeline with a
+/// spy adapter and prove execution is unreachable behind each station.
 pub const PIPELINE_STAGES: &[&str] = &["policy", "capability", "sandbox", "audit"];
 
 /// Model B (host-effect) pipeline order — no sandbox station. Host tools run
 /// their effect in host Rust, so isolation comes from the capability grant
 /// and audit alone (do not reorder).
+///
+/// Enforced by the same two tests as [`PIPELINE_STAGES`] —
+/// `policy_deny_never_invokes_execution_adapter` and
+/// `capability_deny_never_invokes_execution_adapter` in
+/// `crates/botzr-aegis-runtime/src/pipeline.rs`. Both register a
+/// `ToolExecutable::HostHandler`, so they exercise this Model B path and not a
+/// Model-A-only one.
 pub const HOST_PIPELINE_STAGES: &[&str] = &["policy", "capability", "audit"];

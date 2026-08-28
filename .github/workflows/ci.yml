@@ -15,6 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # AILAB-832: the confine crate must not state a runner ABI this tree
+      # cannot verify, so measure it instead of asserting one. Informational —
+      # the confine tests deliberately assert no fixed ABI, and nothing here
+      # gates on the value. ABI 4 (kernel 6.7) is what adds AccessNet.
+      - name: Landlock ABI (runner)
+        run: |
+          uname -srm
+          python3 -c "import ctypes,ctypes.util;l=ctypes.CDLL(ctypes.util.find_library('c'),use_errno=True);l.syscall.restype=ctypes.c_long;l.syscall.argtypes=[ctypes.c_long,ctypes.c_void_p,ctypes.c_size_t,ctypes.c_uint32];ctypes.set_errno(0);rv=l.syscall(444,None,0,1);print('landlock_abi=%d errno=%d' % (rv, ctypes.get_errno()))"
+
       - name: Install Rust toolchain
         run: rustup target add wasm32-wasip2
 

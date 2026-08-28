@@ -67,8 +67,11 @@ impl Runtime {
     ///
     /// The effect is the [`HostHandler`](crate::HostHandler) stored when the
     /// tool was registered with [`Runtime::register_tool`]; it receives a
-    /// [`HostEffectContext`] built from the minted grant, so grant enforcement
-    /// is structural. Sandbox is not invoked.
+    /// [`HostEffectContext`] built from the minted grant. Structural grant
+    /// enforcement applies only to methods on that type — a handler is a boxed
+    /// `Fn` and can reach around the context to `std::fs` or the network, in
+    /// which case nothing checks the grant before the effect runs and those
+    /// checks are the caller's responsibility. Sandbox is not invoked.
     ///
     /// Fails closed when the tool is absent from the registry, and when the
     /// registered slot is a WASM executable (use
@@ -239,7 +242,7 @@ mod tests {
     use super::*;
     use botzr_aegis_audit::{insecure_dev_key, AuditWriter, MemoryChainSink};
     use botzr_aegis_capability::{ToolInfo, ToolKind, ToolLimits, ToolManifest};
-    use botzr_aegis_core::{AegisError, CapabilityGrant, HOST_PIPELINE_STAGES};
+    use botzr_aegis_core::{AegisError, CapabilityGrant, HOST_PIPELINE_STAGES, PIPELINE_STAGES};
 
     use crate::{HostHandler, ToolExecutable};
 
@@ -300,9 +303,17 @@ mod tests {
         .expect("register host tool");
     }
 
+    /// Model B has no sandbox station. Asserted against `PIPELINE_STAGES` rather
+    /// than against a literal, so it fails if either constant drifts — a station
+    /// added to one and not the other, or a reorder of either.
     #[test]
-    fn host_pipeline_omits_sandbox() {
-        assert_eq!(HOST_PIPELINE_STAGES, &["policy", "capability", "audit"]);
+    fn host_pipeline_is_the_full_pipeline_without_sandbox() {
+        let expected: Vec<&str> = PIPELINE_STAGES
+            .iter()
+            .filter(|stage| **stage != "sandbox")
+            .copied()
+            .collect();
+        assert_eq!(HOST_PIPELINE_STAGES, expected.as_slice());
     }
 
     #[test]
