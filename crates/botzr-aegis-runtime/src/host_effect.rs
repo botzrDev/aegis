@@ -232,14 +232,18 @@ mod tests {
         }
     }
 
-    fn allow_get(host: &str) -> NetGrant {
+    fn allow_get_on_port(host: &str, port: u16) -> NetGrant {
         NetGrant {
             http: vec![HttpGrant {
                 host: host.into(),
-                ports: vec![443],
+                ports: vec![port],
                 methods: vec!["GET".into()],
             }],
         }
+    }
+
+    fn allow_get(host: &str) -> NetGrant {
+        allow_get_on_port(host, 443)
     }
 
     #[test]
@@ -269,6 +273,27 @@ mod tests {
         assert!(
             matches!(&err, HostEffectError::GrantDenied { reason } if reason.contains("not in grant")),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn http_get_port_outside_allowlist_denies() {
+        // The host is allow-listed and the port is not. Before AILAB-842 this
+        // returned a stub 200: `HttpGrant.ports` was recorded as the `net`
+        // decision axis in the signed record while nothing enforced it.
+        let grant = grant(None, Some(allow_get("api.example.com")));
+        let ctx = HostEffectContext::new(&grant);
+        let err = ctx
+            .http_get("https://api.example.com:8080/data")
+            .expect_err("a port outside the allow-list must deny");
+        // Pinned in full: the host here is permitted, so the reason must name
+        // the port and must not be the host-denial phrase that three other
+        // assertions in this workspace read as a host marker.
+        assert_eq!(
+            err,
+            HostEffectError::GrantDenied {
+                reason: "network denied: port 8080 not allowed for host api.example.com".into()
+            }
         );
     }
 

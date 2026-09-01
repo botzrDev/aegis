@@ -65,14 +65,18 @@ mod tests {
         ToolState::new(WasiCtxBuilder::new().build(), grant)
     }
 
-    fn allow_get(host: &str) -> NetGrant {
+    fn allow_get_on_port(host: &str, port: u16) -> NetGrant {
         NetGrant {
             http: vec![botzr_aegis_core::HttpGrant {
                 host: host.into(),
-                ports: vec![443],
+                ports: vec![port],
                 methods: vec!["GET".into()],
             }],
         }
+    }
+
+    fn allow_get(host: &str) -> NetGrant {
+        allow_get_on_port(host, 443)
     }
 
     #[tokio::test]
@@ -103,6 +107,26 @@ mod tests {
             .await
             .expect_err("non-http scheme must deny");
         assert!(deny.reason.contains("malformed url"), "{}", deny.reason);
+    }
+
+    #[tokio::test]
+    async fn http_get_denies_port_outside_allowlist() {
+        // The guest asks for an allow-listed host on a port the grant does not
+        // list. The host import must refuse before the effect, at the same
+        // boundary that refuses an unlisted host.
+        let mut state = state_with_net(Some(allow_get("api.example.com")));
+        let deny = state
+            .get("https://api.example.com:8080/data".into())
+            .await
+            .expect_err("a port outside the allow-list must deny");
+        // Pinned in full: the host is permitted and only the port is not, so
+        // the reason must name the port rather than reuse the host-denial
+        // phrase. Equality also proves the refusal beat the effect — the stub
+        // reason is a different string entirely.
+        assert_eq!(
+            deny.reason,
+            "network denied: port 8080 not allowed for host api.example.com"
+        );
     }
 
     #[tokio::test]

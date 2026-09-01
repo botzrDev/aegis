@@ -27,7 +27,7 @@ pub use grant::{
     CapabilityGrant, FsGrant, GrantId, HttpGrant, NetGrant, DEFAULT_MAX_MEMORY_BYTES,
     DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_WALL_MS,
 };
-pub use http_check::{http_get_allowed, parse_http_host};
+pub use http_check::{http_get_allowed, parse_http_authority, parse_http_host};
 pub use jcs::{canonical_digest, to_canonical_json, JcsError};
 pub use limits::ResourceCeiling;
 pub use policy::{ApprovalId, PolicyAction};
