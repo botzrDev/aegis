@@ -399,6 +399,28 @@ fn golden_session_close() {
     assert_golden("session_close");
 }
 
+/// Nothing in the directory is unreachable. `GOLDEN_LINES` is a hardcoded list
+/// and every reader here addresses a file by name, so a file dropped beside
+/// these would otherwise be read by nothing. That matters more in this
+/// directory than in the other two vector sets: `spec/SPEC.md` §11 publishes
+/// what is here as the conformance set, so an unread file is not dead weight
+/// but a published claim that nothing demands.
+#[test]
+fn the_directory_holds_exactly_the_published_vectors() {
+    let mut found: Vec<String> = std::fs::read_dir("tests/golden")
+        .expect("tests/golden exists")
+        .map(|entry| entry.expect("readable entry").file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    let mut expected: Vec<String> = GOLDEN_LINES
+        .iter()
+        .map(|name| format!("{name}.json"))
+        .collect();
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
 /// The snapshots are only worth pinning if the signatures in them are real.
 /// Checks the committed golden *files*, not the freshly written session, so a
 /// snapshot edited by hand fails here rather than passing as "expected output".
