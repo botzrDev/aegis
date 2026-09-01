@@ -16,6 +16,72 @@ support.
 
 ### Added
 
+- **`botzr-aegis-wrap` — a transparent stdio MCP interposer, published for the
+  first time.** It sits between an existing MCP client and its child server,
+  relays the session in both directions, and writes a signed, hash-chained
+  schema-v2 audit record for every `tools/call` it carries: an intent line
+  fsynced before the request reaches the child, and an outcome line written
+  after the child's response is already on its way back. A wrap process that
+  dies mid-call therefore still says a call was in flight.
+
+  **It enforces nothing per call, and that is the first thing to know about
+  it.** Wrap runs no policy engine, resolves no capability, makes no per-call
+  decision and blocks nothing. Its only station in the pipeline is AUDIT: the
+  crate depends on `botzr-aegis-audit`, `botzr-aegis-core` and
+  `botzr-aegis-confine`, and on none of policy, capability, sandbox or runtime.
+  The records say so rather than implying otherwise — because no Policy Set is
+  evaluated, `policy_set_hash` carries a documented pass-through constant
+  instead of naming a set that was never consulted. `--confine` adds OS
+  confinement to the child **process** (see the next entry), which is still not
+  a per-call decision; without it the child is an ordinary OS process with
+  whatever authority the operator's own account has.
+
+  Two behaviours to know before reading a record. Within a frame the bytes are
+  relayed verbatim — a trailing `\r` and invalid UTF-8 both survive — and the
+  request and response digests cover exactly those bytes, not the delimiter.
+  And a `tools/call` inside a JSON-RPC batch array is recorded like one sent in
+  a frame of its own while the array is relayed whole and unsplit, so the N
+  calls in one batch share one `request_digest` and one `response_digest`.
+  Anything that is not a `tools/call` — `initialize`, `tools/list`, `ping`,
+  notifications, methods this build has never heard of — is relayed with no
+  interception and produces no record at all.
+
+- **`botzr-aegis-confine` — OS confinement derived from a `CapabilityGrant`,
+  published for the first time.** A `Confiner` narrows the calling process to a
+  `ConfinementProfile` and reports what the kernel **actually** enforced rather
+  than what was asked for. It is authority-reducing only: the crate holds no
+  privilege and is not setuid, so an attacker who invokes its internal re-exec
+  helper with an empty profile gets exactly what running the target directly
+  would have given them. That is what separates it from the setuid sandbox
+  helpers that have historically been a vulnerability class.
+
+  **Enforcement is Linux-only.** On every other target the resolved mechanism
+  is `UnsupportedConfiner`, which refuses every profile — so on macOS or
+  Windows this crate enforces nothing and fails closed rather than pretending
+  to. A caller names the trait and never branches on the target OS.
+
+  **The two halves are not equally strong, and the difference is the point.**
+  The filesystem side is Landlock: it handles every filesystem access right the
+  negotiated ABI offers and then grants back only the path trees the profile
+  names. The network side is a seccomp filter whose default action is *allow* —
+  a deny-list of named network syscalls and nothing more. It is not a general
+  syscall sandbox: `ptrace`, `unshare`, `mount` and everything the list does
+  not name are permitted. **Enumeration is still the model on that half.** A
+  kernel interface that carries a packet without crossing an enumerated syscall
+  is an open path that has to be discovered rather than prevented, and io_uring
+  was exactly that until it was denied (AILAB-807). Moving the network claim to
+  Landlock `AccessNet`, which enforces without enumerating, is AILAB-810 and is
+  **not shipped**.
+
+  Two consequences an operator meets immediately. io_uring is denied whole,
+  because seccomp cannot read submission-queue entries and no filter can permit
+  its file I/O while denying its network I/O — so a child that uses io_uring
+  for ordinary file I/O will die on `SIGSYS` under a profile with no
+  `NetGrant`. And a profile the kernel cannot fully enforce is an error rather
+  than a silent downgrade, unless the operator opts in with `--best-effort`, in
+  which case the report states that the profile was not fully enforced instead
+  of claiming that it was.
+
 - **Async entry points for both trust models** (AILAB-809).
   `Runtime::execute_tool_call_async` (Model A) and
   `Runtime::execute_host_call_async` (Model B) run the same pipeline —
