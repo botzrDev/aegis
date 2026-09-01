@@ -1,0 +1,1 @@
+{"decision_axes":{"capability":"fs.read","fs":{"path_canonical":"/home/a/notes.md","path_raw":"~/notes.md"},"role":"ops"},"line_type":"outcome","prev_hash":"0000000000000000000000000000000000000000000000000000000000000000","seq":7,"tool_id":"echo"}

@@ -25,3 +25,23 @@ jobs:
         # cargo-fuzz resolves fuzz/ relative to cwd — run from the repo root.
         # libFuzzer exits nonzero on crash, which fails the job.
         run: cargo +nightly fuzz run policy_yaml -- -max_total_time=60
+
+  # A separate job rather than a second step: the two targets cover unrelated
+  # surfaces, and one crashing should name itself in the job list rather than
+  # hide behind the other's status. The cost is a duplicate cargo-fuzz install
+  # on a weekly cron, which is the cheaper half of the trade.
+  jcs-canonical:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+
+      - name: Fuzz jcs_canonical (60s smoke)
+        # cargo-fuzz resolves fuzz/ relative to cwd — run from the repo root.
+        # libFuzzer exits nonzero on crash, which fails the job.
+        run: cargo +nightly fuzz run jcs_canonical -- -max_total_time=60

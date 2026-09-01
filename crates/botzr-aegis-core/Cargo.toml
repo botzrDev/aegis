@@ -24,3 +24,8 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+# AILAB-850: property tests for the JCS canonicalizer
+# (tests/jcs_properties.rs). Declared literally rather than through
+# `[workspace.dependencies]` because there is no workspace entry for proptest —
+# `botzr-aegis-capability` declares it the same way.
+proptest = "1"

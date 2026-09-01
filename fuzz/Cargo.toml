@@ -11,10 +11,21 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 botzr-aegis-policy = { path = "../crates/botzr-aegis-policy" }
 botzr-aegis-core = { path = "../crates/botzr-aegis-core" }
+# The jcs_canonical target parses untrusted bytes into a `serde_json::Value`
+# before canonicalizing. `botzr-aegis-core` uses serde_json internally but does
+# not re-export it, so the target needs its own direct dependency.
+serde_json = "1"
 
 [[bin]]
 name = "policy_yaml"
 path = "fuzz_targets/policy_yaml.rs"
+doc = false
+test = false
+bench = false
+
+[[bin]]
+name = "jcs_canonical"
+path = "fuzz_targets/jcs_canonical.rs"
 doc = false
 test = false
 bench = false
