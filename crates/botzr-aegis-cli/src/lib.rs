@@ -9,6 +9,7 @@ mod recheck;
 mod verify;
 mod wrap;
 
+use std::convert::identity;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -149,76 +150,269 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         // before any heavier dispatch.
         "__confine-exec" => parse_confine_exec(&args[2..]),
         "--help" | "-h" | "help" => Ok(Command::Help),
-        "run" => match parse_run(&args[2..]) {
-            Ok(run) => Ok(Command::Run(run)),
-            Err(e) if e == "__help_run__" => Ok(Command::Help),
-            Err(e) => Err(e),
-        },
-        "verify" => match parse_verify(&args[2..]) {
-            Ok(cmd) => Ok(cmd),
-            Err(e) if e == "__help_verify__" => Ok(Command::Help),
-            Err(e) => Err(e),
-        },
-        "recheck" => match parse_recheck(&args[2..]) {
-            Ok(cmd) => Ok(cmd),
-            Err(e) if e == "__help_recheck__" => Ok(Command::Help),
-            Err(e) => Err(e),
-        },
-        "keygen" => match parse_keygen(&args[2..]) {
-            Ok(cmd) => Ok(cmd),
-            Err(e) if e == "__help_keygen__" => Ok(Command::Help),
-            Err(e) => Err(e),
-        },
-        "wrap" => match parse_wrap(&args[2..]) {
-            Ok(wrap) => Ok(Command::Wrap(wrap)),
-            Err(e) if e == "__help_wrap__" => Ok(Command::Help),
-            Err(e) => Err(e),
-        },
+        "run" => finish(parse_run(&args[2..]), Command::Run),
+        "verify" => finish(parse_verify(&args[2..]), identity),
+        "recheck" => finish(parse_recheck(&args[2..]), identity),
+        "keygen" => finish(parse_keygen(&args[2..]), identity),
+        "wrap" => finish(parse_wrap(&args[2..]), Command::Wrap),
         other if other.starts_with('-') => {
             // Global flags only → ready mode (backward compatible stub).
-            match parse_global_flags(&args[1..]) {
-                Ok((policy, audit, signing_key)) => Ok(Command::Ready {
+            finish(
+                parse_global_flags(&args[1..]),
+                |(policy, audit, signing_key)| Command::Ready {
                     policy,
                     audit,
                     signing_key,
-                }),
-                Err(e) if e == "__help__" => Ok(Command::Help),
-                Err(e) => Err(e),
-            }
+                },
+            )
         }
         other => Err(format!("unknown command: {other}\n{}", usage_text())),
     }
 }
 
+/// Why a per-command parser stopped.
+///
+/// **`Help` is a routing outcome, not an error**, and giving it a variant is the
+/// point of this type. It used to be six reserved strings, one per command,
+/// returned through the `Err` channel and compared by equality in
+/// [`parse_args`] — twelve occurrences, six produced and six compared. Nothing
+/// typed them: a typo in either half compiled cleanly, and what reached the
+/// operator was the reserved string itself, reported as an unknown flag. A
+/// variant cannot be misspelled, and [`finish`] is the one place that routes
+/// it (AILAB-853).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ParseStop {
+    /// `--help` or `-h` was given. Print [`usage_text`] and exit 0.
+    Help,
+    /// A usage error, already worded for the operator.
+    Usage(String),
+}
+
+impl From<&str> for ParseStop {
+    fn from(message: &str) -> Self {
+        ParseStop::Usage(message.to_string())
+    }
+}
+
+impl From<String> for ParseStop {
+    fn from(message: String) -> Self {
+        ParseStop::Usage(message)
+    }
+}
+
+/// Route a per-command parser's outcome onto [`parse_args`]'s contract.
+///
+/// The only place a [`ParseStop::Help`] becomes [`Command::Help`], so no command
+/// can forget to route it and none can route it by comparing text.
+fn finish<T>(
+    parsed: Result<T, ParseStop>,
+    into_command: impl FnOnce(T) -> Command,
+) -> Result<Command, String> {
+    match parsed {
+        Ok(value) => Ok(into_command(value)),
+        Err(ParseStop::Help) => Ok(Command::Help),
+        Err(ParseStop::Usage(message)) => Err(message),
+    }
+}
+
+/// Where a flag's value goes.
+///
+/// The shapes this CLI actually uses are named so a table row is one line.
+/// `Custom` is the escape hatch for the two flags that parse their value before
+/// storing it and whose own error wording is part of the contract.
+enum ValueTarget<'a> {
+    /// Last one wins.
+    Path(&'a mut Option<PathBuf>),
+    /// Last one wins.
+    Text(&'a mut Option<String>),
+    /// Overwrites a value that already carries a default.
+    Overwrite(&'a mut String),
+    /// Repeatable.
+    PushPath(&'a mut Vec<PathBuf>),
+    /// Repeatable, and the value is parsed before it is stored.
+    Custom(&'a mut dyn FnMut(&str) -> Result<(), ParseStop>),
+}
+
+impl ValueTarget<'_> {
+    fn store(&mut self, value: &str) -> Result<(), ParseStop> {
+        match self {
+            ValueTarget::Path(target) => **target = Some(PathBuf::from(value)),
+            ValueTarget::Text(target) => **target = Some(value.to_string()),
+            ValueTarget::Overwrite(target) => **target = value.to_string(),
+            ValueTarget::PushPath(target) => target.push(PathBuf::from(value)),
+            ValueTarget::Custom(store) => return store(value),
+        }
+        Ok(())
+    }
+}
+
+/// What a flag does when it appears.
+///
+/// Two variants rather than one enum with a "takes a value" flag, so a flag that
+/// consumes nothing has no value target to store into: the impossible case is
+/// unrepresentable rather than asserted.
+enum FlagAction<'a> {
+    /// Presence sets it. Consumes no following argument.
+    Set(&'a mut bool),
+    /// Consumes the next argument **whatever it is**, so `--policy --help`
+    /// stores `--help` as the value exactly as the hand-written loops did.
+    Value(ValueTarget<'a>),
+}
+
+/// One flag a command accepts.
+struct FlagSpec<'a> {
+    /// Every spelling. The **first** is the one a "needs a value" message uses,
+    /// so `--wasm` reports as `--component` and `--tool-id` as `--id`, which is
+    /// what those messages said before this table existed.
+    names: &'a [&'a str],
+    action: FlagAction<'a>,
+}
+
+impl<'a> FlagSpec<'a> {
+    fn set(names: &'a [&'a str], target: &'a mut bool) -> Self {
+        FlagSpec {
+            names,
+            action: FlagAction::Set(target),
+        }
+    }
+
+    fn path(names: &'a [&'a str], target: &'a mut Option<PathBuf>) -> Self {
+        FlagSpec {
+            names,
+            action: FlagAction::Value(ValueTarget::Path(target)),
+        }
+    }
+
+    fn text(names: &'a [&'a str], target: &'a mut Option<String>) -> Self {
+        FlagSpec {
+            names,
+            action: FlagAction::Value(ValueTarget::Text(target)),
+        }
+    }
+
+    fn overwrite(names: &'a [&'a str], target: &'a mut String) -> Self {
+        FlagSpec {
+            names,
+            action: FlagAction::Value(ValueTarget::Overwrite(target)),
+        }
+    }
+
+    fn push_path(names: &'a [&'a str], target: &'a mut Vec<PathBuf>) -> Self {
+        FlagSpec {
+            names,
+            action: FlagAction::Value(ValueTarget::PushPath(target)),
+        }
+    }
+
+    fn custom(
+        names: &'a [&'a str],
+        store: &'a mut dyn FnMut(&str) -> Result<(), ParseStop>,
+    ) -> Self {
+        FlagSpec {
+            names,
+            action: FlagAction::Value(ValueTarget::Custom(store)),
+        }
+    }
+}
+
+/// What a command does with a word that matches none of its flags.
+enum BareWord<'a> {
+    /// The command takes no positionals and has nothing better to say about
+    /// one: report it the way it reports a mistyped flag.
+    IsUnknownFlag,
+    /// The command's own rule, called **in argument order** so the first
+    /// mistake still wins — `verify a b --key BADHEX` reports the two-PATH
+    /// error, not the hex one, exactly as the hand-written loop did.
+    Handled(&'a mut dyn FnMut(&str) -> Result<(), ParseStop>),
+}
+
+/// Whether a literal `--` ends this command's own parsing.
+enum DoubleDash {
+    /// `--` is an ordinary word and falls through to the unknown-flag path, as
+    /// it does for every command except `wrap`.
+    NotSpecial,
+    /// `--` ends parsing and everything after it is returned verbatim.
+    EndsParsing,
+}
+
+/// Walk `args` against `specs`, storing each flag's value through its action,
+/// and return everything after a literal `--`.
+///
+/// This replaces six hand-written index loops that were the same shape every
+/// time: `i += 1`, `args.get(i).ok_or("--x needs a value")`, a `--help` arm and
+/// an unknown-flag arm. Adding a flag is now one row in a table rather than
+/// nine lines copied from the flag above it — and there is no index arithmetic
+/// left to get wrong, because the value is simply the iterator's next item.
+///
+/// Every message it produces is the message the loops produced. `--help` and
+/// `-h` are handled here rather than per command, which is why no table needs a
+/// row for them.
+fn walk_flags(
+    args: &[String],
+    specs: &mut [FlagSpec<'_>],
+    mut bare: BareWord<'_>,
+    double_dash: DoubleDash,
+) -> Result<Vec<String>, ParseStop> {
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let arg = arg.as_str();
+
+        // Before the help check, so `wrap … -- npx --help` hands `--help` to
+        // the child rather than printing this CLI's usage.
+        if matches!(double_dash, DoubleDash::EndsParsing) && arg == "--" {
+            return Ok(rest.cloned().collect());
+        }
+        if arg == "--help" || arg == "-h" {
+            return Err(ParseStop::Help);
+        }
+
+        if let Some(spec) = specs.iter_mut().find(|spec| spec.names.contains(&arg)) {
+            match &mut spec.action {
+                FlagAction::Set(target) => **target = true,
+                FlagAction::Value(target) => {
+                    let name = spec.names[0];
+                    let value = rest
+                        .next()
+                        .ok_or_else(|| ParseStop::Usage(format!("{name} needs a value")))?;
+                    target.store(value)?;
+                }
+            }
+            continue;
+        }
+
+        match &mut bare {
+            BareWord::IsUnknownFlag => return Err(unknown_flag(arg)),
+            // A word starting with `-` is a mistyped flag whichever rule
+            // applies; only a bare word reaches the command's own rule.
+            _ if arg.starts_with('-') => return Err(unknown_flag(arg)),
+            BareWord::Handled(handle) => handle(arg)?,
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn unknown_flag(arg: &str) -> ParseStop {
+    ParseStop::Usage(format!("unknown flag: {arg}"))
+}
+
 type GlobalFlags = (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>);
 
-fn parse_global_flags(args: &[String]) -> Result<GlobalFlags, String> {
+fn parse_global_flags(args: &[String]) -> Result<GlobalFlags, ParseStop> {
     let mut policy = None;
     let mut audit = None;
     let mut signing_key = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--policy" => {
-                i += 1;
-                let v = args.get(i).ok_or("--policy needs a value")?;
-                policy = Some(PathBuf::from(v));
-            }
-            "--audit" => {
-                i += 1;
-                let v = args.get(i).ok_or("--audit needs a value")?;
-                audit = Some(PathBuf::from(v));
-            }
-            "--signing-key" => {
-                i += 1;
-                let v = args.get(i).ok_or("--signing-key needs a value")?;
-                signing_key = Some(PathBuf::from(v));
-            }
-            "--help" | "-h" => return Err("__help__".into()),
-            other => return Err(format!("unknown flag: {other}")),
-        }
-        i += 1;
-    }
+
+    walk_flags(
+        args,
+        &mut [
+            FlagSpec::path(&["--policy"], &mut policy),
+            FlagSpec::path(&["--audit"], &mut audit),
+            FlagSpec::path(&["--signing-key"], &mut signing_key),
+        ],
+        BareWord::IsUnknownFlag,
+        DoubleDash::NotSpecial,
+    )?;
+
     check_audit_key_pair(audit.as_deref(), signing_key.as_deref())?;
     Ok((policy, audit, signing_key))
 }
@@ -254,24 +448,19 @@ fn check_audit_key_pair(audit: Option<&Path>, signing_key: Option<&Path>) -> Res
 }
 
 /// Parse `aegis keygen --out <PATH> [--force]`.
-fn parse_keygen(args: &[String]) -> Result<Command, String> {
+fn parse_keygen(args: &[String]) -> Result<Command, ParseStop> {
     let mut out = None;
     let mut force = false;
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--out" => {
-                i += 1;
-                let v = args.get(i).ok_or("--out needs a value")?;
-                out = Some(PathBuf::from(v));
-            }
-            "--force" => force = true,
-            "--help" | "-h" => return Err("__help_keygen__".into()),
-            other => return Err(format!("unknown flag: {other}")),
-        }
-        i += 1;
-    }
+    walk_flags(
+        args,
+        &mut [
+            FlagSpec::path(&["--out"], &mut out),
+            FlagSpec::set(&["--force"], &mut force),
+        ],
+        BareWord::IsUnknownFlag,
+        DoubleDash::NotSpecial,
+    )?;
 
     Ok(Command::Keygen {
         // No default path. An implicit `~/.config/aegis/...` would make a
@@ -282,7 +471,7 @@ fn parse_keygen(args: &[String]) -> Result<Command, String> {
     })
 }
 
-fn parse_run(args: &[String]) -> Result<RunArgs, String> {
+fn parse_run(args: &[String]) -> Result<RunArgs, ParseStop> {
     let mut policy = None;
     let mut audit = None;
     let mut signing_key = None;
@@ -294,64 +483,23 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     let mut sha256 = None;
     let mut version = "0.1.0".to_string();
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--policy" => {
-                i += 1;
-                let v = args.get(i).ok_or("--policy needs a value")?;
-                policy = Some(PathBuf::from(v));
-            }
-            "--audit" => {
-                i += 1;
-                let v = args.get(i).ok_or("--audit needs a value")?;
-                audit = Some(PathBuf::from(v));
-            }
-            "--signing-key" => {
-                i += 1;
-                let v = args.get(i).ok_or("--signing-key needs a value")?;
-                signing_key = Some(PathBuf::from(v));
-            }
-            "--component" | "--wasm" => {
-                i += 1;
-                let v = args.get(i).ok_or("--component needs a value")?;
-                component = Some(PathBuf::from(v));
-            }
-            "--id" | "--tool-id" => {
-                i += 1;
-                let v = args.get(i).ok_or("--id needs a value")?;
-                id = Some(v.clone());
-            }
-            "--input" => {
-                i += 1;
-                let v = args.get(i).ok_or("--input needs a value")?;
-                input = Some(v.clone());
-            }
-            "--input-file" => {
-                i += 1;
-                let v = args.get(i).ok_or("--input-file needs a value")?;
-                input_file = Some(PathBuf::from(v));
-            }
-            "--base-dir" => {
-                i += 1;
-                let v = args.get(i).ok_or("--base-dir needs a value")?;
-                base_dir = Some(PathBuf::from(v));
-            }
-            "--sha256" => {
-                i += 1;
-                let v = args.get(i).ok_or("--sha256 needs a value")?;
-                sha256 = Some(v.clone());
-            }
-            "--version" => {
-                i += 1;
-                let v = args.get(i).ok_or("--version needs a value")?;
-                version = v.clone();
-            }
-            "--help" | "-h" => return Err("__help_run__".into()),
-            other => return Err(format!("unknown flag: {other}")),
-        }
-        i += 1;
-    }
+    walk_flags(
+        args,
+        &mut [
+            FlagSpec::path(&["--policy"], &mut policy),
+            FlagSpec::path(&["--audit"], &mut audit),
+            FlagSpec::path(&["--signing-key"], &mut signing_key),
+            FlagSpec::path(&["--component", "--wasm"], &mut component),
+            FlagSpec::text(&["--id", "--tool-id"], &mut id),
+            FlagSpec::text(&["--input"], &mut input),
+            FlagSpec::path(&["--input-file"], &mut input_file),
+            FlagSpec::path(&["--base-dir"], &mut base_dir),
+            FlagSpec::text(&["--sha256"], &mut sha256),
+            FlagSpec::overwrite(&["--version"], &mut version),
+        ],
+        BareWord::IsUnknownFlag,
+        DoubleDash::NotSpecial,
+    )?;
 
     if input.is_some() && input_file.is_some() {
         return Err("use only one of --input or --input-file".into());
@@ -377,48 +525,42 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
 /// Every error here is a usage error, which `main.rs` already maps to exit 1.
 /// That includes bad hex: a key the operator mistyped is not evidence about the
 /// file, so it must not be reported as a verdict about it.
-fn parse_verify(args: &[String]) -> Result<Command, String> {
+fn parse_verify(args: &[String]) -> Result<Command, ParseStop> {
     let mut keys = Vec::new();
     let mut trust_store = None;
     let mut path: Option<PathBuf> = None;
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--key" => {
-                i += 1;
-                let v = args.get(i).ok_or("--key needs a value")?;
+    walk_flags(
+        args,
+        &mut [
+            FlagSpec::custom(&["--key"], &mut |value| {
                 // LOAD-BEARING: `--key` takes the `public_key` an `open` line
                 // publishes — 64 lowercase hex — and *not* the `key_id`
                 // fingerprint the report prints. Pinning compares published
                 // keys; accepting a fingerprint here would silently compare two
                 // different things and pin nothing.
-                let key = PublicKey::from_hex(v)
+                let key = PublicKey::from_hex(value)
                     .map_err(|e| format!("--key needs a 64-hex public key: {e}"))?;
                 keys.push(key);
+                Ok(())
+            }),
+            FlagSpec::path(&["--trust-store"], &mut trust_store),
+        ],
+        // One Chain file per invocation. Two positionals is more likely a
+        // forgotten flag value than a request to verify both, and guessing
+        // would fold two verdicts into one exit code.
+        BareWord::Handled(&mut |value| {
+            if let Some(first) = &path {
+                return Err(ParseStop::Usage(format!(
+                    "verify takes one PATH, got `{}` and `{value}`",
+                    first.display()
+                )));
             }
-            "--trust-store" => {
-                i += 1;
-                let v = args.get(i).ok_or("--trust-store needs a value")?;
-                trust_store = Some(PathBuf::from(v));
-            }
-            "--help" | "-h" => return Err("__help_verify__".into()),
-            other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
-            other => {
-                // One Chain file per invocation. Two positionals is more likely
-                // a forgotten flag value than a request to verify both, and
-                // guessing would fold two verdicts into one exit code.
-                if let Some(first) = &path {
-                    return Err(format!(
-                        "verify takes one PATH, got `{}` and `{other}`",
-                        first.display()
-                    ));
-                }
-                path = Some(PathBuf::from(other));
-            }
-        }
-        i += 1;
-    }
+            path = Some(PathBuf::from(value));
+            Ok(())
+        }),
+        DoubleDash::NotSpecial,
+    )?;
 
     Ok(Command::Verify {
         // The record file's extension is `.aarl` (ADR-0014), which names the
@@ -440,36 +582,28 @@ fn parse_verify(args: &[String]) -> Result<Command, String> {
 /// allow-all set because its job is to execute something, but a *diff* against
 /// a policy nobody named would print `newly_allowed` for every recorded denial
 /// and look like a finding.
-fn parse_recheck(args: &[String]) -> Result<Command, String> {
+fn parse_recheck(args: &[String]) -> Result<Command, ParseStop> {
     let mut policy: Option<PathBuf> = None;
     let mut path: Option<PathBuf> = None;
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--policy" => {
-                i += 1;
-                let v = args.get(i).ok_or("--policy needs a value")?;
-                policy = Some(PathBuf::from(v));
+    walk_flags(
+        args,
+        &mut [FlagSpec::path(&["--policy"], &mut policy)],
+        // One record file per invocation, for `parse_verify`'s reason: two
+        // positionals is more likely a forgotten flag value than a request to
+        // diff both, and guessing would fold two reports into one exit code.
+        BareWord::Handled(&mut |value| {
+            if let Some(first) = &path {
+                return Err(ParseStop::Usage(format!(
+                    "recheck takes one PATH, got `{}` and `{value}`",
+                    first.display()
+                )));
             }
-            "--help" | "-h" => return Err("__help_recheck__".into()),
-            other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
-            other => {
-                // One record file per invocation, for `parse_verify`'s reason:
-                // two positionals is more likely a forgotten flag value than a
-                // request to diff both, and guessing would fold two reports
-                // into one exit code.
-                if let Some(first) = &path {
-                    return Err(format!(
-                        "recheck takes one PATH, got `{}` and `{other}`",
-                        first.display()
-                    ));
-                }
-                path = Some(PathBuf::from(other));
-            }
-        }
-        i += 1;
-    }
+            path = Some(PathBuf::from(value));
+            Ok(())
+        }),
+        DoubleDash::NotSpecial,
+    )?;
 
     Ok(Command::Recheck {
         policy: policy.ok_or("recheck requires --policy <PATH>")?,
@@ -494,66 +628,41 @@ fn parse_recheck(args: &[String]) -> Result<Command, String> {
 /// runs first so the pairing mistake keeps its shared wording, but its
 /// "neither was given" arm — legal for `run`, whose default sink is volatile
 /// and in memory — is a usage error for this verb.
-fn parse_wrap(args: &[String]) -> Result<WrapArgs, String> {
+fn parse_wrap(args: &[String]) -> Result<WrapArgs, ParseStop> {
     let mut audit = None;
     let mut signing_key = None;
     let mut allow_exec_support = false;
-    let mut child_argv: Vec<String> = Vec::new();
     let mut confine = false;
     let mut allow_read = Vec::new();
     let mut allow_write = Vec::new();
     let mut allow_net = Vec::new();
     let mut best_effort = false;
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--audit" => {
-                i += 1;
-                let v = args.get(i).ok_or("--audit needs a value")?;
-                audit = Some(PathBuf::from(v));
-            }
-            "--signing-key" => {
-                i += 1;
-                let v = args.get(i).ok_or("--signing-key needs a value")?;
-                signing_key = Some(PathBuf::from(v));
-            }
-            "--confine" => confine = true,
-            "--best-effort" => best_effort = true,
-            "--allow-exec-support" => allow_exec_support = true,
-            "--allow-read" => {
-                i += 1;
-                let v = args.get(i).ok_or("--allow-read needs a value")?;
-                allow_read.push(PathBuf::from(v));
-            }
-            "--allow-write" => {
-                i += 1;
-                let v = args.get(i).ok_or("--allow-write needs a value")?;
-                allow_write.push(PathBuf::from(v));
-            }
-            "--allow-net" => {
-                i += 1;
-                let v = args.get(i).ok_or("--allow-net needs a value")?;
-                allow_net.push(parse_allow_net(v)?);
-            }
-            "--help" | "-h" => return Err("__help_wrap__".into()),
-            "--" => {
-                child_argv = args[i + 1..].to_vec();
-                break;
-            }
-            // A bare word before the separator is a forgotten `--`, not a flag.
-            // Reporting it as `unknown flag: npx` would name the child program
-            // as the mistake and hide the one character that is actually
-            // missing.
-            other if !other.starts_with('-') => {
-                return Err(format!(
-                    "wrap takes no positional arguments; put the child command after `--` (got `{other}`)"
-                ))
-            }
-            other => return Err(format!("unknown flag: {other}")),
-        }
-        i += 1;
-    }
+    let child_argv = walk_flags(
+        args,
+        &mut [
+            FlagSpec::path(&["--audit"], &mut audit),
+            FlagSpec::path(&["--signing-key"], &mut signing_key),
+            FlagSpec::set(&["--confine"], &mut confine),
+            FlagSpec::set(&["--best-effort"], &mut best_effort),
+            FlagSpec::set(&["--allow-exec-support"], &mut allow_exec_support),
+            FlagSpec::push_path(&["--allow-read"], &mut allow_read),
+            FlagSpec::push_path(&["--allow-write"], &mut allow_write),
+            FlagSpec::custom(&["--allow-net"], &mut |value| {
+                allow_net.push(parse_allow_net(value)?);
+                Ok(())
+            }),
+        ],
+        // A bare word before the separator is a forgotten `--`, not a flag.
+        // Reporting it as `unknown flag: npx` would name the child program as
+        // the mistake and hide the one character that is actually missing.
+        BareWord::Handled(&mut |value| {
+            Err(ParseStop::Usage(format!(
+                "wrap takes no positional arguments; put the child command after `--` (got `{value}`)"
+            )))
+        }),
+        DoubleDash::EndsParsing,
+    )?;
 
     check_audit_key_pair(audit.as_deref(), signing_key.as_deref())?;
     let audit = audit.ok_or("wrap requires --audit <PATH>")?;
@@ -1050,6 +1159,67 @@ mod tests {
             panic!("build_runtime must refuse an unsigned persistent sink");
         };
         assert!(err.contains("--signing-key"), "{err}");
+    }
+
+    /// Help is a routing **outcome**, not a string. Before AILAB-853 each
+    /// command returned a reserved string through the `Err` channel and
+    /// `parse_args` compared it by equality; a typo in either half compiled
+    /// cleanly and handed that string to the operator as an unknown flag.
+    /// These are the paths that went through one, including the global path no
+    /// other test reaches with a flag already consumed in front of it.
+    #[test]
+    fn every_help_path_routes_to_the_typed_outcome() {
+        for args in [
+            sv(&["aegis", "keygen", "-h"]),
+            sv(&["aegis", "run", "-h"]),
+            sv(&["aegis", "verify", "--help"]),
+            sv(&["aegis", "recheck", "--help"]),
+            sv(&["aegis", "wrap", "--help"]),
+            sv(&["aegis", "--policy", "p.yaml", "--help"]),
+            sv(&["aegis", "--policy", "p.yaml", "-h"]),
+        ] {
+            assert_eq!(parse_args(&args).unwrap(), Command::Help, "{args:?}");
+        }
+    }
+
+    /// A flag's aliases share one "needs a value" message, named for the first
+    /// spelling in its table row. `--wasm` reported as `--component` before the
+    /// table existed and still does: an alias is a convenience, not a second
+    /// flag with its own vocabulary.
+    #[test]
+    fn an_alias_reports_a_missing_value_under_the_canonical_name() {
+        for (args, expected) in [
+            (sv(&["aegis", "run", "--wasm"]), "--component needs a value"),
+            (sv(&["aegis", "run", "--tool-id"]), "--id needs a value"),
+        ] {
+            assert_eq!(parse_args(&args).unwrap_err(), expected);
+        }
+    }
+
+    /// `--` ends wrap's own parsing, so a child's `--help` reaches the child
+    /// rather than printing this CLI's usage. The separator is checked before
+    /// the help check for exactly that reason, and nothing after it is
+    /// inspected.
+    #[test]
+    fn wrap_hands_a_childs_help_flag_to_the_child() {
+        let args = sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.aarl",
+            "--signing-key",
+            "k.key",
+            "--",
+            "npx",
+            "some-server",
+            "--help",
+        ]);
+        match parse_args(&args).unwrap() {
+            Command::Wrap(w) => {
+                assert_eq!(w.child_argv, sv(&["npx", "some-server", "--help"]));
+            }
+            other => panic!("expected Wrap, got {other:?}"),
+        }
     }
 
     #[test]
