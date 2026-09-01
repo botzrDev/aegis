@@ -250,8 +250,8 @@ impl Runtime {
     }
 }
 
-/// The filesystem resource this call resolved to, when the grant names exactly
-/// one (ADR-0006).
+/// The filesystem scope this grant resolved to, when it names exactly one root
+/// (ADR-0006). Not a path the call touched — no call argument is in scope here.
 ///
 /// A grant carrying several roots has not resolved the call to *a* path, and
 /// nothing downstream resolves it either — the Bindings that would have were
@@ -278,8 +278,9 @@ fn fs_axis(grant: &CapabilityGrant) -> Option<FsAxis> {
     })
 }
 
-/// The network resource this call resolved to, under the same
-/// exactly-one-or-omit rule as [`fs_axis`].
+/// The network scope this grant resolved to — its single host and port — under
+/// the same exactly-one-or-omit rule as [`fs_axis`], and with the same caveat:
+/// the port recorded is the grant's, never the port a URL resolved to.
 fn net_axis(grant: &CapabilityGrant) -> Option<NetAxis> {
     let net = grant.net.as_ref()?;
     let [http] = &net.http[..] else { return None };

@@ -22,12 +22,12 @@
 //! guessed. Guessing would be the worst outcome available — a confident verdict
 //! that is right half the time.
 //!
-//! Recheck is **chain-only**. It reads what the record says the call resolved to
-//! and never re-derives it: `decision_axes.fs.path_canonical` is taken as
-//! recorded, never re-resolved against the filesystem and never stat-ed. A
-//! recheck that touched the filesystem would report on *today's* symlinks, not
-//! the ones the call actually ran under, and would answer differently on a
-//! machine that never saw the call.
+//! Recheck is **chain-only**, and it never touches the filesystem.
+//! `decision_axes.fs.path_canonical` is *evidence*, not an input: no verdict
+//! reads it, it is never re-resolved against the filesystem, and it is never
+//! stat-ed. A recheck that touched the filesystem would report on *today's*
+//! symlinks, not the ones the call actually ran under, and would answer
+//! differently on a machine that never saw the call.
 //!
 //! Nothing in this module — including its tests — opens a path, and the
 //! anti-pattern grep in the ticket is over the file, so the prohibited calls are

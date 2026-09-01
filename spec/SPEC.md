@@ -421,19 +421,28 @@ breaks an ingest.
 | `session` | string, optional | The policy session scope — the `PolicyRequest` scalar, **not** the audit Session. |
 | `matched_rule` | string, optional | The rule that decided it. |
 | `approval_ref` | string, optional | The approval a resumed Call was allowed under (ADR-0005). |
-| `fs` | object, optional | Derived filesystem parameter: `{path_raw, path_canonical}`. |
-| `net` | object, optional | Derived network parameter: `{host, port}`. |
+| `fs` | object, optional | Derived filesystem parameter — the grant's single root: `{path_raw, path_canonical}`. |
+| `net` | object, optional | Derived network parameter — the grant's single host and port: `{host, port}`. |
 
 The object is always emitted because `{}` and an absent member say different
 things: `{}` says *this emitter recorded no axes*, an absent member says nothing
 at all. Its members follow omit-never-null.
 
-`fs` and `net` are the **derived capability parameters** of ADR-0006 — the
-resource the runtime resolved the Call to, which is what argument matchers target.
-They are recorded only when the Call resolved to exactly one such resource; a
-grant naming several roots has not resolved the Call to *a* path, and the axis is
+`fs` and `net` are the **derived capability parameters** of ADR-0006, and what
+they record is **the scope the grant resolved to** — for `fs`, a root the Call
+was permitted under; for `net`, the grant's single host and port. Neither is a
+resource the Call touched: the emitter derives both from the grant alone, and no
+Call argument is in scope where they are built.
+
+They are recorded only when the grant names exactly one such scope; a grant
+naming several roots has not resolved to *a* path, and the axis is
 **omitted rather than guessed**. Recording an arbitrary one of N roots would be
 evidence that reads as fact and is not.
+
+**No shipped consumer reads them.** `aegis recheck` rebuilds its request from
+`capability`, `role` and `session` only, and the argument matchers of ADR-0006
+that would have consumed these parameters were canceled and will not be built.
+They are evidence a reader interprets, not an input any verdict turns on.
 
 Both `path_raw` and `path_canonical` are recorded because a difference between
 them is itself evidence. The pair exists so that an emitter resolving a
