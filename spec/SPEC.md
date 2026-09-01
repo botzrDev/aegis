@@ -971,15 +971,6 @@ Lines and at most one torn final Line, never an `outcome`. Note that it kept its
 `key_id`: a verifier that decides which Lines are signed by looking for a
 `key_id` will not notice that this one's signature is gone.
 
-**`Indeterminate` vectors are not yet published.** The six §8.2 classes have no
-committed files in this version, and the omission is worth stating rather than
-leaving to be discovered: §8's central claim is that a binary pass/fail verdict
-is wrong, and `Indeterminate` is the verdict a naive implementation collapses
-into one or the other. An implementation can therefore pass every vector
-published here while still being the two-state verifier §8 argues against.
-Until those vectors ship, §8.2 is prose an implementer must read rather than a
-fixture they can run.
-
 **Reproducing them.** Same properties as §11.3 — fixed seed, deterministic
 signatures, constant records — so every vector is byte-reproducible:
 
@@ -990,6 +981,72 @@ cargo test -p botzr-aegis-audit --test tampered
 `every_committed_tamper_vector_is_byte_reproducible` compares each committed file
 against a freshly built one, so a vector edited by hand fails there rather than
 passing as its own expected output.
+
+### 11.5 `Indeterminate` vectors
+
+Source: the committed files in
+[`crates/botzr-aegis-audit/tests/indeterminate/`](https://github.com/botzrDev/aegis/tree/main/crates/botzr-aegis-audit/tests/indeterminate/),
+one per `Indeterminate` class in §8.2, each read back and checked by
+`crates/botzr-aegis-audit/tests/indeterminate.rs`.
+
+Same file shape as §11.4 — **one file is one whole Chain**, with the `.aarl`
+extension (ADR-0014) — and signed by the same fixed-seed development key §11.2
+publishes, so `key_id` `77a2c2f5…` and `public_key` `3de537a0…` are the values to
+expect here too. `empty_chain.aarl` is the exception: it has no Lines to sign.
+
+These are published because §8's central claim is that a binary pass/fail verdict
+is wrong, and `Indeterminate` is the verdict a naive implementation collapses
+into one of the other two. A verifier with only `Verified` and `Tampered` passes
+every vector in §11.2 and §11.4 while being exactly the two-state verifier §8
+argues against. It fails here, on all six.
+
+| File | §8.2 class | Verdict and reason | How it is damaged |
+|---|---|---|---|
+| `unknown_line_type.aarl` | Unknown line type | `Indeterminate` — unknown line type `attestation` at (session 0, seq 4) | A closed Session with one extra final Line whose `line_type` is a token this version does not define, carrying a correct `seq` and `prev_hash` and **no `signature` member** |
+| `reserved_checkpoint.aarl` | Reserved `checkpoint` | `Indeterminate` — reserved checkpoint at (session 0, seq 4) | **Not damaged.** A closed Session with one extra final `checkpoint` Line whose signature verifies. See below |
+| `torn_final_line.aarl` | Torn final Line | `Indeterminate` — final Line 5 does not parse | A closed Session with a Line cut off mid-write appended after it, and no trailing newline — a torn write ends mid-Line |
+| `unanchored_tail.aarl` | Unanchored tail | `Indeterminate` — session 0 has no close record; 1 Call in flight, `call-unanchored-tail` | A Session's `outcome` **and** `close` are both dropped, leaving `open` and `intent` |
+| `missing_line.aarl` | Missing Line | `Indeterminate` — session 0 skips seq 2..3 with the chain intact | The `outcome` append was refused by the Sink, so `seq` 2 was consumed and never written; the Session then closed at `seq` 3 |
+| `empty_chain.aarl` | Empty chain | `Indeterminate` — no Lines to verify | **Not damaged.** A zero-byte file |
+
+**Two of these files are not damaged, and that is the point of publishing them.**
+`empty_chain.aarl` is absent rather than corrupt: nothing in it contradicts
+anything, which is precisely why an implementation is most likely to collapse it
+into `Verified`. `reserved_checkpoint.aarl` is a well-formed, correctly signed
+Line this version cannot interpret — `checkpoint` is reserved and unemitted
+(§5.1), and a verifier does not pass content it cannot read.
+
+**The `Tampered` siblings of the first two classes are rules, not files.** An
+unknown line type whose `signature` is present and does not authenticate the Line
+is `Tampered` (§5.2, §8.1), and so is a `checkpoint` whose signature does not
+verify (§8.4): forgery is decidable without understanding a Line, and it outranks
+the cap. Neither sibling has a published vector — those two cases are stated as
+rules and must be read there. This is why `unknown_line_type.aarl` carries no
+`signature` member at all, and why `reserved_checkpoint.aarl`'s signature
+verifies. A vector on the wrong side of either rule would document the opposite
+class.
+
+**One Line in this set was not produced by an emitter, and the specification
+should say which.** `reserved_checkpoint.aarl`'s final Line is assembled directly
+and signed with the same primitives the writer signs with, because there is no
+`checkpoint` emitter to call and adding one to produce a fixture would be
+inventing format surface to satisfy a test. Its signing input follows §11.2's
+rule unchanged — the canonical form with `signature` omitted and `key_id`
+present — which is what makes it checkable rather than self-consistent.
+`unknown_line_type.aarl`'s final Line is likewise assembled directly, and carries
+no signature at all, so nothing about signing is being restated there. Every
+other Line in every vector above came out of the real writer.
+
+**Reproducing them.** Same properties as §11.3 — fixed seed, deterministic
+signatures, constant records — so every vector is byte-reproducible:
+
+```bash
+cargo test -p botzr-aegis-audit --test indeterminate
+```
+
+`every_committed_indeterminate_vector_is_byte_reproducible` compares each
+committed file against a freshly built one, so a vector edited by hand fails
+there rather than passing as its own expected output.
 
 ---
 
