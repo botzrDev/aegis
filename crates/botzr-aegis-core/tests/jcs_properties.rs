@@ -18,12 +18,22 @@
 //! is stronger than a preference for named cases: **no property in this file
 //! can pin an absolute key order**, because all three compare the
 //! canonicalizer against itself. Replacing the UTF-16 sort in `write_value`'s
-//! object branch with Rust's `String: Ord` was measured against the whole
-//! workspace: 68 suites, 506 passed, **one** failed. Every property in this
-//! file stayed green, and so did `published_test_vector_canonical_form_and_hash`,
-//! whose keys are all ASCII — where UTF-8 and UTF-16 agree. The only test that
-//! caught it was `object_keys_sort_by_utf16_code_unit_not_utf8_bytes`. Do not
-//! delete it, and do not assume a property here subsumes it.
+//! object branch with Rust's `String: Ord` leaves every property here green,
+//! and leaves `published_test_vector_canonical_form_and_hash` green with them —
+//! its keys are all ASCII, where the two orders agree. Only an assertion on an
+//! absolute canonical string over non-ASCII keys catches it.
+//!
+//! **There are two such assertions, and they sit in two different test
+//! binaries**, so that no single edit or deletion can silence both:
+//! `object_keys_sort_by_utf16_code_unit_not_utf8_bytes` in `jcs.rs`'s own test
+//! module, and `object_keys_sort_across_the_surrogate_boundary_in_both_directions`
+//! at the foot of this file (AILAB-864). Neither is a property, and that is not
+//! an oversight — a property here can only relate two canonicalizer outputs,
+//! while the ordering rule is a claim about one absolute output. Measured
+//! against that mutation with `--no-fail-fast`, which is required or cargo
+//! stops at the first failing binary and the later one never runs: 68 suites,
+//! 507 passed, **two** failed, one in each binary. Do not delete either, and do
+//! not assume a property here subsumes them.
 
 use botzr_aegis_core::jcs::MAX_SAFE_INTEGER;
 use botzr_aegis_core::{canonical_digest, to_canonical_json, JcsError};
@@ -263,4 +273,87 @@ proptest! {
         // The digest is the same refusal one layer up: no output means no hash.
         prop_assert!(canonical_digest(&value).is_err());
     }
+}
+
+/// **The absolute key order, pinned a second time and in a second binary.**
+/// RFC 8785 §3.2.3 orders object keys by UTF-16 code unit; Rust's `String: Ord`
+/// orders by code point, which is UTF-8 byte order. Nothing above can catch a
+/// swap between the two — the three properties compare the canonicalizer
+/// against itself, and `published_test_vector_canonical_form_and_hash` in
+/// `crates/botzr-aegis-core/src/jcs.rs` uses only ASCII keys, where the two
+/// orders agree. Only an assertion on an absolute canonical string over a
+/// non-ASCII key set can, and there are now two of those: this one and
+/// `object_keys_sort_by_utf16_code_unit_not_utf8_bytes`, which lives in that
+/// same `jcs.rs` and therefore in a different test binary. Neither can be
+/// silenced by an edit to the other's file.
+///
+/// **Why this is a test and not a published vector (AILAB-864).** A record
+/// cannot carry a key like these. ADR-0003 places payloads in the Envelope and
+/// hashes raw request bytes, so the canonicalizer only ever sees Aegis's own
+/// field set — every key of it ASCII — and `jcs.rs`'s module doc repeats the
+/// rule and says not to relax it. A vector minted to hold an astral key would
+/// therefore be a record the format forbids, built by the suite to give itself
+/// something to check. The ordering rule belongs to this crate, so its guard
+/// does too.
+#[test]
+fn object_keys_sort_across_the_surrogate_boundary_in_both_directions() {
+    // One key per region of the comparison. What orders them is the first
+    // `encode_utf16` code unit: 0x0061, 0xD800, 0xDBFF, 0xE000, 0xFFFF. So the
+    // astral pair sorts *between* ASCII and the high BMP — the half of the
+    // ordering the existing two-key case does not reach, and the half a reader
+    // is most likely to guess wrong.
+    const ASCII: &str = "a";
+    const ASTRAL_LOW: &str = "\u{10000}";
+    const ASTRAL_HIGH: &str = "\u{10ffff}";
+    const HIGH_BMP: &str = "\u{e000}";
+    const MAX_BMP: &str = "\u{ffff}";
+
+    // Values number the keys by their expected *output* position, so a wrong
+    // sort reads as scrambled digits instead of a diff of look-alike escapes.
+    //
+    // The literal is written in neither order under test, but that is belt and
+    // braces rather than the real defence: `preserve_order` is off in this
+    // workspace, so `Map` is `BTreeMap`-backed and hands `write_value` its keys
+    // already in `String: Ord` order. The canonicalizer therefore always
+    // receives this input in the *naive* order and has to re-sort it, which is
+    // what makes the case adversarial by construction.
+    let input = Value::Object(
+        [
+            (MAX_BMP.to_string(), Value::from(5u64)),
+            (ASCII.to_string(), Value::from(1u64)),
+            (HIGH_BMP.to_string(), Value::from(4u64)),
+            (ASTRAL_HIGH.to_string(), Value::from(3u64)),
+            (ASTRAL_LOW.to_string(), Value::from(2u64)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+
+    // The exact bytes. A relation between two canonicalizer outputs is what the
+    // properties above assert and is precisely what cannot pin an order.
+    const CANONICAL: &str = concat!(
+        "{\"a\":1,",
+        "\"\u{10000}\":2,",
+        "\"\u{10ffff}\":3,",
+        "\"\u{e000}\":4,",
+        "\"\u{ffff}\":5}",
+    );
+    assert_eq!(to_canonical_json(&input).unwrap(), CANONICAL);
+
+    // The premise, asserted rather than left in a comment: `String: Ord` really
+    // does order these differently, and specifically this way.
+    let mut naive = [MAX_BMP, ASCII, HIGH_BMP, ASTRAL_HIGH, ASTRAL_LOW];
+    naive.sort_unstable();
+    assert_eq!(naive, [ASCII, HIGH_BMP, MAX_BMP, ASTRAL_LOW, ASTRAL_HIGH]);
+
+    // ...and this is the document that ordering would produce — the output to
+    // expect if the UTF-16 comparator is ever dropped from `write_value`.
+    const NAIVE: &str = concat!(
+        "{\"a\":1,",
+        "\"\u{e000}\":4,",
+        "\"\u{ffff}\":5,",
+        "\"\u{10000}\":2,",
+        "\"\u{10ffff}\":3}",
+    );
+    assert_ne!(CANONICAL, NAIVE);
 }
