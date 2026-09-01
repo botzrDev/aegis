@@ -164,6 +164,35 @@ support.
   function in a security crate answered with a name the URL does not resolve
   to, which is the kind of guess the default-deny norm exists to forbid.
 
+- **The grant's port allow-list is enforced on HTTP GET** (AILAB-842).
+  **Behaviour change for anyone upgrading:** a grant listing only 443 now
+  refuses `https://host:8080/` on a host it allows, where before it admitted
+  the call. The port is read from the URL's authority and falls back to the
+  scheme's default when the URL names none, so `https://host/` is checked
+  against 443 and `http://host/` against 80, and an explicit port always wins.
+  Port lists that were decorative are now binding — audit them before
+  upgrading, because a list that does not name the ports a tool actually uses
+  will start producing denials. The denial says which axis refused, and the
+  host and port reasons are deliberately lexically disjoint, so a caller can
+  tell a typo in an allow-list from an attempt to reach an unlisted service on
+  a permitted host.
+
+  **No live vulnerability was closed, and the reason is worth stating.** The
+  network effect behind this check is still a stub in the v1 slice — neither
+  the sandbox host import nor `HostEffectContext::http_get` issues a request —
+  so no call ever reached an unlisted port and nothing leaked. This is
+  enforcement staged ahead of the effect, not a hole plugged behind one.
+
+  **What was wrong was a claim.** `HttpGrant.ports` was validated non-empty
+  when a grant was minted and subset-checked when a grant was narrowed, and a
+  grant naming exactly one host and one port had that port written into the
+  signed record as the `net` decision axis — while no enforcement path ever
+  compared it with the URL's. The record named a dimension the enforcement
+  layer did not read, which is the ADR-0007 failure class and the same shape as
+  `e92450a`. A record written before this change is still valid and still
+  verifies; what it does not carry is a port decision the enforcement layer had
+  actually made. That is what changes here.
+
 - **A call request can no longer name one tool and be judged as another**
   (AILAB-710). **Breaking:** `ToolCallRequest` and `HostCallRequest` carry
   `axes: CallAxes<'a>` in place of `policy: PolicyRequest<'a>`, and their
