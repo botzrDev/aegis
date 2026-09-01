@@ -216,6 +216,27 @@ impl AuditWriter {
     /// Append a human approval verdict (ADR-0005). A resumed call is a *new*
     /// Call with its own intent and outcome, linked by `approval_id` — this
     /// line has no intent and no execution of its own.
+    ///
+    /// **Nothing in this repository's pipeline calls this**, so v0 writes no
+    /// `decision` line at all: a `pending_approval` policy verdict is recorded
+    /// as an `outcome` line and returned to the caller as an error
+    /// (`crates/botzr-aegis-runtime/src/pipeline.rs`), and no code path resumes
+    /// the parked Call. Building that protocol is AILAB-629.
+    ///
+    /// The method is format-defining — it exists so the record format is
+    /// complete and so adding the approval protocol later is not a breaking
+    /// change — and it is a working emitter with no shipped emitter site. Every
+    /// reference to it outside this definition is a test: `tests/golden.rs`,
+    /// `tests/tampered.rs` and `tests/verdict.rs` in this crate, and
+    /// `crates/botzr-aegis-cli/tests/verify.rs`. A reader who greps this
+    /// method's name finds those four call sites and this definition, and
+    /// nothing else — which is exactly what this comment claims. The name is
+    /// spelled out nowhere in this paragraph on purpose: a doc comment that
+    /// quoted it would become a sixth hit and falsify its own count.
+    ///
+    /// Not the same absence as `emit_checkpoint` below, which deliberately does
+    /// not exist because v0 does not define what a `Checkpoint` asserts
+    /// (`spec/SPEC.md` §5.1). This emitter works; what is missing is a caller.
     pub fn emit_decision(&self, decision: &mut AuditDecision) -> Result<(), AuditError> {
         self.append_signed(decision)
     }

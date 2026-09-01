@@ -294,7 +294,7 @@ anything, but it may not opt out of its position in the chain.
 | `open` | yes | yes | First Line of a Session. Carries the public key and `prev_session_tail`. |
 | `intent` | **no** | yes | Pre-execution Line for a Call. |
 | `outcome` | yes | yes | The Agent Action Record — one per Call, on every exit path. |
-| `decision` | yes | yes | A human approval verdict (ADR-0005). |
+| `decision` | yes | **no — no caller** | A human approval verdict (ADR-0005). |
 | `close` | yes | yes | Last Line of a Session. |
 | `checkpoint` | yes | **no — reserved** | Defined so that adding it later is not a breaking change. |
 
@@ -314,6 +314,19 @@ no way to hand it to the signing path
 verifier MUST handle one: it is a signed Line, so it extends Coverage — and it
 still caps the verdict at `Indeterminate`, because this version does not define
 what a Checkpoint asserts.
+
+**`decision` is defined but not emitted by v0, which is a different statement
+from `checkpoint`'s.** A `checkpoint` is unemitted because this version does not
+define what it asserts. A `decision` Line is fully defined: ADR-0005 fixes its
+semantics, the park-and-resume protocol below describes it, §8.1 makes a second
+`decision` for one `approval_id` `Tampered`, and a working emitter for it exists
+in the implementation. What does not exist is the approval protocol that would
+call that emitter — a `pending_approval` policy verdict is recorded as an
+`outcome` Line and returned to the caller as an error, and nothing in this
+version resumes a parked Call. The gap is a missing caller, not a missing
+definition, which is why the table says `no — no caller` here and `no — reserved`
+there. A verifier MUST still handle a `decision` Line: they are legal, and the
+published vectors in §11.2 and §11.4 both contain one.
 
 **There is no `park` Line type.** A park is an `outcome` Line carrying
 `policy.status = "pending_approval"`, which has shipped since schema version 1.

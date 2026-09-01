@@ -749,6 +749,16 @@ impl AuditClose {
 /// A resumed call is a *new* Call with its own intent and outcome, linked back
 /// by `approval_id`. Two `Decision` lines for one `approval_id` is a structural
 /// violation: a correct emitter cannot produce it.
+///
+/// **This type is format-defining and has no shipped emitter.** Nothing in this
+/// repository's pipeline builds an `AuditDecision`: a `pending_approval` policy
+/// verdict is recorded as an `outcome` line and returned to the caller as an
+/// error, and no code path resumes the parked Call — that protocol is
+/// AILAB-629's and is unbuilt. The type is here so the record format is complete
+/// and so adding the approval protocol later is not a breaking change for
+/// anything that reads records. A reader must still handle a `decision` line:
+/// the published vectors carry them (`spec/SPEC.md` §11.2 and §11.4), built by
+/// the tests that are the emitter's only callers.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuditDecision {
     /// Sealed: owned by [`AuditDecision::new`]. See [`AuditRecord`] for why.
@@ -885,6 +895,12 @@ impl_signed_line!(AuditDecision);
 /// recorded scope is unrepresentable. Approval without recorded scope is a
 /// blank check in the evidence (ADR-0005), and the resumed call's grant must be
 /// a subset of what is recorded here.
+///
+/// Like [`AuditDecision`], this is format-defining and has no shipped emitter:
+/// it is reached only through an [`AuditDecision`], and nothing in this
+/// repository's pipeline builds one. The unrepresentability rule above is
+/// therefore a constraint on the format, enforced now so that the approval
+/// protocol cannot later be built without it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum ApprovalVerdict {
@@ -893,6 +909,11 @@ pub enum ApprovalVerdict {
 }
 
 /// The authority a human approval granted.
+///
+/// Reached only through [`ApprovalVerdict::Approved`], so it is format-defining
+/// and has no shipped emitter for the same reason: nothing in this repository's
+/// pipeline resumes a parked Call, so nothing constructs one outside tests and
+/// the published vectors they build.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ApprovedScope {
     pub tool_id: ToolId,
