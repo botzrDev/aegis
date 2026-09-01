@@ -144,6 +144,26 @@ support.
 
 ### Changed
 
+- **`parse_http_host` refuses an authority that carries userinfo** (AILAB-863).
+  **Behaviour change to published API:** the function ships in
+  `botzr-aegis-core` on crates.io at `0.3.0`, and a caller outside this
+  repository that passes a URL such as `https://api.example.com:8443@evil.com/x`
+  now gets `None` where it previously got `api.example.com` — the text in front
+  of the first colon, which is the credential half of the authority and not the
+  host a client would reach. The signature is unchanged, so the break is one of
+  behaviour only. A `@` in a path, query or fragment is untouched: the refusal
+  reads the authority slice alone.
+
+  **No enforcement outcome in this repository changes, and no live
+  vulnerability was closed.** `http_get_allowed` reads the port-aware
+  `parse_http_authority`, which has refused this form since the port allow-list
+  landed, and the host-only parser has no caller anywhere in the workspace — so
+  nothing in the pipeline ever consulted the wrong answer. The network effect
+  behind the check is still a stub; no request is issued either way. What was
+  wrong was narrower and worth fixing on its own terms: a published pure
+  function in a security crate answered with a name the URL does not resolve
+  to, which is the kind of guess the default-deny norm exists to forbid.
+
 - **A call request can no longer name one tool and be judged as another**
   (AILAB-710). **Breaking:** `ToolCallRequest` and `HostCallRequest` carry
   `axes: CallAxes<'a>` in place of `policy: PolicyRequest<'a>`, and their

@@ -9,15 +9,33 @@ use crate::CapabilityGrant;
 
 /// Extract the host portion from an `http(s)://host/...` URL (no IDNA).
 ///
-/// Host only: the port is discarded. [`parse_http_authority`] is the port-aware
-/// sibling, and it is what the allow-check uses; this one stays as published for
-/// callers outside this repository.
+/// **Host only: the port is discarded** — `https://example.com:8443/x` answers
+/// `example.com`, and a port this parser cannot read is still not its question.
+/// [`parse_http_authority`] is the port-aware sibling, and it is what the
+/// allow-check calls. The host is lowercased; a non-`http(s)` scheme or an empty
+/// host answers `None`.
+///
+/// **An authority carrying userinfo is refused rather than guessed.** In
+/// `https://api.example.com:8443@evil.com/x` the name in front of the `@` is
+/// credentials and the host a client reaches is `evil.com`, so answering with
+/// the text before the first colon would name a host the URL does not resolve
+/// to — and in a crate whose job is allow-listing, a wrong host is worse than no
+/// host. This answers `None` there, as the sibling does. Only the authority is
+/// examined, so a `@` in a path, query or fragment is ordinary text.
 pub fn parse_http_host(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
-    let host = rest.split(['/', '?', '#']).next()?;
-    let host = host.split(':').next()?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    // Read before the port is stripped: the first `:` can fall inside the
+    // userinfo, so a check that ran second would already have thrown the real
+    // host away and be examining the credentials.
+    if authority.split_once('@').is_some() {
+        return None;
+    }
+    let host = authority
+        .split_once(':')
+        .map_or(authority, |(host, _)| host);
     if host.is_empty() {
         None
     } else {
@@ -150,6 +168,30 @@ mod tests {
             Some("example.com".into())
         );
         assert_eq!(parse_http_host("not-a-url"), None);
+        // The port is discarded, not validated — including one the port-aware
+        // sibling refuses outright. The two parsers agree on the host, never on
+        // what makes a URL unusable, so folding this one into the other would
+        // quietly start denying URLs it answers today.
+        assert_eq!(parse_http_host("https://host:8443/x"), Some("host".into()));
+        assert_eq!(parse_http_host("https://host:abc/x"), Some("host".into()));
+    }
+
+    #[test]
+    fn parse_http_host_refuses_userinfo_but_not_an_at_sign_after_the_authority() {
+        // The refusal is scoped to the authority slice. A `@` past the path,
+        // query or fragment terminator is ordinary text and the host is still
+        // answered — testing the whole URL instead is the obvious way to get
+        // this wrong, and it would refuse a mail-shaped path segment.
+        assert_eq!(parse_http_host("https://host/a@b"), Some("host".into()));
+        assert_eq!(parse_http_host("https://host?to=a@b"), Some("host".into()));
+        assert_eq!(parse_http_host("https://host#a@b"), Some("host".into()));
+
+        // Userinfo, with and without a port on the credential side.
+        assert_eq!(parse_http_host("https://user@host/x"), None);
+        assert_eq!(
+            parse_http_host("https://api.example.com:8443@evil.com/x"),
+            None
+        );
     }
 
     #[test]
@@ -250,13 +292,15 @@ mod tests {
 
     #[test]
     fn parse_http_authority_refuses_a_userinfo_authority() {
-        // The reason the `@` guard exists. `parse_http_host` reaches for `:`
-        // before `@` and answers `api.example.com` here, while the authority
-        // the request would actually reach is `evil.com` — so a grant for
-        // `api.example.com` would admit it. This parser refuses the form it
-        // does not implement instead of guessing which side is the host.
+        // The reason the `@` guard exists. The name in front of the `@` is
+        // credentials; the authority the request would actually reach here is
+        // `evil.com`, so a parser that answered `api.example.com` would let a
+        // grant for that name admit a request to somewhere else. Both parsers
+        // refuse the form neither implements instead of guessing which side is
+        // the host — the host-only one since AILAB-863, and this assertion is
+        // where that is pinned.
         let sneaky = "https://api.example.com:8443@evil.com/x";
-        assert_eq!(parse_http_host(sneaky), Some("api.example.com".into()));
+        assert_eq!(parse_http_host(sneaky), None);
         assert_eq!(parse_http_authority(sneaky), None);
 
         let grant = grant_with_net(Some(allow_get("api.example.com")));
@@ -266,9 +310,10 @@ mod tests {
 
     #[test]
     fn parse_http_authority_and_parse_http_host_agree_on_the_host() {
-        // The two parsers are deliberately separate: `parse_http_host` is
-        // published API and its behaviour is frozen. This is what stops them
-        // drifting apart on the half they share.
+        // The two parsers are separate because one answers a port and one
+        // discards it — not because they are free to disagree about the host.
+        // This is what stops them drifting apart on the half they share, which
+        // since AILAB-863 includes refusing an authority that carries userinfo.
         for url in [
             "https://api.example.com/data",
             "https://api.example.com:8443/data",
@@ -281,6 +326,18 @@ mod tests {
                 parse_http_host(url),
                 "parsers disagree on the host of {url}"
             );
+        }
+
+        // They agree on the refusal too, which is the stronger half of the
+        // statement. Only for userinfo, though: an unreadable port makes the
+        // port-aware parser fail closed while this one still answers, because
+        // the port is not part of its question.
+        for url in [
+            "https://user@host/x",
+            "https://api.example.com:8443@evil.com/x",
+        ] {
+            assert_eq!(parse_http_authority(url), None, "{url}");
+            assert_eq!(parse_http_host(url), None, "{url}");
         }
     }
 
