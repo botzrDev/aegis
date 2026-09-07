@@ -21,19 +21,16 @@ use crate::error::AuditError;
 use crate::writer::AuditWriter;
 
 /// Tracks one tool call from intent through outcome emission.
+///
+/// The session holds the outcome record it will emit, seeded default-deny at
+/// `begin`. It is the record — there is no second copy of the twelve payload
+/// fields to drift from it, and no rebuild step between the last setter and the
+/// write. Both exit paths (`complete` and `Drop`) hand the writer the same
+/// record, which is what makes "exactly one outcome" a property of one value
+/// rather than of two construction sites agreeing.
 pub struct CallSession<'a> {
     writer: &'a AuditWriter,
-    call_id: String,
-    tool_id: ToolId,
-    request_digest: RequestDigest,
-    policy_set_hash: PolicySetHash,
-    policy: PolicyOutcome,
-    capability: CapabilityOutcome,
-    execution: ExecutionOutcome,
-    metrics: Option<CallMetrics>,
-    decision_axes: DecisionAxes,
-    grant_id: Option<GrantId>,
-    response_digest: Option<ResponseDigest>,
+    record: AuditRecord,
     completed: Cell<bool>,
 }
 
@@ -57,101 +54,101 @@ impl<'a> CallSession<'a> {
         ))?;
         Ok(Self {
             writer,
-            call_id,
-            tool_id,
-            request_digest,
-            policy_set_hash,
             // Default-deny seeds: an unevaluated axis must never serialize as
             // `allowed` / `granted` / `success`. Setters overwrite these once
-            // each station actually runs.
-            policy: PolicyOutcome::Denied {
-                reason: "not evaluated".into(),
-            },
-            capability: CapabilityOutcome::Denied {
-                reason: "not evaluated".into(),
-                denied_capability: None,
-            },
-            execution: ExecutionOutcome::HostDenied {
-                reason: "not executed".into(),
-            },
-            metrics: None,
-            // Empty, not absent: `{}` says this emitter recorded no axes, and
-            // every axis field follows omit-never-null.
-            decision_axes: DecisionAxes::default(),
-            grant_id: None,
-            response_digest: None,
+            // each station actually runs. They are constructor arguments, not
+            // post-construction assignments, so there is no window in which a
+            // record exists without them.
+            record: AuditRecord::new(
+                call_id,
+                tool_id,
+                request_digest,
+                policy_set_hash,
+                PolicyOutcome::Denied {
+                    reason: "not evaluated".into(),
+                },
+                CapabilityOutcome::Denied {
+                    reason: "not evaluated".into(),
+                    denied_capability: None,
+                },
+                ExecutionOutcome::HostDenied {
+                    reason: "not executed".into(),
+                },
+            ),
             completed: Cell::new(false),
         })
     }
 
     pub fn call_id(&self) -> &str {
-        &self.call_id
+        &self.record.payload.call_id
+    }
+
+    /// The capability outcome this call resolved to, borrowed from the record
+    /// that will be emitted.
+    ///
+    /// The caller hands the outcome over with [`Self::set_capability`] *before*
+    /// execution — so a call that panics mid-execution still emits a record
+    /// naming the grant it ran under — and then reads the grant back through
+    /// here for the duration of that execution. Returning a borrow rather than
+    /// a clone is the point: the record owns the grant, and the pipeline works
+    /// from the same value it will publish instead of from a copy of it.
+    pub fn capability(&self) -> &CapabilityOutcome {
+        &self.record.payload.capability
     }
 
     pub fn set_policy(&mut self, policy: PolicyOutcome) {
-        self.policy = policy;
+        self.record.payload.policy = policy;
     }
 
     pub fn set_capability(&mut self, capability: CapabilityOutcome) {
-        self.capability = capability;
+        self.record.payload.capability = capability;
     }
 
     pub fn set_execution(&mut self, execution: ExecutionOutcome) {
-        self.execution = execution;
+        self.record.payload.execution = execution;
     }
 
+    /// Both halves of one measurement. `wall_ms` and `peak_memory_bytes` are
+    /// two payload fields but a single observation, so they are taken together
+    /// and written together — a record carrying one without the other would
+    /// describe a call nobody measured that way.
     pub fn set_metrics(&mut self, metrics: CallMetrics) {
-        self.metrics = Some(metrics);
+        self.record.payload.wall_ms = Some(metrics.wall_ms);
+        self.record.payload.peak_memory_bytes = Some(metrics.peak_memory_bytes);
     }
 
     /// Record the inputs the verdict actually turned on, so a recorded deny can
     /// explain itself rather than only assert itself.
     pub fn set_decision_axes(&mut self, decision_axes: DecisionAxes) {
-        self.decision_axes = decision_axes;
+        self.record.payload.decision_axes = decision_axes;
     }
 
     /// Link the record to the grant the call ran under. Left unset when no
     /// grant was minted — omitted on the wire, never null.
     pub fn set_grant_id(&mut self, grant_id: GrantId) {
-        self.grant_id = Some(grant_id);
+        self.record.payload.grant_id = Some(grant_id);
     }
 
     /// Digest of the raw response bytes, under the same verbatim rule as the
     /// request digest: hash what was produced, never a re-encoding of it.
     pub fn set_response_digest(&mut self, response_digest: ResponseDigest) {
-        self.response_digest = Some(response_digest);
+        self.record.payload.response_digest = Some(response_digest);
     }
 
     /// Emit the terminal outcome exactly once. Marks the session completed only
     /// after a successful write, so a failed emit leaves `Drop` as the
     /// last-resort fail-closed sink rather than silently dropping the outcome.
-    pub fn complete(self) -> Result<(), AuditError> {
-        self.writer.emit_outcome(&mut self.to_record())?;
+    ///
+    /// `mut self` is a binding mode, not part of the signature: the record is
+    /// stamped in place, and `CallSession` has a `Drop` impl, so it cannot be
+    /// moved out. Re-emitting after a failed write is safe because both stamps
+    /// are unconditional assignments and the signing input clears the signature
+    /// first — the second attempt produces exactly the bytes a fresh record
+    /// would have.
+    pub fn complete(mut self) -> Result<(), AuditError> {
+        self.writer.emit_outcome(&mut self.record)?;
         self.completed.set(true);
         Ok(())
-    }
-
-    fn to_record(&self) -> AuditRecord {
-        let mut record = AuditRecord::new(
-            self.call_id.clone(),
-            self.tool_id.clone(),
-            self.request_digest,
-            self.policy_set_hash,
-            self.policy.clone(),
-            self.capability.clone(),
-            self.execution.clone(),
-        )
-        .with_decision_axes(self.decision_axes.clone());
-        if let Some(metrics) = self.metrics {
-            record = record.with_metrics(metrics);
-        }
-        if let Some(grant_id) = &self.grant_id {
-            record = record.with_grant_id(grant_id.clone());
-        }
-        if let Some(response_digest) = self.response_digest {
-            record = record.with_response_digest(response_digest);
-        }
-        record
     }
 }
 
@@ -165,7 +162,7 @@ impl Drop for CallSession<'_> {
         // abandon / early return / error → host-denied. This overwrites even a
         // `Success` a caller set but never `complete()`d, so an unconfirmed
         // call is never recorded as having run.
-        self.execution = if std::thread::panicking() {
+        self.record.payload.execution = if std::thread::panicking() {
             ExecutionOutcome::Trap {
                 message: "host panic during tool call".into(),
             }
@@ -176,7 +173,7 @@ impl Drop for CallSession<'_> {
         };
         // Best-effort last-resort sink: a write failure here has nowhere left
         // to go (the caller is already unwinding or has dropped the session).
-        let _ = self.writer.emit_outcome(&mut self.to_record());
+        let _ = self.writer.emit_outcome(&mut self.record);
     }
 }
 
@@ -280,7 +277,7 @@ mod tests {
     fn begin_seeds_never_serialize_allowed_or_success() {
         let (writer, _store) = memory_session();
         let session = begin(&writer, "seed-tool").unwrap();
-        let json = crate::to_json_line(&session.to_record()).unwrap();
+        let json = crate::to_json_line(&session.record).unwrap();
         assert!(
             !json.contains("\"policy\":{\"status\":\"allowed\"}"),
             "seed policy must not serialize as allowed: {json}"
@@ -299,7 +296,7 @@ mod tests {
     fn the_new_axes_reach_the_record_and_stay_omitted_until_set() {
         let (writer, _store) = memory_session();
         let mut session = begin(&writer, "axes-tool").unwrap();
-        let bare = crate::to_json_line(&session.to_record()).unwrap();
+        let bare = crate::to_json_line(&session.record).unwrap();
         assert!(bare.contains("\"decision_axes\":{}"), "{bare}");
         assert!(!bare.contains("grant_id"), "{bare}");
         assert!(!bare.contains("response_digest"), "{bare}");
@@ -310,7 +307,7 @@ mod tests {
         session.set_decision_axes(axes);
         session.set_grant_id(GrantId::new("grant-1"));
         session.set_response_digest(ResponseDigest::of_response_bytes(b"ok"));
-        let record = session.to_record();
+        let record = &session.record;
         assert_eq!(record.payload.decision_axes.role.as_deref(), Some("ops"));
         assert_eq!(record.payload.grant_id, Some(GrantId::new("grant-1")));
         assert_eq!(

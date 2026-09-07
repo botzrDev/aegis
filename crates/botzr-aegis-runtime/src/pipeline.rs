@@ -157,64 +157,93 @@ impl Runtime {
         // so an axis transposition is impossible (AEG-38).
         let ceiling = decision.limits;
         let capability_outcome = self.capabilities.resolve_with_ceiling(&tool_id, ceiling);
-        session.set_capability(capability_outcome.clone());
 
-        let (execution, output) = match &capability_outcome {
-            CapabilityOutcome::Granted { grant } => {
-                session.set_grant_id(grant.grant_id.clone());
-                // Derived capability parameters (ADR-0006): the resources this
-                // call resolved to, recorded only when the grant names exactly
-                // one. Reading them off the minted grant is not a matcher and
-                // not a new resolution step. Argument matchers were canceled
-                // in AILAB-626, so no matcher shape is coming to anticipate.
-                // Same `with_*` chain as the axes above, and same omit rule: a
-                // grant that names no single resource leaves the axis unset
-                // rather than recording an absence. Both are `None` here — the
-                // only writer is this block — so this records exactly what the
-                // direct assignment it replaced did.
-                if let Some(fs) = fs_axis(grant) {
-                    axes = axes.with_fs(fs);
-                }
-                if let Some(net) = net_axis(grant) {
-                    axes = axes.with_net(net);
-                }
-                session.set_decision_axes(axes.clone());
-
-                match execute_step(grant).await {
-                    ExecutionStep::Produced { bytes, metrics } => {
-                        if let Some(metrics) = metrics {
-                            session.set_metrics(metrics);
-                        }
-                        // Output cap (G8): oversize output fails closed; bytes are
-                        // never truncated and returned as success. Applied identically
-                        // after Model A sandbox output and Model B host effect.
-                        match enforce_output_cap(grant, bytes) {
-                            Ok(bytes) => {
-                                // Only on the success path: bytes the cap
-                                // rejected were never returned, so digesting
-                                // them would record a response that never left.
-                                session
-                                    .set_response_digest(ResponseDigest::of_response_bytes(&bytes));
-                                (ExecutionOutcome::Success, Some(bytes))
-                            }
-                            Err(outcome) => (outcome, None),
-                        }
-                    }
-                    ExecutionStep::Failed { outcome, metrics } => {
-                        if let Some(metrics) = metrics {
-                            session.set_metrics(metrics);
-                        }
-                        (outcome, None)
-                    }
-                }
+        // Grant-derived record fields, written while the pipeline still owns the
+        // outcome: each needs the grant *and* a mutable session, which the borrow
+        // taken further down rules out.
+        if let CapabilityOutcome::Granted { grant } = &capability_outcome {
+            session.set_grant_id(grant.grant_id.clone());
+            // Derived capability parameters (ADR-0006): the resources this
+            // call resolved to, recorded only when the grant names exactly
+            // one. Reading them off the minted grant is not a matcher and
+            // not a new resolution step. Argument matchers were canceled
+            // in AILAB-626, so no matcher shape is coming to anticipate.
+            // Same `with_*` chain as the axes above, and same omit rule: a
+            // grant that names no single resource leaves the axis unset
+            // rather than recording an absence. Both are `None` here — the
+            // only writer is this block — so this records exactly what the
+            // direct assignment it replaced did.
+            if let Some(fs) = fs_axis(grant) {
+                axes = axes.with_fs(fs);
             }
+            if let Some(net) = net_axis(grant) {
+                axes = axes.with_net(net);
+            }
+            session.set_decision_axes(axes);
+        }
+
+        // The caller-facing deny, built before the outcome moves into the
+        // record: `complete()` takes the session by value, so at the point this
+        // is returned there is no session left to read it back out of.
+        let capability_denied = match &capability_outcome {
+            CapabilityOutcome::Denied {
+                reason,
+                denied_capability,
+            } => Some(AegisError::CapabilityDenied {
+                reason: reason.clone(),
+                denied_capability: denied_capability.clone(),
+            }),
+            CapabilityOutcome::Granted { .. } => None,
+        };
+
+        // The record takes the outcome *before* execution rather than a copy of
+        // it, so a call that panics mid-flight still emits a record naming the
+        // grant it ran under — and the pipeline then works from the same grant
+        // it will publish. Metrics and the response digest are carried out of
+        // the match instead of set inside it: they need a mutable session, and
+        // this borrow is live for as long as the grant is in use.
+        session.set_capability(capability_outcome);
+
+        let (execution, output, metrics, response_digest) = match session.capability() {
+            CapabilityOutcome::Granted { grant } => match execute_step(grant).await {
+                ExecutionStep::Produced { bytes, metrics } => {
+                    // Output cap (G8): oversize output fails closed; bytes are
+                    // never truncated and returned as success. Applied identically
+                    // after Model A sandbox output and Model B host effect.
+                    match enforce_output_cap(grant, bytes) {
+                        // Only on the success path: bytes the cap rejected were
+                        // never returned, so digesting them would record a
+                        // response that never left.
+                        Ok(bytes) => {
+                            let digest = ResponseDigest::of_response_bytes(&bytes);
+                            (
+                                ExecutionOutcome::Success,
+                                Some(bytes),
+                                metrics,
+                                Some(digest),
+                            )
+                        }
+                        Err(outcome) => (outcome, None, metrics, None),
+                    }
+                }
+                ExecutionStep::Failed { outcome, metrics } => (outcome, None, metrics, None),
+            },
             CapabilityOutcome::Denied { .. } => (
                 ExecutionOutcome::HostDenied {
                     reason: "capability denied".into(),
                 },
                 None,
+                None,
+                None,
             ),
         };
+
+        if let Some(metrics) = metrics {
+            session.set_metrics(metrics);
+        }
+        if let Some(response_digest) = response_digest {
+            session.set_response_digest(response_digest);
+        }
 
         let failure = execution.clone();
         session.set_execution(execution);
@@ -224,15 +253,8 @@ impl Runtime {
 
         // Capability deny gets its own variant to the caller even though audit
         // records execution as HostDenied{"capability denied"}.
-        if let CapabilityOutcome::Denied {
-            reason,
-            denied_capability,
-        } = &capability_outcome
-        {
-            return Err(AegisError::CapabilityDenied {
-                reason: reason.clone(),
-                denied_capability: denied_capability.clone(),
-            });
+        if let Some(error) = capability_denied {
+            return Err(error);
         }
 
         output.ok_or_else(|| match &failure {

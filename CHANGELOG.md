@@ -16,6 +16,15 @@ support.
 
 ### Added
 
+- **`CallSession::capability`** (AILAB-847), a borrow of the
+  `CapabilityOutcome` the session is recording. It exists because the session
+  now takes the outcome *before* execution rather than a copy of it, so a call
+  that panics mid-flight still emits a record naming the grant it ran under,
+  and the caller then works from the same value the record will publish. It
+  returns a shared borrow of the outcome only — not the grant, not a mutable
+  reference, and not a handle to the record — so the chain and signature fields
+  stay as sealed as they were.
+
 - **`botzr-aegis-wrap` — a transparent stdio MCP interposer, published for the
   first time.** It sits between an existing MCP client and its child server,
   relays the session in both directions, and writes a signed, hash-chained
