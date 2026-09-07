@@ -37,9 +37,20 @@ cargo bench -p botzr-aegis-policy -p botzr-aegis-capability -p botzr-aegis-runti
 | `policy_eval/rate_limit` | **183 ns** | informational (mutex) | n/a |
 | `capability_resolve/registered_tool` | **2.43 µs** | no hard gate | n/a — *bench id and measured path both changed 2026-08-24; see AILAB-707 below* |
 | `hot_path/allow_all` | **2.67 µs** | (floor) | n/a |
-| `hot_path/multi_rule` | **2.71 µs** | < 1 ms | **pass** |
+| `hot_path/multi_rule` *(stations 1–2 only — **not** the cost of a call)* | **2.71 µs** | < 1 ms | **pass** |
 
 Criterion reports `[lower median upper]` as time/op; medians above are the middle sample.
+
+**What the last two rows are not.** `hot_path` mirrors stations 1–2 and calls
+neither sandbox, audit nor wasmtime inside `b.iter` — that non-goal is
+deliberate and still stands. So 2.71 µs is a **component figure**, not what an
+audited call costs, and it must not be quoted as one: the same call against the
+shipped Volatile sink is roughly an order of magnitude more, and against a
+Durable sink a further two to three orders on top of that — a span, not a
+figure, because the Durable arm did not reproduce across two sessions. Those
+are the `audited_call` group
+in [`cell_and_audit.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/cell_and_audit.md),
+which is where the end-to-end number lives.
 
 ## Criterion text tables
 

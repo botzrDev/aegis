@@ -51,3 +51,10 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 [[bench]]
 name = "hot_path"
 harness = false
+
+# Declared rather than left to autodiscovery, like `hot_path`: `harness = false`
+# is what hands the binary to Criterion instead of libtest, and an inferred
+# target would silently run under the wrong harness.
+[[bench]]
+name = "audited_call"
+harness = false

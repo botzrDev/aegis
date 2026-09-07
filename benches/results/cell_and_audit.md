@@ -47,7 +47,7 @@ cargo bench -p botzr-aegis-sandbox -p botzr-aegis-audit
 | `instantiation/cold` | **39.490 ms** | < 5 ms | **fail** (~7.9× over) |
 | `instantiation/cold_engine_only` | **456.08 µs** | informational | n/a |
 | `instantiation/cold_compile_only` | **29.351 ms** | informational | n/a |
-| `audit_emission/begin_complete` | **4.7185 ms** | no target set | n/a |
+| `audit_emission/begin_complete` | **4.7185 ms** | none, deliberately — see below | n/a |
 | `audit_emission/serialize_only` | **468.46 ns** | informational | n/a |
 
 Criterion reports `[lower median upper]` as time/op; medians above are the
@@ -154,6 +154,19 @@ the entire median is write + fsync latency on WSL2's filesystem. Expect it to
 move by an order of magnitude on a different filesystem, and **do not cite it as
 an Aegis-side overhead figure**.
 
+**There is no target on that row, and the blank is a decision rather than an
+omission (AILAB-851).** `serialize_only` settles what the median is made of:
+468.46 ns of Aegis-side work inside a 4.7185 ms cycle, so ~99.99% of it is
+`write` + `fsync` latency on WSL2's filesystem. A number in that column would
+therefore be a durability target for *someone else's storage stack* — it would
+pass on an NVMe host and fail on a network mount without a line of this
+repository changing, which is a claim about the hardware wearing a claim about
+Aegis. The sentence above already forbids citing this figure as Aegis-side
+overhead; a target would quietly license exactly that. What the row is for is
+attribution, and it does that job with `serialize_only` beside it. If a
+durability target is ever wanted it belongs on a named storage profile, not on
+this row.
+
 ## Isolated ed25519 signing (AILAB-620)
 
 Added because the previous section makes the emission cycle unusable as a
@@ -194,6 +207,143 @@ it is ~340× larger because of two `sync_all` calls. Adding signing to the shipp
 emit path is therefore invisible against fsync; that is a statement about how
 expensive durability is, not about how cheap ed25519 is. Cite the two numbers
 together or neither.
+
+## An audited call, end to end (AILAB-851)
+
+Added because nothing here or in
+[`hot_path.md`](https://github.com/botzrDev/aegis/blob/main/benches/results/hot_path.md)
+measured a **call**. `hot_path/multi_rule` is stations 1–2 at 2.71 µs;
+`audit_emission/begin_complete` is the two-line durable cycle on its own. Neither
+is what one `Runtime::execute_host_call` costs, and the two do not add up to it
+either. This group drives the whole pipeline — POLICY → CAPABILITY → SANDBOX →
+AUDIT — with a host handler as the executable, so wasmtime compilation stays in
+`instantiation/cold` where it belongs.
+
+**It lives in this file rather than a fourth one** because
+[`benches/README.md`](https://github.com/botzrDev/aegis/blob/main/benches/README.md)
+declares exactly three scopes and all three are included verbatim into the book's
+Benchmarks chapter. This file already owns audit record emission; an audited call
+is that scope one level up.
+
+**Two arms, one variable.** Both runtimes are built identically and differ only in
+the sink: `durable_sink` is a `FileChainSink` with a provisioned key — the
+configuration that retains evidence, and the one a Durable sink requires a real
+key for (ADR-0012) — and `volatile_sink` is the shipped default, an in-memory
+Chain that emits, signs and chains every record and then keeps none of it past
+the process.
+
+### EVERY NUMBER BELOW IS PROVISIONAL
+
+This box swings ±20% on identical binaries — the `instantiation/cold` table above
+is the evidence — and these were taken while it was doing other work. For this
+group there is now direct evidence rather than an inherited caution: re-running it
+in a second independent session on the same box did not reproduce the first
+session's `durable_sink` figures at all. The two sessions' ranges do not overlap,
+a 6.1× spread across six runs, and the table below records every one of them.
+**AILAB-796 is the ticket that re-measures on a quiet machine**, and until it
+lands nothing here should be quoted as a median. What is worth reading is the
+*shape*: two to three orders of magnitude between the two sinks.
+
+**Hardware / OS / toolchain: identical to the first run in this file** (AMD Ryzen
+AI 5 340, 4 vCPUs, WSL2 Linux 6.6.87.2, rustc 1.86.0, Criterion 0.5.1, `bench`
+profile, plotters backend). Date: 2026-09-01.
+
+```bash
+cargo bench -p botzr-aegis-runtime --bench audited_call
+```
+
+| Group | Range across six runs *(provisional)* | Target | Status |
+|---|---|---|---|
+| `audited_call/durable_sink` | **2.86 – 17.5 ms** — spans 6.1× across six runs in two sessions; not reproducible | none — see `begin_complete` above | n/a |
+| `audited_call/volatile_sink` | **32.9 – 37.4 µs** — reproduces within 1.14× | none set | n/a |
+
+```
+audited_call/durable_sink
+                        time:   [3.0238 ms 3.2586 ms 3.5437 ms]
+Found 2 outliers among 20 measurements (10.00%)
+audited_call/volatile_sink
+                        time:   [34.153 µs 34.432 µs 34.799 µs]
+Found 2 outliers among 20 measurements (10.00%)
+```
+
+### Stability across six runs in two independent sessions
+
+Two independent sessions on the same box, three runs each. Nothing about the
+binary, the hardware or the bench parameters differs between them.
+
+| Run | Session | `durable_sink` | `volatile_sink` | ratio |
+|---|---|---|---|---|
+| 1 | 2026-09-01 | 3.2586 ms | 34.432 µs | 94.6× |
+| 2 | 2026-09-01 | 2.8585 ms | 34.791 µs | 82.2× |
+| 3 | 2026-09-01 | 3.7153 ms | 32.889 µs | 113.0× |
+| 4 | 2026-09-07 | 17.505 ms | 34.889 µs | 501.7× |
+| 5 | 2026-09-07 | 9.832 ms | 37.370 µs | 263.1× |
+| 6 | 2026-09-07 | 13.895 ms | 33.566 µs | 414.0× |
+
+**The volatile arm is the only reproducible number here, and the ratio is the
+least stable thing in the group.** `volatile_sink` holds inside 1.14× across all
+six runs and both sessions. `durable_sink` spans 6.12×, and the two sessions do
+not merely differ — their ranges do not overlap at all, the second session's
+fastest run being 2.6× the first session's slowest. Because the durable term
+dominates the quotient, the ratio inherits every bit of that variance and spans
+82×–502×. So the honest claim is *two to three orders of magnitude*, not a
+figure, and no median for the durable arm belongs in this file at all. Anything
+tighter needs AILAB-796.
+
+### What the pair shows
+
+**The configuration that is fast is the configuration that retains nothing.**
+Both arms emit two signed, chained records per call; the only difference is
+whether those records survive the process. That difference spans 82×–502× across
+the six runs above — and it is almost entirely `fsync`, for the reason
+`serialize_only` established above: serialization is 468 ns against a
+millisecond-scale cycle. Evidence that outlives
+the process costs two `sync_all` calls, and no amount of Aegis-side tuning
+touches that number.
+
+It also puts `hot_path/multi_rule` in proportion. Stations 1–2 are 2.71 µs;
+the same call reaching AUDIT against the *unretained* default is 34.4 µs, about
+13× more; against a retaining sink it is 2.86–17.5 ms, another 82×–502× beyond
+that. The published 2.71 µs covers well under a percent of a durable call and
+must not be quoted as its cost.
+
+### The cross-check that would not reconcile, and its resolution
+
+An end-to-end audited call appeared to measure **less** than
+`audit_emission/begin_complete` (3.2586 ms against 4.7185 ms) while doing
+strictly more work: the pipeline emits the same two lines through
+`CallSession::begin` and `complete`
+([`crates/botzr-aegis-runtime/src/pipeline.rs`](https://github.com/botzrDev/aegis/blob/main/crates/botzr-aegis-runtime/src/pipeline.rs)),
+and adds policy, capability, the request digest and handler dispatch on top.
+That is not possible if both figures measure the same fsync work under the same
+conditions, so at least one of them had to be non-comparable.
+
+**The six-run table above resolves it, and the split falls exactly on the
+session boundary.** All three runs from 2026-09-01 land below `begin_complete`'s
+4.7185 ms (3.2586, 2.8585, 3.7153 ms); all three from 2026-09-07 land above it
+(17.505, 9.832, 13.895 ms). Neither figure was wrong when it was taken — the
+first session simply caught a quiet `fsync` window. The two numbers are **not
+separable at this measurement precision**: the fsync term dominates both, and it
+varies by more than the gap between them. The earlier explanation that
+`emission.rs` writes a larger fixture record than this group's grant remains
+true, but it is not needed to account for the discrepancy and cannot be measured
+apart from the noise.
+
+That this was answerable one session later is entirely because the failure was
+published instead of omitted — a number that does not reconcile is evidence about
+the measurement, and hiding it would have left the next reader to rediscover it.
+AILAB-796 should still re-measure both in one process run.
+
+### Why the sample budget is capped
+
+`MemoryChainSink` holds an `Arc<Mutex<Vec<u8>>>` and never truncates, so the
+volatile arm retains every byte it emits for the life of the bench process. At
+Criterion's default budget it would append hundreds of megabytes and start
+measuring the allocator. The group therefore sets a 500 ms warm-up, a 2 s
+measurement window and 20 samples; peak RSS for the run above was 124 MB. Both
+arms get the same budget, so the comparison is unaffected — but the sample count
+is lower than the rest of this file, which is a second reason to treat these as
+provisional.
 
 ## Notes
 
