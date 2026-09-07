@@ -84,12 +84,12 @@ fn golden_session() -> &'static [(&'static str, String)] {
         {
             let writer = AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
                 .expect("open session");
-            writer.emit_intent(&mut golden_intent()).expect("intent");
-            for (_, mut record) in outcome_cases() {
-                writer.emit_outcome(&mut record).expect("outcome");
+            writer.emit_intent(&golden_intent()).expect("intent");
+            for (_, record) in outcome_cases() {
+                writer.emit_outcome(&record).expect("outcome");
             }
             writer
-                .emit_decision(&mut golden_decision_line())
+                .emit_decision(&golden_decision_line())
                 .expect("decision");
             // Drop closes the Session — the `close` snapshot only exists because
             // of that, so the scope is the fixture.
@@ -482,13 +482,13 @@ fn jsonl_roundtrip_writes_open_intent_and_outcome() {
     let store = MemoryChainSink::new();
     let writer =
         AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key()).expect("open session");
-    let mut intent = AuditIntent::new(
+    let intent = AuditIntent::new(
         "call-rt-1",
         ToolId::new("smoke"),
         RequestDigest::of_request_bytes(b"abc123"),
     );
-    writer.emit_intent(&mut intent).unwrap();
-    let mut outcome = AuditRecord::new(
+    writer.emit_intent(&intent).unwrap();
+    let outcome = AuditRecord::new(
         "call-rt-1",
         ToolId::new("smoke"),
         RequestDigest::of_request_bytes(b"abc123"),
@@ -504,7 +504,7 @@ fn jsonl_roundtrip_writes_open_intent_and_outcome() {
             reason: "not executed".into(),
         },
     );
-    writer.emit_outcome(&mut outcome).unwrap();
+    writer.emit_outcome(&outcome).unwrap();
 
     let lines: Vec<String> = store
         .to_text()

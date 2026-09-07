@@ -62,7 +62,7 @@ fn two_sessions(path: &Path) {
     for session in 0..2 {
         let writer = AuditWriter::open(path, provisioned_key()).unwrap();
         writer
-            .emit_outcome(&mut outcome(&format!("call-s{session}")))
+            .emit_outcome(&outcome(&format!("call-s{session}")))
             .unwrap();
         // Drop closes this Session before the next one opens.
     }
@@ -189,7 +189,7 @@ fn close_is_written_on_drop_for_clean_exit_and_for_unwind() {
     let clean = dir.join("clean.jsonl");
     {
         let writer = AuditWriter::open(&clean, provisioned_key()).unwrap();
-        writer.emit_outcome(&mut outcome("call-clean")).unwrap();
+        writer.emit_outcome(&outcome("call-clean")).unwrap();
     }
     assert_eq!(
         verify_chain_file(&clean).unwrap().verdict,
@@ -201,7 +201,7 @@ fn close_is_written_on_drop_for_clean_exit_and_for_unwind() {
         let unwound = unwound.clone();
         move || {
             let writer = AuditWriter::open(&unwound, provisioned_key()).unwrap();
-            writer.emit_outcome(&mut outcome("call-unwound")).unwrap();
+            writer.emit_outcome(&outcome("call-unwound")).unwrap();
             panic!("simulated host panic");
         }
     });
@@ -225,7 +225,7 @@ fn a_session_that_never_dropped_is_indeterminate_which_is_the_sigkill_gap() {
     // Anchor, which is not this ticket.
     let (_dir, path) = temp_chain();
     let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
-    writer.emit_outcome(&mut outcome("call-killed")).unwrap();
+    writer.emit_outcome(&outcome("call-killed")).unwrap();
     std::mem::forget(writer);
 
     let rows = rows(&path);
@@ -253,12 +253,12 @@ fn a_later_session_reopening_the_file_anchors_the_killed_one() {
     // becomes anchored by a signature.
     let (_dir, path) = temp_chain();
     let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
-    writer.emit_outcome(&mut outcome("call-killed")).unwrap();
+    writer.emit_outcome(&outcome("call-killed")).unwrap();
     std::mem::forget(writer);
 
     {
         let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
-        writer.emit_outcome(&mut outcome("call-after")).unwrap();
+        writer.emit_outcome(&outcome("call-after")).unwrap();
     }
     assert_eq!(verify_chain_file(&path).unwrap().verdict, Verdict::Verified);
 

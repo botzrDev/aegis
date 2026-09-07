@@ -42,7 +42,7 @@ fn grant() -> CapabilityGrant {
 /// The canonical bytes a signed `outcome` line actually covers: the JCS form of
 /// the record with `signature` absent and `key_id` present (ADR-0003).
 fn outcome_signing_input(key: &SigningKey) -> String {
-    let mut record = AuditRecord::new(
+    let record = AuditRecord::new(
         "call-1".to_string(),
         ToolId::new("echo"),
         RequestDigest::of_request_bytes(b"abc123"),
@@ -55,8 +55,8 @@ fn outcome_signing_input(key: &SigningKey) -> String {
         wall_ms: 1,
         peak_memory_bytes: 1 << 16,
     });
-    record.stamp_chain(4, PrevHash::of_line(b"prev"));
     record
+        .at_position(4, PrevHash::of_line(b"prev"))
         .signing_input(&key.key_id())
         .expect("record canonicalizes")
 }

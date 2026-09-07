@@ -47,7 +47,7 @@ impl<'a> CallSession<'a> {
         policy_set_hash: PolicySetHash,
     ) -> Result<Self, AuditError> {
         let call_id = writer.next_call_id();
-        writer.emit_intent(&mut AuditIntent::new(
+        writer.emit_intent(&AuditIntent::new(
             call_id.clone(),
             tool_id.clone(),
             request_digest,
@@ -139,14 +139,13 @@ impl<'a> CallSession<'a> {
     /// after a successful write, so a failed emit leaves `Drop` as the
     /// last-resort fail-closed sink rather than silently dropping the outcome.
     ///
-    /// `mut self` is a binding mode, not part of the signature: the record is
-    /// stamped in place, and `CallSession` has a `Drop` impl, so it cannot be
-    /// moved out. Re-emitting after a failed write is safe because both stamps
-    /// are unconditional assignments and the signing input clears the signature
-    /// first — the second attempt produces exactly the bytes a fresh record
-    /// would have.
-    pub fn complete(mut self) -> Result<(), AuditError> {
-        self.writer.emit_outcome(&mut self.record)?;
+    /// AILAB-847 needed `mut self` here, because the writer stamped the chain
+    /// position into the record in place. AILAB-848 made the writer build its
+    /// own line instead, so nothing mutates this record any more and the
+    /// binding is a shared one again. Re-emitting after a failed write is still
+    /// safe: the record the writer reads is unchanged by a failed attempt.
+    pub fn complete(self) -> Result<(), AuditError> {
+        self.writer.emit_outcome(&self.record)?;
         self.completed.set(true);
         Ok(())
     }
@@ -173,7 +172,7 @@ impl Drop for CallSession<'_> {
         };
         // Best-effort last-resort sink: a write failure here has nowhere left
         // to go (the caller is already unwinding or has dropped the session).
-        let _ = self.writer.emit_outcome(&mut self.record);
+        let _ = self.writer.emit_outcome(&self.record);
     }
 }
 

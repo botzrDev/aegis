@@ -171,8 +171,8 @@ fn intent(call_id: &str) -> AuditIntent {
 fn closed_session(path: &Path, call_ids: &[&str]) {
     let writer = AuditWriter::open(path, session_key()).expect("open chain");
     for call_id in call_ids {
-        writer.emit_intent(&mut intent(call_id)).expect("intent");
-        writer.emit_outcome(&mut outcome(call_id)).expect("outcome");
+        writer.emit_intent(&intent(call_id)).expect("intent");
+        writer.emit_outcome(&outcome(call_id)).expect("outcome");
     }
     // Dropped here, which writes the `Close` line that anchors the Session.
 }
@@ -184,11 +184,11 @@ fn closed_session(path: &Path, call_ids: &[&str]) {
 fn unclosed_session(path: &Path, completed: &[&str], in_flight: &[&str]) {
     let writer = AuditWriter::open(path, session_key()).expect("open chain");
     for call_id in completed {
-        writer.emit_intent(&mut intent(call_id)).expect("intent");
-        writer.emit_outcome(&mut outcome(call_id)).expect("outcome");
+        writer.emit_intent(&intent(call_id)).expect("intent");
+        writer.emit_outcome(&outcome(call_id)).expect("outcome");
     }
     for call_id in in_flight {
-        writer.emit_intent(&mut intent(call_id)).expect("intent");
+        writer.emit_intent(&intent(call_id)).expect("intent");
     }
     std::mem::forget(writer);
 }
@@ -199,7 +199,7 @@ fn two_sessions(path: &Path) {
     for session in 0..2 {
         let writer = AuditWriter::open(path, session_key()).expect("open chain");
         writer
-            .emit_outcome(&mut outcome(&format!("call-s{session}")))
+            .emit_outcome(&outcome(&format!("call-s{session}")))
             .expect("outcome");
         // Drop closes this Session before the next one opens.
     }
@@ -546,13 +546,13 @@ fn two_decisions_for_one_approval_id_are_tampering() {
     {
         let writer = AuditWriter::open(&path, session_key()).expect("open chain");
         for _ in 0..2 {
-            let mut decision = AuditDecision::new(
+            let decision = AuditDecision::new(
                 ApprovalId::new("apr-1"),
                 ApprovalVerdict::Denied {
                     reason: "operator said no".into(),
                 },
             );
-            writer.emit_decision(&mut decision).expect("decision");
+            writer.emit_decision(&decision).expect("decision");
         }
     }
 

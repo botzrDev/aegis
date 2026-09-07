@@ -103,14 +103,14 @@ fn vector_outcome(call_id: &str) -> AuditRecord {
 }
 
 fn one_call(writer: &AuditWriter, call_id: &str) {
-    let mut intent = AuditIntent::new(
+    let intent = AuditIntent::new(
         call_id,
         ToolId::new("echo"),
         RequestDigest::of_request_bytes(b"{}"),
     );
-    writer.emit_intent(&mut intent).expect("intent");
+    writer.emit_intent(&intent).expect("intent");
     writer
-        .emit_outcome(&mut vector_outcome(call_id))
+        .emit_outcome(&vector_outcome(call_id))
         .expect("outcome");
 }
 
@@ -231,13 +231,13 @@ fn duplicate_decision_vector() -> String {
         let writer = AuditWriter::with_sink(Box::new(store.clone()), insecure_dev_key())
             .expect("open session");
         for _ in 0..2 {
-            let mut decision = AuditDecision::new(
+            let decision = AuditDecision::new(
                 ApprovalId::new("apr-vector-8"),
                 ApprovalVerdict::Denied {
                     reason: "operator said no".into(),
                 },
             );
-            writer.emit_decision(&mut decision).expect("decision");
+            writer.emit_decision(&decision).expect("decision");
         }
     }
     rejoin(&rows(&store.to_text()))

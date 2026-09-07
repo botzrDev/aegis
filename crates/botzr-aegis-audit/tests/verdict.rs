@@ -129,13 +129,13 @@ fn written_session(calls: usize) -> String {
         let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
         for call in 0..calls {
             let call_id = format!("call-{call}");
-            let mut intent = botzr_aegis_core::AuditIntent::new(
+            let intent = botzr_aegis_core::AuditIntent::new(
                 call_id.clone(),
                 ToolId::new("echo"),
                 RequestDigest::of_request_bytes(b"{}"),
             );
-            writer.emit_intent(&mut intent).unwrap();
-            writer.emit_outcome(&mut outcome(&call_id)).unwrap();
+            writer.emit_intent(&intent).unwrap();
+            writer.emit_outcome(&outcome(&call_id)).unwrap();
         }
     }
     std::fs::read_to_string(&path).unwrap()
@@ -409,12 +409,12 @@ fn a_trailing_unparseable_line_is_a_torn_write_with_its_own_reason() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
     let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
-    let mut intent = botzr_aegis_core::AuditIntent::new(
+    let intent = botzr_aegis_core::AuditIntent::new(
         "call-0",
         ToolId::new("echo"),
         RequestDigest::of_request_bytes(b"{}"),
     );
-    writer.emit_intent(&mut intent).unwrap();
+    writer.emit_intent(&intent).unwrap();
     std::mem::forget(writer); // no Close, as after a SIGKILL
     let mut text = std::fs::read_to_string(&path).unwrap();
     text.push_str("{\"line_type\":\"outcome\",\"seq\"");
@@ -452,12 +452,12 @@ fn an_intent_tail_is_indeterminate_and_names_the_calls_in_flight() {
     // distinguishable from the fixture alone. `aegis verify` prints this Vec
     // one line per Call in exactly this order.
     for call_id in ["call-b", "call-a"] {
-        let mut intent = botzr_aegis_core::AuditIntent::new(
+        let intent = botzr_aegis_core::AuditIntent::new(
             call_id,
             ToolId::new("net.post"),
             RequestDigest::of_request_bytes(b"{}"),
         );
-        writer.emit_intent(&mut intent).unwrap();
+        writer.emit_intent(&intent).unwrap();
     }
     std::mem::forget(writer);
 
@@ -666,13 +666,13 @@ fn a_second_decision_for_one_approval_id_is_tampering() {
     {
         let writer = AuditWriter::open(&path, provisioned_key()).unwrap();
         for _ in 0..2 {
-            let mut decision = AuditDecision::new(
+            let decision = AuditDecision::new(
                 ApprovalId::new("apr-1"),
                 ApprovalVerdict::Denied {
                     reason: "operator said no".into(),
                 },
             );
-            writer.emit_decision(&mut decision).unwrap();
+            writer.emit_decision(&decision).unwrap();
         }
     }
 

@@ -255,7 +255,7 @@ mod tests {
         };
 
         let key = insecure_dev_key();
-        let mut record = AuditRecord::new(
+        let record = AuditRecord::new(
             "call-1",
             ToolId::new("echo"),
             RequestDigest::of_request_bytes(b"{}"),
@@ -267,7 +267,7 @@ mod tests {
             },
             ExecutionOutcome::Success,
         );
-        record.stamp_chain(4, PrevHash::of_line(b"prev"));
+        let mut record = record.at_position(4, PrevHash::of_line(b"prev"));
         let signature = key.sign(record.signing_input(&key.key_id()).unwrap().as_bytes());
         record.stamp_signature(signature, key.key_id());
 

@@ -342,8 +342,10 @@ pub struct NetAxis {
 ///
 /// **Sealed.** All four are private to this crate. `schema_version` and
 /// `line_type` are stamped by the constructor of the line the header belongs
-/// to; `seq` and `prev_hash` are stamped by the writer through
-/// [`Envelope::stamp_chain`]. A caller that can pick its own chain position
+/// to; `seq` and `prev_hash` are supplied by the writer, and only by the writer
+/// building a line whole through [`Envelope::at_position`] — there is no method
+/// that puts a position on a line you already hold. A caller that can pick its
+/// own chain position
 /// forges a position the line never occupied, or hands two lines the same one —
 /// which is what a forked chain is. A caller that can pick its own schema
 /// version forges the trail wholesale. Sealing is what makes the rule
@@ -480,21 +482,47 @@ impl<P> Envelope<P> {
         &self.header.prev_hash
     }
 
-    /// **Writer-only.** Assign this line's position in the chain.
+    /// **The writer's constructor, and the only way a line acquires a chain
+    /// position** (AILAB-848).
     ///
-    /// `seq` and `prev_hash` must be chosen and written inside the same lock as
-    /// the append. Two callers that read the chain head outside that lock get
-    /// the same `prev_hash` and fork the chain; a caller that picks its own
-    /// `seq` forges a position the line never occupied. Never call this from
-    /// the pipeline.
+    /// A position is no longer something you put *onto* a line you are holding
+    /// — there is no method that does that. It exists only because the writer
+    /// built a line whole, at the position it had just assigned, inside the
+    /// lock that performs the append. `seq` and `prev_hash` must be chosen and
+    /// written under that one lock: two callers that read the chain head
+    /// outside it get the same `prev_hash` and fork the chain.
     ///
-    /// One implementation, for every line type — the five that drifted apart
-    /// one at a time cannot any more.
-    pub fn stamp_chain(&mut self, seq: u64, prev_hash: PrevHash) {
-        self.header.seq = seq;
-        self.header.prev_hash = prev_hash;
+    /// **The payload is borrowed, not cloned.** The result is `Envelope<&P>` —
+    /// the *same* struct declaration, instantiated at a reference, so the wire
+    /// bytes and the key order are the ones
+    /// `envelope_key_order_is_header_then_payload_then_signature` asserts on.
+    /// A second view type would have moved that decision somewhere the
+    /// assertion does not look. Cloning `Envelope<&P>` copies a reference, so
+    /// the signing path costs no payload copy either.
+    ///
+    /// The draft supplies `line_type` and `schema_version`, which are the
+    /// line's identity; the writer supplies the position, which is the chain's.
+    pub fn at_position(&self, seq: u64, prev_hash: PrevHash) -> Envelope<&P> {
+        Envelope {
+            header: LineHeader {
+                schema_version: self.header.schema_version,
+                line_type: self.header.line_type.clone(),
+                seq,
+                prev_hash,
+            },
+            payload: &self.payload,
+            sig: SignatureBlock::default(),
+        }
     }
 }
+
+/// A reference to a signable payload is signable: the marker travels through
+/// the borrow so the writer can sign what it assembled without owning it.
+///
+/// No overlap with the four concrete impls — `&RecordPayload` is a distinct
+/// type from `RecordPayload`, and `IntentPayload` implements neither, so
+/// `Envelope<&IntentPayload>` has no signing surface either.
+impl<P: Signable> Signable for &P {}
 
 impl<P: Signable> Envelope<P> {
     pub fn signature(&self) -> Option<&Signature> {
@@ -507,10 +535,19 @@ impl<P: Signable> Envelope<P> {
 
     /// **Writer-only.** Attach the signature and the key that produced it.
     ///
-    /// The signature covers [`SignedLine::signing_input`], so this can only be
-    /// called after [`Envelope::stamp_chain`]. Never call this from the
-    /// pipeline: a caller-supplied signature is an unverified claim about
-    /// authorship written into evidence.
+    /// The signature covers [`SignedLine::signing_input`], so it can only be
+    /// attached to a line that already holds its position — which, since
+    /// AILAB-848, means one the writer assembled with
+    /// [`Envelope::at_position`]. Never call this from the pipeline: a
+    /// caller-supplied signature is an unverified claim about authorship
+    /// written into evidence.
+    ///
+    /// Left reachable deliberately. AC 2 of AILAB-848 is about chain
+    /// *position*, and a signature is not a position; sealing this would change
+    /// what the `intent_line_is_unsignable` compile-fail case asserts, from
+    /// "an intent line cannot be signed" to "this method is not public",
+    /// without a single test going red. It is harmless public because it takes
+    /// a `Signature` value, and producing a valid one needs the key.
     ///
     /// Bounded on [`Signable`], so it does not exist for an intent line.
     pub fn stamp_signature(&mut self, signature: Signature, key_id: KeyId) {
@@ -1237,16 +1274,25 @@ mod tests {
     }
 
     #[test]
-    fn chain_and_signature_fields_are_stamped_not_constructed() {
-        let mut line = record();
-        assert_eq!(line.seq(), 0);
-        assert_eq!(*line.prev_hash(), PrevHash::GENESIS);
-        assert!(line.signature().is_none() && line.key_id().is_none());
+    /// Renamed from `chain_and_signature_fields_are_stamped_not_constructed`
+    /// by AILAB-848, because the old name now asserts the opposite of the
+    /// design: a position is *constructed*, never stamped. Every assertion it
+    /// made survives below, and the draft-is-unchanged pair is new — that is
+    /// the part that says a held line cannot acquire a position at all.
+    fn a_draft_has_no_position_and_only_the_writer_builds_one_that_does() {
+        let draft = record();
+        assert_eq!(draft.seq(), 0);
+        assert_eq!(*draft.prev_hash(), PrevHash::GENESIS);
+        assert!(draft.signature().is_none() && draft.key_id().is_none());
 
         let prev = PrevHash::of_line(b"predecessor");
-        line.stamp_chain(41, prev);
+        let mut line = draft.at_position(41, prev);
         assert_eq!(line.seq(), 41);
         assert_eq!(*line.prev_hash(), prev);
+
+        // The draft did not move. There is no method that would let it.
+        assert_eq!(draft.seq(), 0);
+        assert_eq!(*draft.prev_hash(), PrevHash::GENESIS);
 
         let key_id = KeyId::of_public_key(&PublicKey::from_bytes([3u8; 32]));
         line.stamp_signature(Signature::from_bytes([7u8; 64]), key_id);
@@ -1256,8 +1302,8 @@ mod tests {
 
     #[test]
     fn signing_input_omits_the_signature_and_carries_the_key_id() {
-        let mut line = record();
-        line.stamp_chain(1, PrevHash::of_line(b"prev"));
+        let draft = record();
+        let mut line = draft.at_position(1, PrevHash::of_line(b"prev"));
         let key_id = KeyId::of_public_key(&PublicKey::from_bytes([3u8; 32]));
         let before = line.signing_input(&key_id).unwrap();
         assert!(!before.contains("\"signature\""), "{before}");
@@ -1313,14 +1359,19 @@ mod tests {
 
     #[test]
     fn records_round_trip_through_json() {
-        let mut line = record();
-        line.stamp_chain(5, PrevHash::of_line(b"p"));
+        let draft = record();
+        let mut line = draft.at_position(5, PrevHash::of_line(b"p"));
         line.stamp_signature(
             Signature::from_bytes([1u8; 64]),
             KeyId::of_public_key(&PublicKey::from_bytes([2u8; 32])),
         );
         let json = serde_json::to_string(&line).unwrap();
-        assert_eq!(serde_json::from_str::<AuditRecord>(&json).unwrap(), line);
+        // The written line borrows its payload and the parsed one owns it, so
+        // they are different types and cannot be compared directly. Comparing
+        // the re-serialization is the same round-trip claim and is stricter:
+        // it asserts the bytes survive, not merely that the fields do.
+        let parsed: AuditRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), json);
     }
 
     #[test]

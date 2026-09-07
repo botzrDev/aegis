@@ -143,10 +143,10 @@ fn intent_for(call_id: &str) -> AuditIntent {
 }
 
 fn one_call(writer: &AuditWriter, call_id: &str) {
-    let mut intent = intent_for(call_id);
-    writer.emit_intent(&mut intent).expect("intent");
+    let intent = intent_for(call_id);
+    writer.emit_intent(&intent).expect("intent");
     writer
-        .emit_outcome(&mut vector_outcome(call_id))
+        .emit_outcome(&vector_outcome(call_id))
         .expect("outcome");
 }
 
@@ -278,10 +278,10 @@ fn missing_line_vector() -> String {
         };
         let writer =
             AuditWriter::with_sink(Box::new(sink), insecure_dev_key()).expect("open session");
-        let mut intent = intent_for("call-missing-line");
-        writer.emit_intent(&mut intent).expect("intent");
+        let intent = intent_for("call-missing-line");
+        writer.emit_intent(&intent).expect("intent");
         let refused = writer
-            .emit_outcome(&mut vector_outcome("call-missing-line"))
+            .emit_outcome(&vector_outcome("call-missing-line"))
             .expect_err("the sink refuses this append");
         assert!(
             matches!(refused, AuditError::Io(_)),

@@ -219,6 +219,36 @@ support.
 
 ### Changed
 
+- **The writer no longer mutates the line it is given, because it no longer
+  stamps a chain position onto a line someone else is holding** (AILAB-848).
+  A position is now something a line *has because the writer built it that
+  way*, at the position it had just assigned, inside the same lock that
+  performs the append — not something applied afterwards to a value the caller
+  still owns. `AuditWriter::emit_intent`, `emit_outcome` and `emit_decision`
+  therefore take `&AuditIntent` / `&AuditRecord` / `&AuditDecision` rather than
+  `&mut`.
+
+  **This is source-compatible for ordinary callers** — a mutable borrow coerces
+  to a shared one at the call site, so `emit_outcome(&mut record)` still
+  compiles — but it **is** a public signature change, and anyone naming these
+  functions by type, or implementing a trait that carries their signatures, is
+  affected.
+
+  **`Envelope::stamp_chain` is removed.** It was the only way to give a line a
+  chain position after construction, which is precisely the shape the change
+  exists to eliminate: a line type whose stamping failed to store produced a
+  file of lines all at sequence zero, and no type could say that was wrong.
+  Its replacement, `Envelope::at_position`, borrows the payload and returns a
+  new line rather than modifying one — so a draft still cannot acquire a
+  position, and the payload is not copied to give it one.
+  `Envelope::stamp_signature` is deliberately **not** removed: a signature is
+  not a chain position, and sealing it would have changed what the
+  `intent_line_is_unsignable` compile-fail case asserts without any test going
+  red.
+
+  Wire output is byte-identical, and that is reproduced rather than asserted:
+  the thirteen golden and eight tamper vectors hash unchanged.
+
 - **Every audit line is one `Envelope<P>`: a shared header, the line's own
   payload, and a shared signature block** (AILAB-845). **Breaking change to
   published API, taken deliberately before the 0.4.0 cut rather than after it.**

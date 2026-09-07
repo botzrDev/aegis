@@ -147,7 +147,11 @@ fn golden_resource_exceeded_orchestrator_shape() {
     record.payload.grant_id = Some(GrantId::new("spin-1"));
     record.payload.wall_ms = Some(50);
     record.payload.peak_memory_bytes = Some(65536);
-    record.stamp_chain(2, PrevHash::GENESIS);
+    // AILAB-848: the position now comes from building the line, not from
+    // stamping one we hold. This still serializes the whole line and compares
+    // it byte for byte, which is the broader net the key-order assertion in
+    // `botzr-aegis-core` does not replace.
+    let mut record = record.at_position(2, PrevHash::GENESIS);
     record.stamp_signature(
         Signature::from_bytes([0u8; 64]),
         KeyId::of_public_key(&PublicKey::from_bytes([0u8; 32])),

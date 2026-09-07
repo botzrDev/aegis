@@ -131,8 +131,8 @@ impl AuditWriter {
             call_seq: AtomicU64::new(1),
             open_emitted: AtomicBool::new(false),
         };
-        let mut open = AuditOpen::new(writer.signing_key.public_key(), prev_session_tail);
-        writer.append_signed(&mut open)?;
+        let open = AuditOpen::new(writer.signing_key.public_key(), prev_session_tail);
+        writer.append_signed(&open)?;
         writer.open_emitted.store(true, Ordering::Relaxed);
         Ok(writer)
     }
@@ -205,11 +205,11 @@ impl AuditWriter {
     /// [`Signable`], so the signed append path (private to this type) does not
     /// accept it, because this line is fsynced ahead of execution and signing
     /// must stay off the pre-execution critical path.
-    pub fn emit_intent(&self, intent: &mut AuditIntent) -> Result<(), AuditError> {
+    pub fn emit_intent(&self, intent: &AuditIntent) -> Result<(), AuditError> {
         self.append_unsigned(intent)
     }
 
-    pub fn emit_outcome(&self, record: &mut AuditRecord) -> Result<(), AuditError> {
+    pub fn emit_outcome(&self, record: &AuditRecord) -> Result<(), AuditError> {
         self.append_signed(record)
     }
 
@@ -237,7 +237,7 @@ impl AuditWriter {
     /// Not the same absence as `emit_checkpoint` below, which deliberately does
     /// not exist because v0 does not define what a `Checkpoint` asserts
     /// (`spec/SPEC.md` §5.1). This emitter works; what is missing is a caller.
-    pub fn emit_decision(&self, decision: &mut AuditDecision) -> Result<(), AuditError> {
+    pub fn emit_decision(&self, decision: &AuditDecision) -> Result<(), AuditError> {
         self.append_signed(decision)
     }
 
@@ -256,35 +256,36 @@ impl AuditWriter {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn append_unsigned<P: serde::Serialize>(
-        &self,
-        line: &mut Envelope<P>,
-    ) -> Result<(), AuditError> {
-        validate_schema(line.schema_version())?;
+    fn append_unsigned<P: serde::Serialize>(&self, draft: &Envelope<P>) -> Result<(), AuditError> {
+        validate_schema(draft.schema_version())?;
         let mut state = self.lock_chain();
         // Chain position is chosen *here*, holding the same lock that performs
         // the write. Reading the head outside this lock is what forks a chain.
+        //
+        // The line the caller handed us has no position and no way to acquire
+        // one; the line that goes to the sink is built here, at the position
+        // this lock just assigned, borrowing the caller's payload.
         let seq = state.take_seq();
-        line.stamp_chain(seq, state.tail);
-        write_line(&mut state, line)
+        let line = draft.at_position(seq, state.tail);
+        write_line(&mut state, &line)
     }
 
-    fn append_signed<P: Signable + Clone + serde::Serialize>(
+    fn append_signed<P: Signable + serde::Serialize>(
         &self,
-        line: &mut Envelope<P>,
+        draft: &Envelope<P>,
     ) -> Result<(), AuditError> {
-        validate_schema(line.schema_version())?;
+        validate_schema(draft.schema_version())?;
         let key_id = self.signing_key.key_id();
         let mut state = self.lock_chain();
-        // Same lock, same order as `append_unsigned`: stamp position, sign what
-        // that produced, hash the signed result, write.
+        // Same lock, same order as `append_unsigned`: assign the position, sign
+        // what that produced, hash the signed result, write.
         let seq = state.take_seq();
-        line.stamp_chain(seq, state.tail);
+        let mut line = draft.at_position(seq, state.tail);
         let signature = self
             .signing_key
             .sign(line.signing_input(&key_id)?.as_bytes());
         line.stamp_signature(signature, key_id);
-        write_line(&mut state, line)
+        write_line(&mut state, &line)
     }
 }
 
@@ -322,7 +323,7 @@ impl Drop for AuditWriter {
         // Best-effort: a write failure at drop has nowhere left to go. A
         // Session with no `Close` reads as `Indeterminate`, which is the
         // truthful verdict.
-        let _ = self.append_signed(&mut AuditClose::new());
+        let _ = self.append_signed(&AuditClose::new());
     }
 }
 
@@ -429,13 +430,13 @@ mod tests {
     #[test]
     fn each_line_chains_to_the_hash_of_the_one_before_it() {
         let (writer, store) = memory_session();
-        let mut intent = AuditIntent::new(
+        let intent = AuditIntent::new(
             "call-1",
             ToolId::new("echo"),
             RequestDigest::of_request_bytes(b"{}"),
         );
-        writer.emit_intent(&mut intent).unwrap();
-        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        writer.emit_intent(&intent).unwrap();
+        writer.emit_outcome(&outcome("call-1")).unwrap();
 
         let text = store.to_text();
         let rows = raw_lines(&text);
@@ -462,7 +463,7 @@ mod tests {
     #[test]
     fn a_signed_line_verifies_against_the_public_key_in_the_open_line() {
         let (writer, store) = memory_session();
-        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        writer.emit_outcome(&outcome("call-1")).unwrap();
 
         let rows = raw_lines(&store.to_text());
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
@@ -476,7 +477,7 @@ mod tests {
     #[test]
     fn tampering_with_any_field_makes_the_signature_fail() {
         let (writer, store) = memory_session();
-        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        writer.emit_outcome(&outcome("call-1")).unwrap();
         let rows = raw_lines(&store.to_text());
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
 
@@ -507,7 +508,7 @@ mod tests {
     #[test]
     fn stripping_a_signature_changes_the_line_hash() {
         let (writer, store) = memory_session();
-        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        writer.emit_outcome(&outcome("call-1")).unwrap();
         let rows = raw_lines(&store.to_text());
         let signed = PrevHash::of_line(rows[1].as_bytes());
 
@@ -531,7 +532,7 @@ mod tests {
                 first.get("prev_session_tail").is_none(),
                 "a fresh file has no previous Session: {first}"
             );
-            writer.emit_outcome(&mut outcome("call-1")).unwrap();
+            writer.emit_outcome(&outcome("call-1")).unwrap();
         }
 
         let first_session = raw_lines(&file_text(&path));
@@ -588,19 +589,19 @@ mod tests {
     #[test]
     fn intent_lines_carry_no_signature() {
         let (writer, store) = memory_session();
-        let mut intent = AuditIntent::new(
+        let intent = AuditIntent::new(
             "call-1",
             ToolId::new("echo"),
             RequestDigest::of_request_bytes(b"{}"),
         );
-        writer.emit_intent(&mut intent).unwrap();
+        writer.emit_intent(&intent).unwrap();
         let text = store.to_text();
         let row = &lines(&text)[1];
         assert_eq!(row["line_type"], Value::from("intent"));
         assert!(row.get("signature").is_none(), "{row}");
         assert!(row.get("key_id").is_none(), "{row}");
         // Still hashed into the chain: the next line points at it.
-        writer.emit_outcome(&mut outcome("call-1")).unwrap();
+        writer.emit_outcome(&outcome("call-1")).unwrap();
         let rows = raw_lines(&store.to_text());
         let next: AuditRecord = serde_json::from_str(&rows[2]).unwrap();
         assert_eq!(*next.prev_hash(), PrevHash::of_line(rows[1].as_bytes()));
@@ -616,7 +617,7 @@ mod tests {
                     move || {
                         for call in 0..4 {
                             writer
-                                .emit_outcome(&mut outcome(&format!("call-{thread}-{call}")))
+                                .emit_outcome(&outcome(&format!("call-{thread}-{call}")))
                                 .unwrap();
                         }
                     }
@@ -646,12 +647,12 @@ mod tests {
         // an unsupported version reaches the writer is a foreign/tampered record
         // deserialized from the wire — exactly what this guard is for.
         let (writer, _store) = memory_session();
-        let mut intent: AuditIntent = serde_json::from_str(
+        let intent: AuditIntent = serde_json::from_str(
             r#"{"schema_version":999,"line_type":"intent","seq":0,"prev_hash":"0000000000000000000000000000000000000000000000000000000000000000","call_id":"call-1","tool_id":"smoke","request_digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}"#,
         )
         .expect("intent with a foreign schema version still deserializes");
         assert_eq!(intent.schema_version(), 999);
-        let err = writer.emit_intent(&mut intent).unwrap_err();
+        let err = writer.emit_intent(&intent).unwrap_err();
         assert!(matches!(err, AuditError::UnsupportedSchema { .. }));
     }
 
@@ -744,13 +745,13 @@ mod tests {
                 AuditWriter::with_sink(Box::new(store.clone()), crate::signing::insecure_dev_key())
                     .unwrap();
             assert_eq!(writer.path(), None, "an in-memory Chain names no file");
-            let mut intent = AuditIntent::new(
+            let intent = AuditIntent::new(
                 "call-1",
                 ToolId::new("echo"),
                 RequestDigest::of_request_bytes(b"{}"),
             );
-            writer.emit_intent(&mut intent).unwrap();
-            writer.emit_outcome(&mut outcome("call-1")).unwrap();
+            writer.emit_intent(&intent).unwrap();
+            writer.emit_outcome(&outcome("call-1")).unwrap();
             // Dropped here, so the `Close` line is part of what is read back.
         }
 
