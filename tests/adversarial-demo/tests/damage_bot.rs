@@ -67,12 +67,12 @@ fn outcome(audit: &MemoryChainSink) -> AuditRecord {
 }
 
 fn assert_refused_with_trap(record: &AuditRecord, needle: &str) {
-    assert!(matches!(record.policy, PolicyOutcome::Allowed));
+    assert!(matches!(record.payload.policy, PolicyOutcome::Allowed));
     assert!(matches!(
-        record.capability,
+        record.payload.capability,
         CapabilityOutcome::Granted { .. }
     ));
-    match &record.execution {
+    match &record.payload.execution {
         ExecutionOutcome::Trap { message } => {
             assert!(
                 message.contains(needle),
@@ -269,9 +269,9 @@ fn guest_http_to_allowed_host_passes_grant_then_stubs() {
     );
 
     let record = outcome(&audit);
-    assert!(matches!(record.policy, PolicyOutcome::Allowed));
+    assert!(matches!(record.payload.policy, PolicyOutcome::Allowed));
     assert!(matches!(
-        record.capability,
+        record.payload.capability,
         CapabilityOutcome::Granted { .. }
     ));
     assert_refused_with_trap(&record, "no network in v1 slice");

@@ -145,11 +145,11 @@ fn assert_golden(record: &AuditRecord, golden: &str) {
 /// Pin the sequential grant id so the granted-path golden is stable under
 /// parallel test execution (the resolver's grant counter is process-wide).
 fn pin_grant_id(record: &mut AuditRecord, grant_id: &str) {
-    if let CapabilityOutcome::Granted { ref mut grant } = record.capability {
+    if let CapabilityOutcome::Granted { ref mut grant } = record.payload.capability {
         grant.grant_id = grant_id.into();
     }
     // Schema v2 (AILAB-619): top-level grant_id must match the nested grant id.
-    record.grant_id = Some(GrantId::new(grant_id));
+    record.payload.grant_id = Some(GrantId::new(grant_id));
 }
 
 // ---- POLICY station (station 1 short-circuits before any grant) ------------
@@ -183,18 +183,21 @@ rules:
     );
 
     let mut record = outcome(&audit);
-    assert!(matches!(record.policy, PolicyOutcome::Denied { .. }));
+    assert!(matches!(
+        record.payload.policy,
+        PolicyOutcome::Denied { .. }
+    ));
     // A denied call never mints a grant.
     assert!(matches!(
-        record.capability,
+        record.payload.capability,
         CapabilityOutcome::Denied { .. }
     ));
     assert!(matches!(
-        record.execution,
+        record.payload.execution,
         ExecutionOutcome::HostDenied { .. }
     ));
 
-    record.call_id = "call-golden-policy-deny".into();
+    record.payload.call_id = "call-golden-policy-deny".into();
     assert_golden(&record, include_str!("golden/policy_deny.json"));
 }
 
@@ -225,15 +228,15 @@ rules:
 
     let record = outcome(&audit);
     assert!(matches!(
-        record.policy,
+        record.payload.policy,
         PolicyOutcome::PendingApproval { .. }
     ));
     assert!(matches!(
-        record.capability,
+        record.payload.capability,
         CapabilityOutcome::Denied { .. }
     ));
     assert!(matches!(
-        record.execution,
+        record.payload.execution,
         ExecutionOutcome::HostDenied { .. }
     ));
 }
@@ -258,19 +261,19 @@ fn unregistered_tool_is_capability_denied() {
     );
 
     let mut record = outcome(&audit);
-    assert!(matches!(record.policy, PolicyOutcome::Allowed));
-    match &record.capability {
+    assert!(matches!(record.payload.policy, PolicyOutcome::Allowed));
+    match &record.payload.capability {
         CapabilityOutcome::Denied {
             denied_capability, ..
         } => assert_eq!(denied_capability.as_deref(), Some("tool.registry")),
         other => panic!("expected capability denial, got {other:?}"),
     }
     assert!(matches!(
-        record.execution,
+        record.payload.execution,
         ExecutionOutcome::HostDenied { .. }
     ));
 
-    record.call_id = "call-golden-cap-unregistered".into();
+    record.payload.call_id = "call-golden-cap-unregistered".into();
     assert_golden(&record, include_str!("golden/capability_unregistered.json"));
 }
 
@@ -303,7 +306,7 @@ fn unresolvable_fs_need_is_capability_denied() {
     );
 
     let record = outcome(&audit);
-    match &record.capability {
+    match &record.payload.capability {
         CapabilityOutcome::Denied {
             reason,
             denied_capability,
@@ -314,7 +317,7 @@ fn unresolvable_fs_need_is_capability_denied() {
         other => panic!("expected fs capability denial, got {other:?}"),
     }
     assert!(matches!(
-        record.execution,
+        record.payload.execution,
         ExecutionOutcome::HostDenied { .. }
     ));
     // Reason carries a platform-specific OS error, so this case asserts shape
@@ -351,18 +354,18 @@ fn wildcard_net_need_is_capability_denied() {
     );
 
     let mut record = outcome(&audit);
-    match &record.capability {
+    match &record.payload.capability {
         CapabilityOutcome::Denied {
             denied_capability, ..
         } => assert_eq!(denied_capability.as_deref(), Some("net.http")),
         other => panic!("expected net capability denial, got {other:?}"),
     }
     assert!(matches!(
-        record.execution,
+        record.payload.execution,
         ExecutionOutcome::HostDenied { .. }
     ));
 
-    record.call_id = "call-golden-cap-net".into();
+    record.payload.call_id = "call-golden-cap-net".into();
     assert_golden(&record, include_str!("golden/capability_net_denied.json"));
 }
 
@@ -394,16 +397,16 @@ fn wall_clock_cap_trips_through_pipeline() {
     );
 
     let record = outcome(&audit);
-    assert!(matches!(record.policy, PolicyOutcome::Allowed));
+    assert!(matches!(record.payload.policy, PolicyOutcome::Allowed));
     assert!(matches!(
-        record.capability,
+        record.payload.capability,
         CapabilityOutcome::Granted { .. }
     ));
-    match &record.execution {
+    match &record.payload.execution {
         ExecutionOutcome::ResourceExceeded { kind } => assert_eq!(kind, "wall_clock"),
         other => panic!("expected wall_clock resource_exceeded, got {other:?}"),
     }
-    let wall_ms = record.wall_ms.expect("wall_ms recorded");
+    let wall_ms = record.payload.wall_ms.expect("wall_ms recorded");
     assert!(wall_ms >= 40, "wall_ms={wall_ms}");
 }
 
@@ -434,21 +437,21 @@ fn memory_cap_trips_through_pipeline() {
 
     let mut record = outcome(&audit);
     assert!(matches!(
-        record.capability,
+        record.payload.capability,
         CapabilityOutcome::Granted { .. }
     ));
-    match &record.execution {
+    match &record.payload.execution {
         ExecutionOutcome::ResourceExceeded { kind } => assert_eq!(kind, "memory"),
         other => panic!("expected memory resource_exceeded, got {other:?}"),
     }
-    assert!(record.wall_ms.is_some());
-    assert!(record.peak_memory_bytes.is_some());
+    assert!(record.payload.wall_ms.is_some());
+    assert!(record.payload.peak_memory_bytes.is_some());
 
     // Normalize volatile fields for the schema golden (grant counter, timing).
-    record.call_id = "call-golden-mem".into();
+    record.payload.call_id = "call-golden-mem".into();
     pin_grant_id(&mut record, "grow-touch-1");
-    record.wall_ms = Some(1);
-    record.peak_memory_bytes = Some(131072);
+    record.payload.wall_ms = Some(1);
+    record.payload.peak_memory_bytes = Some(131072);
     assert_golden(&record, include_str!("golden/resource_memory.json"));
 }
 

@@ -1,5 +1,5 @@
-error[E0616]: field `schema_version` of struct `AuditIntent` is private
-  --> tests/ui/audit_schema_version_is_sealed.rs:10:12
+error[E0616]: field `header` of struct `Envelope` is private
+  --> tests/ui/audit_schema_version_is_sealed.rs:15:12
    |
-10 |     intent.schema_version = 99;
-   |            ^^^^^^^^^^^^^^ private field
+15 |     intent.header.schema_version = 99;
+   |            ^^^^^^ private field

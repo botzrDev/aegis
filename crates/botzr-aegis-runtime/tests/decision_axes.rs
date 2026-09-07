@@ -123,7 +123,7 @@ fn a_role_gated_deny_is_reconstructable_from_the_record_alone() {
     };
 
     // 1. Every axis the verdict turned on survived the call.
-    let axes = &record.decision_axes;
+    let axes = &record.payload.decision_axes;
     assert_eq!(axes.role.as_deref(), Some("contractor"));
     assert_eq!(axes.capability.as_deref(), Some("fs.read"));
     assert_eq!(axes.session.as_deref(), Some("sess-42"));
@@ -132,20 +132,26 @@ fn a_role_gated_deny_is_reconstructable_from_the_record_alone() {
         Some("no-contractor-reads"),
         "the rule that decided it turns a recheck diff from a verdict flip into an explanation"
     );
-    assert_eq!(record.tool_id, ToolId::new("notes"));
-    assert!(matches!(record.policy, PolicyOutcome::Denied { .. }));
+    assert_eq!(record.payload.tool_id, ToolId::new("notes"));
+    assert!(matches!(
+        record.payload.policy,
+        PolicyOutcome::Denied { .. }
+    ));
 
     // 2. The record names the ruleset it was decided under, so a recheck knows
     //    which Policy Set to load — and it is the real content hash, not the
     //    FNV text digest.
     let engine = PolicyEngine::from_yaml(ROLE_GATED_POLICY).expect("reparse policy");
-    assert_eq!(record.policy_set_hash, engine.active_content_hash());
-    assert_ne!(engine.active_digest(), record.policy_set_hash.to_hex());
+    assert_eq!(record.payload.policy_set_hash, engine.active_content_hash());
+    assert_ne!(
+        engine.active_digest(),
+        record.payload.policy_set_hash.to_hex()
+    );
 
     // 3. The load-bearing claim: rebuild the request from the record's own
     //    fields — nothing else in scope — and the verdict reproduces, with the
     //    same rule firing.
-    let tool_id = record.tool_id.clone();
+    let tool_id = record.payload.tool_id.clone();
     let mut replayed = PolicyRequest::for_tool(&tool_id);
     if let Some(capability) = axes.capability.as_deref() {
         replayed = replayed.with_capability(capability);
@@ -236,20 +242,23 @@ fn a_role_gated_deny_fires_for_a_wasm_tool_too() {
 
     // 3. A Model A record now carries the axes its verdict turned on, so the
     //    deny can explain itself exactly as the Model B one does.
-    let axes = &denied.decision_axes;
+    let axes = &denied.payload.decision_axes;
     assert_eq!(axes.role.as_deref(), Some("contractor"));
     assert_eq!(axes.capability.as_deref(), Some("fs.read"));
     assert_eq!(axes.session.as_deref(), Some("sess-42"));
     assert_eq!(axes.matched_rule.as_deref(), Some("no-contractor-reads"));
-    assert_eq!(denied.tool_id, ToolId::new("notes"));
-    assert!(matches!(denied.policy, PolicyOutcome::Denied { .. }));
+    assert_eq!(denied.payload.tool_id, ToolId::new("notes"));
+    assert!(matches!(
+        denied.payload.policy,
+        PolicyOutcome::Denied { .. }
+    ));
 
     // The allowed call recorded the axes it did assert, and no role.
     assert_eq!(
-        allowed_record.decision_axes.capability.as_deref(),
+        allowed_record.payload.decision_axes.capability.as_deref(),
         Some("fs.read")
     );
-    assert_eq!(allowed_record.decision_axes.role, None);
+    assert_eq!(allowed_record.payload.decision_axes.role, None);
 }
 
 #[test]
@@ -281,11 +290,11 @@ fn a_call_with_no_fs_or_net_need_omits_both_axes_rather_than_nulling_them() {
     assert!(!outcome.contains("null"), "{outcome}");
 
     let record: AuditRecord = serde_json::from_str(outcome).expect("outcome parses");
-    assert!(record.decision_axes.fs.is_none());
-    assert!(record.decision_axes.net.is_none());
+    assert!(record.payload.decision_axes.fs.is_none());
+    assert!(record.payload.decision_axes.net.is_none());
     // A grant *was* minted, so the record links to it and to the response.
-    assert!(record.grant_id.is_some());
-    assert!(record.response_digest.is_some());
+    assert!(record.payload.grant_id.is_some());
+    assert!(record.payload.response_digest.is_some());
 }
 
 #[test]
@@ -332,9 +341,15 @@ fn a_granted_call_records_the_resources_it_resolved_to() {
     let canonical_root = PathBuf::from(&root)
         .canonicalize()
         .expect("root canonicalizes");
-    let fs = record.decision_axes.fs.as_ref().expect("fs axis recorded");
+    let fs = record
+        .payload
+        .decision_axes
+        .fs
+        .as_ref()
+        .expect("fs axis recorded");
     assert_eq!(Path::new(&fs.path_canonical), canonical_root);
     let net = record
+        .payload
         .decision_axes
         .net
         .as_ref()
@@ -403,6 +418,6 @@ fn an_ambiguous_grant_omits_the_axis_rather_than_guessing_which_resource() {
     let [record] = &records[..] else {
         panic!("expected exactly one outcome")
     };
-    assert!(record.decision_axes.fs.is_none());
-    assert!(record.decision_axes.net.is_none());
+    assert!(record.payload.decision_axes.fs.is_none());
+    assert!(record.payload.decision_axes.net.is_none());
 }

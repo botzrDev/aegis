@@ -78,12 +78,12 @@ fn wall_clock_resource_exceeded_through_orchestrator() {
 
     let record: AuditRecord = serde_json::from_str(&lines[2]).expect("outcome parses");
     assert!(matches!(
-        record.execution,
+        record.payload.execution,
         ExecutionOutcome::ResourceExceeded { ref kind } if kind == "wall_clock"
     ));
-    let wall_ms = record.wall_ms.expect("wall_ms recorded");
+    let wall_ms = record.payload.wall_ms.expect("wall_ms recorded");
     assert!(wall_ms >= 40, "wall_ms={wall_ms}");
-    assert!(record.peak_memory_bytes.is_some());
+    assert!(record.payload.peak_memory_bytes.is_some());
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn golden_resource_exceeded_orchestrator_shape() {
     // runtime from the raw input bytes, so the golden pins the SHA-256 of
     // exactly `b"{}"`.
     assert_eq!(
-        record.request_digest,
+        record.payload.request_digest,
         RequestDigest::of_request_bytes(b"{}")
     );
     // Nor is `policy_set_hash`: this runtime uses the zero-config allow-all set,
@@ -138,13 +138,15 @@ fn golden_resource_exceeded_orchestrator_shape() {
     // contract). This golden pins the record's *shape*; the chain and signature
     // are owned by the audit crate's own goldens, and the signature here covers
     // measured metrics that move run to run.
-    record.call_id = "call-golden-orchestrator".into();
-    if let botzr_aegis_core::CapabilityOutcome::Granted { ref mut grant } = record.capability {
+    record.payload.call_id = "call-golden-orchestrator".into();
+    if let botzr_aegis_core::CapabilityOutcome::Granted { ref mut grant } =
+        record.payload.capability
+    {
         grant.grant_id = "spin-1".into();
     }
-    record.grant_id = Some(GrantId::new("spin-1"));
-    record.wall_ms = Some(50);
-    record.peak_memory_bytes = Some(65536);
+    record.payload.grant_id = Some(GrantId::new("spin-1"));
+    record.payload.wall_ms = Some(50);
+    record.payload.peak_memory_bytes = Some(65536);
     record.stamp_chain(2, PrevHash::GENESIS);
     record.stamp_signature(
         Signature::from_bytes([0u8; 64]),

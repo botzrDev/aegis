@@ -179,10 +179,10 @@ fn write_escape_denied() {
 
     let record = outcome(&audit);
     assert!(
-        !matches!(record.execution, ExecutionOutcome::Success),
+        !matches!(record.payload.execution, ExecutionOutcome::Success),
         "deny must not report success"
     );
-    match &record.execution {
+    match &record.payload.execution {
         ExecutionOutcome::Trap { message } => {
             assert!(message.contains("fs_write_denied"), "{message}")
         }
@@ -209,10 +209,10 @@ fn http_probe_denied() {
 
     let record = outcome(&audit);
     assert!(
-        !matches!(record.execution, ExecutionOutcome::Success),
+        !matches!(record.payload.execution, ExecutionOutcome::Success),
         "deny must not report success"
     );
-    match &record.execution {
+    match &record.payload.execution {
         ExecutionOutcome::Trap { message } => {
             assert!(message.contains("no net grant"), "{message}")
         }
@@ -265,13 +265,13 @@ fn wall_clock_cap_trips() {
     let record = outcome(&audit);
     assert!(
         matches!(
-            record.execution,
+            record.payload.execution,
             ExecutionOutcome::ResourceExceeded { ref kind } if kind == "wall_clock"
         ),
         "expected wall_clock resource exceeded, got {:?}",
-        record.execution
+        record.payload.execution
     );
-    let wall_ms = record.wall_ms.expect("wall_ms recorded");
+    let wall_ms = record.payload.wall_ms.expect("wall_ms recorded");
     assert!(wall_ms >= 40, "wall_ms={wall_ms}");
-    assert!(record.peak_memory_bytes.is_some());
+    assert!(record.payload.peak_memory_bytes.is_some());
 }

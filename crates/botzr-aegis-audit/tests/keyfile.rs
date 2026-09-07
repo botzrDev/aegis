@@ -67,7 +67,7 @@ fn a_loaded_key_signs_records_that_verify_under_its_published_public_key() {
             .expect("the session emitted an open line"),
     )
     .expect("open line parses");
-    assert_eq!(open_line.public_key, generated.public_key());
+    assert_eq!(open_line.payload.public_key, generated.public_key());
     assert_eq!(verify_line(&open_line, &generated.public_key()), Ok(()));
 }
 

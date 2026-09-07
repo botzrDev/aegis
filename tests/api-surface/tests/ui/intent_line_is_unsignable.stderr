@@ -1,0 +1,13 @@
+error[E0599]: the method `stamp_signature` exists for struct `Envelope<IntentPayload>`, but its trait bounds were not satisfied
+  --> tests/ui/intent_line_is_unsignable.rs:23:12
+   |
+23 |     intent.stamp_signature(
+   |     -------^^^^^^^^^^^^^^^ method cannot be called on `Envelope<IntentPayload>` due to unsatisfied trait bounds
+   |
+  ::: $WORKSPACE/crates/botzr-aegis-core/src/audit.rs
+   |
+   | pub struct IntentPayload {
+   | ------------------------ doesn't satisfy `IntentPayload: Signable`
+   |
+   = note: the following trait bounds were not satisfied:
+           `IntentPayload: Signable`

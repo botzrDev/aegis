@@ -311,14 +311,14 @@ mod tests {
         session.set_grant_id(GrantId::new("grant-1"));
         session.set_response_digest(ResponseDigest::of_response_bytes(b"ok"));
         let record = session.to_record();
-        assert_eq!(record.decision_axes.role.as_deref(), Some("ops"));
-        assert_eq!(record.grant_id, Some(GrantId::new("grant-1")));
+        assert_eq!(record.payload.decision_axes.role.as_deref(), Some("ops"));
+        assert_eq!(record.payload.grant_id, Some(GrantId::new("grant-1")));
         assert_eq!(
-            record.response_digest,
+            record.payload.response_digest,
             Some(ResponseDigest::of_response_bytes(b"ok"))
         );
         assert_eq!(
-            record.policy_set_hash,
+            record.payload.policy_set_hash,
             PolicySetHash::of_canonical_bytes(b"policy")
         );
     }

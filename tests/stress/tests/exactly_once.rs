@@ -293,46 +293,52 @@ fn assert_class_outcome(class: Class, record: &AuditRecord) {
     let id = tool_id_for(class);
     match class {
         Class::Success | Class::HostEcho => assert!(
-            matches!(record.execution, ExecutionOutcome::Success),
+            matches!(record.payload.execution, ExecutionOutcome::Success),
             "{id}: expected success, got {:?}",
-            record.execution
+            record.payload.execution
         ),
         Class::PolicyDenied => {
             assert!(
-                matches!(record.policy, PolicyOutcome::Denied { .. }),
+                matches!(record.payload.policy, PolicyOutcome::Denied { .. }),
                 "{id}: expected policy denied, got {:?}",
-                record.policy
+                record.payload.policy
             );
             assert!(
-                matches!(record.capability, CapabilityOutcome::Denied { .. }),
+                matches!(record.payload.capability, CapabilityOutcome::Denied { .. }),
                 "{id}: a denied call must never mint a grant, got {:?}",
-                record.capability
+                record.payload.capability
             );
             assert!(
-                matches!(record.execution, ExecutionOutcome::HostDenied { .. }),
+                matches!(
+                    record.payload.execution,
+                    ExecutionOutcome::HostDenied { .. }
+                ),
                 "{id}: expected host_denied, got {:?}",
-                record.execution
+                record.payload.execution
             );
         }
         Class::PendingApproval => {
             assert!(
-                matches!(record.policy, PolicyOutcome::PendingApproval { .. }),
+                matches!(record.payload.policy, PolicyOutcome::PendingApproval { .. }),
                 "{id}: expected pending_approval, got {:?}",
-                record.policy
+                record.payload.policy
             );
             assert!(
-                matches!(record.capability, CapabilityOutcome::Denied { .. }),
+                matches!(record.payload.capability, CapabilityOutcome::Denied { .. }),
                 "{id}: a gated call must never mint a grant, got {:?}",
-                record.capability
+                record.payload.capability
             );
             assert!(
-                matches!(record.execution, ExecutionOutcome::HostDenied { .. }),
+                matches!(
+                    record.payload.execution,
+                    ExecutionOutcome::HostDenied { .. }
+                ),
                 "{id}: expected host_denied, got {:?}",
-                record.execution
+                record.payload.execution
             );
         }
         Class::CapabilityDenied => {
-            match &record.capability {
+            match &record.payload.capability {
                 CapabilityOutcome::Denied {
                     denied_capability, ..
                 } => assert_eq!(
@@ -343,29 +349,32 @@ fn assert_class_outcome(class: Class, record: &AuditRecord) {
                 other => panic!("{id}: expected capability denial, got {other:?}"),
             }
             assert!(
-                matches!(record.execution, ExecutionOutcome::HostDenied { .. }),
+                matches!(
+                    record.payload.execution,
+                    ExecutionOutcome::HostDenied { .. }
+                ),
                 "{id}: expected host_denied, got {:?}",
-                record.execution
+                record.payload.execution
             );
         }
         Class::GuestTrap => assert!(
-            matches!(record.execution, ExecutionOutcome::Trap { .. }),
+            matches!(record.payload.execution, ExecutionOutcome::Trap { .. }),
             "{id}: expected trap, got {:?}",
-            record.execution
+            record.payload.execution
         ),
-        Class::WallClock => match &record.execution {
+        Class::WallClock => match &record.payload.execution {
             ExecutionOutcome::ResourceExceeded { kind } => {
                 assert_eq!(kind, "wall_clock", "{id}: wrong resource kind");
             }
             other => panic!("{id}: expected resource_exceeded, got {other:?}"),
         },
-        Class::Memory => match &record.execution {
+        Class::Memory => match &record.payload.execution {
             ExecutionOutcome::ResourceExceeded { kind } => {
                 assert_eq!(kind, "memory", "{id}: wrong resource kind");
             }
             other => panic!("{id}: expected resource_exceeded, got {other:?}"),
         },
-        Class::HostPanic => match &record.execution {
+        Class::HostPanic => match &record.payload.execution {
             ExecutionOutcome::Trap { message } => assert!(
                 message.contains("host panic during tool call"),
                 "{id}: unexpected trap message: {message}"
@@ -535,8 +544,8 @@ fn audit_is_exactly_once_under_concurrency() {
                 assert_eq!(index, 0, "an Open line may only be the first line: {line}");
                 let open: AuditOpen = serde_json::from_str(line)
                     .unwrap_or_else(|e| panic!("open is not schema v2 ({e}): {line}"));
-                assert_eq!(verify_line(&open, &open.public_key), Ok(()));
-                public_key = Some(open.public_key);
+                assert_eq!(verify_line(&open, &open.payload.public_key), Ok(()));
+                public_key = Some(open.payload.public_key);
             }
             AuditLineType::Close => {
                 assert_eq!(
@@ -561,7 +570,7 @@ fn audit_is_exactly_once_under_concurrency() {
                 // appears here, that guarantee silently moved.
                 assert!(value.get("signature").is_none(), "signed intent: {line}");
                 assert!(value.get("key_id").is_none(), "keyed intent: {line}");
-                intent_ids.insert(intent.call_id);
+                intent_ids.insert(intent.payload.call_id);
             }
             AuditLineType::Outcome => {
                 // 4 — LOAD-BEARING: frozen schema v2 straight from core; no
@@ -574,7 +583,7 @@ fn audit_is_exactly_once_under_concurrency() {
                     Ok(()),
                     "outcome does not verify: {line}"
                 );
-                outcome_ids.insert(record.call_id.clone());
+                outcome_ids.insert(record.payload.call_id.clone());
                 outcomes.push(record);
             }
             other => panic!("unexpected line_type {other}: {line}"),
@@ -691,7 +700,7 @@ fn audit_is_exactly_once_under_concurrency() {
     let mut by_tool: HashMap<String, Vec<&AuditRecord>> = HashMap::new();
     for record in &outcomes {
         by_tool
-            .entry(record.tool_id.to_string())
+            .entry(record.payload.tool_id.to_string())
             .or_default()
             .push(record);
     }

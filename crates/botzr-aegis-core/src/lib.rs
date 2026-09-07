@@ -15,8 +15,9 @@ mod tool;
 pub use audit::{
     line_type_field, line_type_from_value, ApprovalVerdict, ApprovedScope, AuditClose,
     AuditDecision, AuditIntent, AuditLineType, AuditOpen, AuditRecord, AuditSchemaVersion,
-    CallMetrics, CapabilityOutcome, DecisionAxes, ExecutionOutcome, FsAxis, NetAxis, PolicyOutcome,
-    SessionCounter, SignedLine, AUDIT_SCHEMA_VERSION,
+    CallMetrics, CapabilityOutcome, ClosePayload, DecisionAxes, DecisionPayload, Envelope,
+    ExecutionOutcome, FsAxis, IntentPayload, LineHeader, NetAxis, OpenPayload, PolicyOutcome,
+    RecordPayload, SessionCounter, Signable, SignatureBlock, SignedLine, AUDIT_SCHEMA_VERSION,
 };
 pub use digest::{
     Digest, DigestParseError, KeyId, PolicySetHash, PrevHash, PublicKey, RequestDigest,

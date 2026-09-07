@@ -11,11 +11,11 @@
 
 use std::fmt;
 
-use botzr_aegis_core::{to_canonical_json, JcsError, KeyId, PublicKey, Signature};
+use botzr_aegis_core::{
+    to_canonical_json, Envelope, JcsError, KeyId, PublicKey, Signable, Signature, SignedLine,
+};
 use ed25519_dalek::{Signer, SigningKey as Ed25519SigningKey, VerifyingKey};
 use serde_json::Value;
-
-use crate::line::SignedChainLine;
 
 /// The key an [`crate::AuditWriter`] signs its Session with.
 ///
@@ -134,8 +134,8 @@ impl std::error::Error for VerifyError {}
 /// signatures. A record format wants one signature to have one verdict
 /// everywhere; the permissive rule lets the same bytes verify here and fail in
 /// a batch verifier.
-pub fn verify_line<L: SignedChainLine>(
-    line: &L,
+pub fn verify_line<P: Signable + Clone + serde::Serialize>(
+    line: &Envelope<P>,
     public_key: &PublicKey,
 ) -> Result<(), VerifyError> {
     let (signature, key_id) = match (line.signature(), line.key_id()) {

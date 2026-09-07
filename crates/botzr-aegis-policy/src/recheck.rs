@@ -261,20 +261,20 @@ pub fn recheck_record(engine: &PolicyEngine, record: &AuditRecord) -> RecheckVer
     if record.schema_version() != AUDIT_SCHEMA_VERSION {
         return RecheckVerdict::Indeterminate {
             reason: RecheckIndeterminate::UnknownPolicySetHash {
-                recorded: record.policy_set_hash,
+                recorded: record.payload.policy_set_hash,
             },
         };
     }
 
-    let axes = &record.decision_axes;
+    let axes = &record.payload.decision_axes;
     let request = PolicyRequest {
-        tool_id: &record.tool_id,
+        tool_id: &record.payload.tool_id,
         capability: axes.capability.as_deref(),
         role: axes.role.as_deref(),
         session: axes.session.as_deref(),
     };
 
-    classify(&record.policy, engine.preview(&request))
+    classify(&record.payload.policy, engine.preview(&request))
 }
 
 /// The wire token for a recorded outcome: `allowed` | `denied` | `rate_limited`
@@ -896,7 +896,7 @@ rules:
             verdict,
             RecheckVerdict::Indeterminate {
                 reason: RecheckIndeterminate::UnknownPolicySetHash {
-                    recorded: v1.policy_set_hash,
+                    recorded: v1.payload.policy_set_hash,
                 }
             },
             "a default-deny set must not produce a confident newly_blocked here"

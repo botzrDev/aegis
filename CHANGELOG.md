@@ -210,6 +210,57 @@ support.
 
 ### Changed
 
+- **Every audit line is one `Envelope<P>`: a shared header, the line's own
+  payload, and a shared signature block** (AILAB-845). **Breaking change to
+  published API, taken deliberately before the 0.4.0 cut rather than after it.**
+  `spec/SPEC.md` §5 makes four fields mandatory on every Line of every type, and
+  five line types each declared their own copy of them — twenty-eight field
+  declarations and forty-one methods for what is one rule. `AuditIntent`,
+  `AuditRecord`, `AuditOpen`, `AuditClose` and `AuditDecision` are now type
+  aliases for `Envelope<IntentPayload>` and friends. The header lives once in
+  `LineHeader`, the signature pair once in `SignatureBlock`, and `stamp_chain`,
+  `stamp_signature` and the readers exist once each instead of five and four
+  times.
+
+  **The intent line's unsignability is now a property of the payload.** It used
+  to be "`AuditIntent` does not implement `SignedLine`", kept true by a pair of
+  traits in `botzr-aegis-audit` that had to be maintained in step. It is now
+  "`IntentPayload` does not implement `Signable`", and everything that could
+  attach or read a signature is bounded on that marker, so an intent line has no
+  signing surface rather than an unused one. A committed compile-fail case
+  pins it, and pins the reason: the recorded error names the unsatisfied
+  `IntentPayload: Signable` bound rather than only failing to build.
+
+  **Zero wire change, and it is reproduced rather than asserted.** The three
+  parts are `#[serde(flatten)]`ed in the order the fields were declared before,
+  so every line serializes to the same flat object with the same keys in the
+  same order. All thirteen golden vectors and all eight tamper vectors are byte
+  identical, and the suites that rebuild them from the constructors still
+  reproduce them exactly. Twenty of those twenty-one files are stored
+  canonically and so pin only the key *set*; the twenty-first pins the key
+  *order* as well, because it is written through the non-canonical
+  `to_json_line`. The field order inside the envelope is therefore load-bearing
+  and is documented as such.
+
+  **What breaks.** A line's own fields moved behind `payload`:
+  `record.call_id` is `record.payload.call_id`, `open.public_key` is
+  `open.payload.public_key`, and so on for every field that is not part of the
+  header. The four inherent `signing_input` methods are gone; the rule still
+  lives once on `SignedLine`, so a caller that had `record.signing_input(&key)`
+  now needs `use botzr_aegis_core::SignedLine` in scope. `botzr-aegis-audit` no
+  longer exports `ChainLine` or `SignedChainLine` — with one envelope type they
+  abstracted over nothing — and `verify_line` takes `&Envelope<P>` directly.
+
+  **What does not break.** Every constructor and builder keeps its signature
+  (`AuditRecord::new`, `with_metrics`, `with_grant_id`, `with_response_digest`,
+  `with_decision_axes`, `AuditOpen::new`, `AuditClose::new`,
+  `AuditDecision::new`, `AuditIntent::new`). So do the header readers
+  `schema_version()`, `line_type()`, `seq()` and `prev_hash()`, the signature
+  readers `signature()` and `key_id()`, and the writer-only `stamp_chain` and
+  `stamp_signature`. The six sealed fields are still sealed: they are private on
+  `LineHeader` and `SignatureBlock`, which are themselves private fields of
+  `Envelope`.
+
 - **`CapabilityGrant::grant_id` is a `GrantId`, not a `String`** (AILAB-846).
   **Breaking change to published API, and deliberately taken before the 0.4.0
   cut rather than after it.** The type ships in `botzr-aegis-core` on crates.io

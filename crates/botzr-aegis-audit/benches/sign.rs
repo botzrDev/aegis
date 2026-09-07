@@ -21,7 +21,7 @@ use std::hint::black_box;
 use botzr_aegis_audit::{insecure_dev_key, SigningKey};
 use botzr_aegis_core::{
     AuditRecord, CallMetrics, CapabilityGrant, CapabilityOutcome, ExecutionOutcome, PolicyOutcome,
-    PolicySetHash, PrevHash, RequestDigest, ToolId,
+    PolicySetHash, PrevHash, RequestDigest, SignedLine, ToolId,
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 

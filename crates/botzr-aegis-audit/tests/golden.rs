@@ -437,7 +437,7 @@ fn every_committed_golden_line_verifies_and_chains() {
         .collect();
 
     let open: AuditOpen = serde_json::from_str(&rows[0]).expect("first golden is the Open line");
-    let public_key = open.public_key;
+    let public_key = open.payload.public_key;
     assert_eq!(verify_line(&open, &public_key), Ok(()));
 
     for (index, row) in rows.iter().enumerate() {

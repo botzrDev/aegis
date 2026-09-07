@@ -7,6 +7,10 @@ fn public_api_surface_is_contracted() {
     t.compile_fail("tests/ui/audit_schema_version_is_sealed.rs");
     // AILAB-619 extended the same seal to the chain position and the signature.
     t.compile_fail("tests/ui/audit_chain_fields_are_sealed.rs");
+    // AILAB-845: signing an intent line is not a rule a writer remembers, it is
+    // an impl that does not exist. The intent line is fsynced ahead of
+    // execution, so signing must stay off the pre-execution critical path.
+    t.compile_fail("tests/ui/intent_line_is_unsignable.rs");
     t.compile_fail("tests/ui/fixture_api_needs_test_utils.rs");
     t.compile_fail("tests/ui/policy_ast_not_exported.rs");
     t.compile_fail("tests/ui/capability_register_is_runtime_internal.rs");

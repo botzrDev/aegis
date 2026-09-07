@@ -337,60 +337,139 @@ pub struct NetAxis {
     pub port: u16,
 }
 
-/// Pre-execution intent line — appended, flushed and fsynced before sandbox
-/// work begins.
+/// The four fields `spec/SPEC.md` §5 makes mandatory on every Line of every
+/// type — declared once, here, instead of once per line type.
 ///
-/// Carries nothing beyond identity and the request digest, and must stay that
-/// way: everything on this line is on the pre-execution critical path. It is
-/// hashed into the chain but never signed, for the same reason.
+/// **Sealed.** All four are private to this crate. `schema_version` and
+/// `line_type` are stamped by the constructor of the line the header belongs
+/// to; `seq` and `prev_hash` are stamped by the writer through
+/// [`Envelope::stamp_chain`]. A caller that can pick its own chain position
+/// forges a position the line never occupied, or hands two lines the same one —
+/// which is what a forked chain is. A caller that can pick its own schema
+/// version forges the trail wholesale. Sealing is what makes the rule
+/// structural instead of a comment.
+///
+/// This type has no methods on purpose: a line's header is read through the
+/// line, on [`Envelope`], so the four readers exist once rather than twice.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AuditIntent {
-    /// Sealed: the schema version is owned by [`AuditIntent::new`], never the
-    /// caller. A record that could be stamped with an arbitrary version is a
-    /// forgeable audit trail. Read it with [`AuditIntent::schema_version`].
+pub struct LineHeader {
     schema_version: AuditSchemaVersion,
-    /// Sealed: an intent line that could be relabelled `outcome` is a record
-    /// claiming a call ran. Read it with [`AuditIntent::line_type`].
     line_type: AuditLineType,
-    /// Sealed: chain position belongs to the writer. See
-    /// [`AuditIntent::stamp_chain`].
     seq: u64,
-    /// Sealed: chain position belongs to the writer. See
-    /// [`AuditIntent::stamp_chain`].
     prev_hash: PrevHash,
-    pub call_id: String,
-    pub tool_id: ToolId,
-    pub request_digest: RequestDigest,
 }
 
-impl AuditIntent {
-    pub fn new(call_id: impl Into<String>, tool_id: ToolId, request_digest: RequestDigest) -> Self {
+impl LineHeader {
+    /// A fresh header for a line of `line_type`, at no position yet.
+    ///
+    /// The version is stamped here, never taken from a caller, and the chain
+    /// position starts at the genesis values the writer overwrites.
+    fn new(line_type: AuditLineType) -> Self {
         Self {
             schema_version: AUDIT_SCHEMA_VERSION,
-            line_type: AuditLineType::Intent,
+            line_type,
             seq: 0,
             prev_hash: PrevHash::GENESIS,
-            call_id: call_id.into(),
-            tool_id,
-            request_digest,
+        }
+    }
+}
+
+/// The signature pair, declared once for the four signed line types.
+///
+/// **Both halves are independently optional, and that is load-bearing.**
+/// [`SignedLine::unsigned_with_key`] produces exactly the state *signature
+/// absent, `key_id` present*, and those are the bytes a signature covers. A
+/// block whose two fields moved together could not represent what is being
+/// signed.
+///
+/// **Sealed** for the same reason as [`LineHeader`]: a caller that can set
+/// these writes an unverified claim about authorship straight into evidence.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SignatureBlock {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signature: Option<Signature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_id: Option<KeyId>,
+}
+
+/// Marker for the payloads whose line carries a signature.
+///
+/// Implemented for the four signed line types and deliberately **not** for
+/// [`IntentPayload`]. Every path that can attach or read a signature —
+/// [`Envelope::stamp_signature`], [`Envelope::signature`],
+/// [`Envelope::key_id`], and the [`SignedLine`] impl that produces the signing
+/// input — is bounded on it, so an intent line has no signing surface at all
+/// rather than an unused one.
+///
+/// This is what replaced a pair of traits that had to be kept in step by hand:
+/// "which lines are signed" is now one list, and it is this one.
+pub trait Signable {}
+
+/// A Line: the mandatory header, the line type's own fields, and — for a
+/// signed line — the signature pair.
+///
+/// One declaration instead of five. `#[serde(flatten)]` on all three parts
+/// means the serialized object is a single flat map carrying the same keys in
+/// the same order as when each line type declared its own header; the golden
+/// and tamper vectors are what proves that, not this sentence.
+///
+/// **LOAD-BEARING: the order of the three fields below is the order the keys
+/// come out in.** `flatten` emits each part where it is declared, so header,
+/// then payload, then signature is not a stylistic choice — it is the key order
+/// every line had before this type existed. Most vectors are stored canonically
+/// and would not notice a swap, but
+/// `crates/botzr-aegis-runtime/tests/golden/resource_exceeded_orchestrator.json`
+/// is written and compared with the audit crate's non-canonical
+/// `to_json_line`, so it pins this declaration order byte for byte. Moving
+/// `sig` above `payload` puts `signature` and `key_id` in the middle of the
+/// object and that vector stops reproducing — measured, not predicted.
+///
+/// **The payload decides whether the line can be signed.** The signing surface
+/// is bounded on [`Signable`], which [`IntentPayload`] does not implement, so
+/// "the intent line is never signed" is a fact the compiler checks rather than
+/// a rule a writer has to remember. The intent line is fsynced ahead of
+/// execution, and signing it would put key material on the pre-execution
+/// critical path.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Envelope<P> {
+    #[serde(flatten)]
+    header: LineHeader,
+    /// The fields this line type carries beyond the header.
+    #[serde(flatten)]
+    pub payload: P,
+    #[serde(flatten)]
+    sig: SignatureBlock,
+}
+
+impl<P> Envelope<P> {
+    /// A line of `line_type` carrying `payload`, at no chain position yet and
+    /// unsigned.
+    ///
+    /// Not `new`: each line type's own `new` is the public constructor, and an
+    /// inherent `new` here would collide with all five of them.
+    fn new_line(line_type: AuditLineType, payload: P) -> Self {
+        Self {
+            header: LineHeader::new(line_type),
+            payload,
+            sig: SignatureBlock::default(),
         }
     }
 
-    /// The schema version this record was stamped with at construction.
+    /// The schema version this line was stamped with at construction.
     pub fn schema_version(&self) -> AuditSchemaVersion {
-        self.schema_version
+        self.header.schema_version
     }
 
     pub fn line_type(&self) -> &AuditLineType {
-        &self.line_type
+        &self.header.line_type
     }
 
     pub fn seq(&self) -> u64 {
-        self.seq
+        self.header.seq
     }
 
     pub fn prev_hash(&self) -> &PrevHash {
-        &self.prev_hash
+        &self.header.prev_hash
     }
 
     /// **Writer-only.** Assign this line's position in the chain.
@@ -400,9 +479,70 @@ impl AuditIntent {
     /// the same `prev_hash` and fork the chain; a caller that picks its own
     /// `seq` forges a position the line never occupied. Never call this from
     /// the pipeline.
+    ///
+    /// One implementation, for every line type — the five that drifted apart
+    /// one at a time cannot any more.
     pub fn stamp_chain(&mut self, seq: u64, prev_hash: PrevHash) {
-        self.seq = seq;
-        self.prev_hash = prev_hash;
+        self.header.seq = seq;
+        self.header.prev_hash = prev_hash;
+    }
+}
+
+impl<P: Signable> Envelope<P> {
+    pub fn signature(&self) -> Option<&Signature> {
+        self.sig.signature.as_ref()
+    }
+
+    pub fn key_id(&self) -> Option<&KeyId> {
+        self.sig.key_id.as_ref()
+    }
+
+    /// **Writer-only.** Attach the signature and the key that produced it.
+    ///
+    /// The signature covers [`SignedLine::signing_input`], so this can only be
+    /// called after [`Envelope::stamp_chain`]. Never call this from the
+    /// pipeline: a caller-supplied signature is an unverified claim about
+    /// authorship written into evidence.
+    ///
+    /// Bounded on [`Signable`], so it does not exist for an intent line.
+    pub fn stamp_signature(&mut self, signature: Signature, key_id: KeyId) {
+        self.sig.signature = Some(signature);
+        self.sig.key_id = Some(key_id);
+    }
+}
+
+/// Pre-execution intent line — appended, flushed and fsynced before sandbox
+/// work begins.
+///
+/// Carries nothing beyond identity and the request digest, and must stay that
+/// way: everything on this line is on the pre-execution critical path.
+///
+/// **It is hashed into the chain and never signed, and the compiler is what
+/// says so** — this payload does not implement [`Signable`], so an intent line
+/// has no `stamp_signature` to call and no [`SignedLine`] impl to reach it
+/// through. That is asserted as a compile error, against the public API a
+/// consumer sees, beside the two cases that assert the seal:
+/// `tests/api-surface/tests/ui/intent_line_is_unsignable.rs`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IntentPayload {
+    pub call_id: String,
+    pub tool_id: ToolId,
+    pub request_digest: RequestDigest,
+}
+
+/// The `intent` line — an [`IntentPayload`] in an [`Envelope`].
+pub type AuditIntent = Envelope<IntentPayload>;
+
+impl Envelope<IntentPayload> {
+    pub fn new(call_id: impl Into<String>, tool_id: ToolId, request_digest: RequestDigest) -> Self {
+        Envelope::new_line(
+            AuditLineType::Intent,
+            IntentPayload {
+                call_id: call_id.into(),
+                tool_id,
+                request_digest,
+            },
+        )
     }
 }
 
@@ -416,19 +556,7 @@ pub struct CallMetrics {
 /// Post-execution outcome line — the Agent Action Record, one per call, on
 /// every exit path.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AuditRecord {
-    /// Sealed: the schema version is owned by [`AuditRecord::new`], never the
-    /// caller. A record that could be stamped with an arbitrary version is a
-    /// forgeable audit trail. Read it with [`AuditRecord::schema_version`].
-    schema_version: AuditSchemaVersion,
-    /// Sealed: see [`AuditRecord::line_type`].
-    line_type: AuditLineType,
-    /// Sealed: chain position belongs to the writer. See
-    /// [`AuditRecord::stamp_chain`].
-    seq: u64,
-    /// Sealed: chain position belongs to the writer. See
-    /// [`AuditRecord::stamp_chain`].
-    prev_hash: PrevHash,
+pub struct RecordPayload {
     pub call_id: String,
     pub tool_id: ToolId,
     pub request_digest: RequestDigest,
@@ -452,15 +580,14 @@ pub struct AuditRecord {
     pub peak_memory_bytes: Option<u64>,
     /// Always emitted, possibly empty. See [`DecisionAxes`].
     pub decision_axes: DecisionAxes,
-    /// Sealed: see [`AuditRecord::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    signature: Option<Signature>,
-    /// Sealed: see [`AuditRecord::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<KeyId>,
 }
 
-impl AuditRecord {
+impl Signable for RecordPayload {}
+
+/// The `outcome` line — the Agent Action Record.
+pub type AuditRecord = Envelope<RecordPayload>;
+
+impl Envelope<RecordPayload> {
     pub fn new(
         call_id: impl Into<String>,
         tool_id: ToolId,
@@ -470,126 +597,51 @@ impl AuditRecord {
         capability: CapabilityOutcome,
         execution: ExecutionOutcome,
     ) -> Self {
-        Self {
-            schema_version: AUDIT_SCHEMA_VERSION,
-            line_type: AuditLineType::Outcome,
-            seq: 0,
-            prev_hash: PrevHash::GENESIS,
-            call_id: call_id.into(),
-            tool_id,
-            request_digest,
-            policy_set_hash,
-            policy,
-            capability,
-            execution,
-            grant_id: None,
-            response_digest: None,
-            wall_ms: None,
-            peak_memory_bytes: None,
-            decision_axes: DecisionAxes::default(),
-            signature: None,
-            key_id: None,
-        }
+        Envelope::new_line(
+            AuditLineType::Outcome,
+            RecordPayload {
+                call_id: call_id.into(),
+                tool_id,
+                request_digest,
+                policy_set_hash,
+                policy,
+                capability,
+                execution,
+                grant_id: None,
+                response_digest: None,
+                wall_ms: None,
+                peak_memory_bytes: None,
+                decision_axes: DecisionAxes::default(),
+            },
+        )
     }
 
     pub fn with_metrics(mut self, metrics: CallMetrics) -> Self {
-        self.wall_ms = Some(metrics.wall_ms);
-        self.peak_memory_bytes = Some(metrics.peak_memory_bytes);
+        self.payload.wall_ms = Some(metrics.wall_ms);
+        self.payload.peak_memory_bytes = Some(metrics.peak_memory_bytes);
         self
     }
 
     pub fn with_grant_id(mut self, grant_id: GrantId) -> Self {
-        self.grant_id = Some(grant_id);
+        self.payload.grant_id = Some(grant_id);
         self
     }
 
     pub fn with_response_digest(mut self, response_digest: ResponseDigest) -> Self {
-        self.response_digest = Some(response_digest);
+        self.payload.response_digest = Some(response_digest);
         self
     }
 
     pub fn with_decision_axes(mut self, decision_axes: DecisionAxes) -> Self {
-        self.decision_axes = decision_axes;
+        self.payload.decision_axes = decision_axes;
         self
-    }
-
-    /// The schema version this record was stamped with at construction.
-    pub fn schema_version(&self) -> AuditSchemaVersion {
-        self.schema_version
-    }
-
-    pub fn line_type(&self) -> &AuditLineType {
-        &self.line_type
-    }
-
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-
-    pub fn prev_hash(&self) -> &PrevHash {
-        &self.prev_hash
-    }
-
-    pub fn signature(&self) -> Option<&Signature> {
-        self.signature.as_ref()
-    }
-
-    pub fn key_id(&self) -> Option<&KeyId> {
-        self.key_id.as_ref()
-    }
-
-    /// **Writer-only.** Assign this line's position in the chain.
-    ///
-    /// `seq` and `prev_hash` must be chosen and written inside the same lock as
-    /// the append. Two callers that read the chain head outside that lock get
-    /// the same `prev_hash` and fork the chain; a caller that picks its own
-    /// `seq` forges a position the line never occupied. Never call this from
-    /// the pipeline.
-    pub fn stamp_chain(&mut self, seq: u64, prev_hash: PrevHash) {
-        self.seq = seq;
-        self.prev_hash = prev_hash;
-    }
-
-    /// **Writer-only.** Attach the signature and the key that produced it.
-    ///
-    /// The signature covers [`AuditRecord::signing_input`], so this can only be
-    /// called after [`AuditRecord::stamp_chain`]. Never call this from the
-    /// pipeline: a caller-supplied signature is an unverified claim about
-    /// authorship written into evidence.
-    pub fn stamp_signature(&mut self, signature: Signature, key_id: KeyId) {
-        self.signature = Some(signature);
-        self.key_id = Some(key_id);
-    }
-
-    /// The exact bytes a signature covers: this line's canonical form with
-    /// `signature` omitted and `key_id` present.
-    ///
-    /// `key_id` is inside the signed input so a signature cannot be replayed
-    /// under a different key's fingerprint. The line *hash* then covers the
-    /// signature as well — strip a signature and the next line's `prev_hash`
-    /// breaks, whereas hashing the pre-signature form would let
-    /// signature-stripping leave a clean chain.
-    ///
-    /// The rule itself lives once, in [`SignedLine`]; this is a delegation kept
-    /// public because callers outside the trait's import path depend on it.
-    pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        SignedLine::signing_input(self, key_id)
     }
 }
 
 /// Session `Open` line — the first line of a Session, and the only place the
 /// public key appears.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AuditOpen {
-    /// Sealed: owned by [`AuditOpen::new`]. See [`AuditRecord`] for why.
-    schema_version: AuditSchemaVersion,
-    /// Sealed: see [`AuditOpen::line_type`].
-    line_type: AuditLineType,
-    /// Sealed: chain position belongs to the writer.
-    seq: u64,
-    /// Sealed: always [`PrevHash::GENESIS`] for an `Open` — a Session's first
-    /// line has no predecessor *within the Session*.
-    prev_hash: PrevHash,
+pub struct OpenPayload {
     /// The previous Session's final line hash when appending to a non-empty
     /// file; omitted for a fresh file. This, not `prev_hash`, is what chains
     /// two Sessions across a boundary.
@@ -597,150 +649,53 @@ pub struct AuditOpen {
     pub prev_session_tail: Option<PrevHash>,
     /// The ed25519 public key for every signed line in this Session.
     pub public_key: PublicKey,
-    /// Sealed: see [`AuditOpen::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    signature: Option<Signature>,
-    /// Sealed: see [`AuditOpen::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<KeyId>,
 }
 
-impl AuditOpen {
+impl Signable for OpenPayload {}
+
+/// The `open` line.
+///
+/// Its `prev_hash` is always [`PrevHash::GENESIS`] — a Session's first line has
+/// no predecessor *within the Session*.
+pub type AuditOpen = Envelope<OpenPayload>;
+
+impl Envelope<OpenPayload> {
     pub fn new(public_key: PublicKey, prev_session_tail: Option<PrevHash>) -> Self {
-        Self {
-            schema_version: AUDIT_SCHEMA_VERSION,
-            line_type: AuditLineType::Open,
-            seq: 0,
-            prev_hash: PrevHash::GENESIS,
-            prev_session_tail,
-            public_key,
-            signature: None,
-            key_id: None,
-        }
-    }
-
-    pub fn schema_version(&self) -> AuditSchemaVersion {
-        self.schema_version
-    }
-
-    pub fn line_type(&self) -> &AuditLineType {
-        &self.line_type
-    }
-
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-
-    pub fn prev_hash(&self) -> &PrevHash {
-        &self.prev_hash
-    }
-
-    pub fn signature(&self) -> Option<&Signature> {
-        self.signature.as_ref()
-    }
-
-    pub fn key_id(&self) -> Option<&KeyId> {
-        self.key_id.as_ref()
-    }
-
-    /// **Writer-only.** See [`AuditRecord::stamp_chain`].
-    pub fn stamp_chain(&mut self, seq: u64, prev_hash: PrevHash) {
-        self.seq = seq;
-        self.prev_hash = prev_hash;
-    }
-
-    /// **Writer-only.** See [`AuditRecord::stamp_signature`].
-    pub fn stamp_signature(&mut self, signature: Signature, key_id: KeyId) {
-        self.signature = Some(signature);
-        self.key_id = Some(key_id);
-    }
-
-    /// See [`AuditRecord::signing_input`].
-    pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        SignedLine::signing_input(self, key_id)
+        Envelope::new_line(
+            AuditLineType::Open,
+            OpenPayload {
+                prev_session_tail,
+                public_key,
+            },
+        )
     }
 }
 
 /// Session `Close` line — written on `AuditWriter::drop`.
 ///
+/// It carries nothing of its own: a `Close` is the header and the signature,
+/// and the fact that it is there at all is the whole content.
+///
 /// `Drop` does not run on SIGKILL. Close-on-drop covers clean exit and unwind
 /// only; the missing `Close` is precisely what a verifier reports as
 /// `Indeterminate`, and that gap is documented rather than engineered around.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AuditClose {
-    /// Sealed: owned by [`AuditClose::new`]. See [`AuditRecord`] for why.
-    schema_version: AuditSchemaVersion,
-    /// Sealed: see [`AuditClose::line_type`].
-    line_type: AuditLineType,
-    /// Sealed: chain position belongs to the writer.
-    seq: u64,
-    /// Sealed: chain position belongs to the writer.
-    prev_hash: PrevHash,
-    /// Sealed: see [`AuditClose::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    signature: Option<Signature>,
-    /// Sealed: see [`AuditClose::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<KeyId>,
-}
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClosePayload {}
 
-impl Default for AuditClose {
+impl Signable for ClosePayload {}
+
+/// The `close` line.
+pub type AuditClose = Envelope<ClosePayload>;
+
+impl Default for Envelope<ClosePayload> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AuditClose {
+impl Envelope<ClosePayload> {
     pub fn new() -> Self {
-        Self {
-            schema_version: AUDIT_SCHEMA_VERSION,
-            line_type: AuditLineType::Close,
-            seq: 0,
-            prev_hash: PrevHash::GENESIS,
-            signature: None,
-            key_id: None,
-        }
-    }
-
-    pub fn schema_version(&self) -> AuditSchemaVersion {
-        self.schema_version
-    }
-
-    pub fn line_type(&self) -> &AuditLineType {
-        &self.line_type
-    }
-
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-
-    pub fn prev_hash(&self) -> &PrevHash {
-        &self.prev_hash
-    }
-
-    pub fn signature(&self) -> Option<&Signature> {
-        self.signature.as_ref()
-    }
-
-    pub fn key_id(&self) -> Option<&KeyId> {
-        self.key_id.as_ref()
-    }
-
-    /// **Writer-only.** See [`AuditRecord::stamp_chain`].
-    pub fn stamp_chain(&mut self, seq: u64, prev_hash: PrevHash) {
-        self.seq = seq;
-        self.prev_hash = prev_hash;
-    }
-
-    /// **Writer-only.** See [`AuditRecord::stamp_signature`].
-    pub fn stamp_signature(&mut self, signature: Signature, key_id: KeyId) {
-        self.signature = Some(signature);
-        self.key_id = Some(key_id);
-    }
-
-    /// See [`AuditRecord::signing_input`].
-    pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        SignedLine::signing_input(self, key_id)
+        Envelope::new_line(AuditLineType::Close, ClosePayload {})
     }
 }
 
@@ -751,7 +706,7 @@ impl AuditClose {
 /// violation: a correct emitter cannot produce it.
 ///
 /// **This type is format-defining and has no shipped emitter.** Nothing in this
-/// repository's pipeline builds an `AuditDecision`: a `pending_approval` policy
+/// repository's pipeline builds a `decision` line: a `pending_approval` policy
 /// verdict is recorded as an `outcome` line and returned to the caller as an
 /// error, and no code path resumes the parked Call — that protocol is
 /// AILAB-629's and is unbuilt. The type is here so the record format is complete
@@ -760,80 +715,27 @@ impl AuditClose {
 /// the published vectors carry them (`spec/SPEC.md` §11.2 and §11.4), built by
 /// the tests that are the emitter's only callers.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AuditDecision {
-    /// Sealed: owned by [`AuditDecision::new`]. See [`AuditRecord`] for why.
-    schema_version: AuditSchemaVersion,
-    /// Sealed: see [`AuditDecision::line_type`].
-    line_type: AuditLineType,
-    /// Sealed: chain position belongs to the writer.
-    seq: u64,
-    /// Sealed: chain position belongs to the writer.
-    prev_hash: PrevHash,
+pub struct DecisionPayload {
     /// The park this verdict answers. A soft cross-reference: it may span
     /// Sessions and files, because a human approving after a restart is normal.
     pub approval_id: ApprovalId,
     pub verdict: ApprovalVerdict,
-    /// Sealed: see [`AuditDecision::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    signature: Option<Signature>,
-    /// Sealed: see [`AuditDecision::stamp_signature`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<KeyId>,
 }
 
-impl AuditDecision {
+impl Signable for DecisionPayload {}
+
+/// The `decision` line.
+pub type AuditDecision = Envelope<DecisionPayload>;
+
+impl Envelope<DecisionPayload> {
     pub fn new(approval_id: ApprovalId, verdict: ApprovalVerdict) -> Self {
-        Self {
-            schema_version: AUDIT_SCHEMA_VERSION,
-            line_type: AuditLineType::Decision,
-            seq: 0,
-            prev_hash: PrevHash::GENESIS,
-            approval_id,
-            verdict,
-            signature: None,
-            key_id: None,
-        }
-    }
-
-    pub fn schema_version(&self) -> AuditSchemaVersion {
-        self.schema_version
-    }
-
-    pub fn line_type(&self) -> &AuditLineType {
-        &self.line_type
-    }
-
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-
-    pub fn prev_hash(&self) -> &PrevHash {
-        &self.prev_hash
-    }
-
-    pub fn signature(&self) -> Option<&Signature> {
-        self.signature.as_ref()
-    }
-
-    pub fn key_id(&self) -> Option<&KeyId> {
-        self.key_id.as_ref()
-    }
-
-    /// **Writer-only.** See [`AuditRecord::stamp_chain`].
-    pub fn stamp_chain(&mut self, seq: u64, prev_hash: PrevHash) {
-        self.seq = seq;
-        self.prev_hash = prev_hash;
-    }
-
-    /// **Writer-only.** See [`AuditRecord::stamp_signature`].
-    pub fn stamp_signature(&mut self, signature: Signature, key_id: KeyId) {
-        self.signature = Some(signature);
-        self.key_id = Some(key_id);
-    }
-
-    /// See [`AuditRecord::signing_input`].
-    pub fn signing_input(&self, key_id: &KeyId) -> Result<String, JcsError> {
-        SignedLine::signing_input(self, key_id)
+        Envelope::new_line(
+            AuditLineType::Decision,
+            DecisionPayload {
+                approval_id,
+                verdict,
+            },
+        )
     }
 }
 
@@ -842,22 +744,19 @@ impl AuditDecision {
 ///
 /// It is written once, here, because a writer and a verifier that disagree
 /// about which bytes a signature covers make every signature in every Chain
-/// meaningless. The four signed line types differ only in whose private fields
-/// get cleared and stamped, and that difference is
-/// [`SignedLine::unsigned_with_key`] — the only per-type part left.
+/// meaningless.
 ///
 /// `key_id` sits inside the signed bytes so a signature cannot be replayed
 /// under a different key's fingerprint.
 ///
-/// [`AuditIntent`] deliberately does not implement this. That line is fsynced
-/// ahead of execution, so signing it would put key material on the
-/// pre-execution critical path; leaving it off the trait makes "the intent line
-/// is never signed" a property of the type system rather than a rule a writer
-/// has to remember.
+/// [`IntentPayload`] deliberately does not implement [`Signable`], so no
+/// [`Envelope`] carrying it implements this trait. That line is fsynced ahead
+/// of execution, so signing it would put key material on the pre-execution
+/// critical path; keeping it off the trait makes "the intent line is never
+/// signed" a property of the type system rather than a rule a writer has to
+/// remember.
 pub trait SignedLine: Clone + serde::Serialize {
     /// A copy of this line with its signature cleared and `key_id` stamped.
-    ///
-    /// The only method that has to know the type's own sealed fields.
     fn unsigned_with_key(&self, key_id: &KeyId) -> Self;
 
     /// The exact bytes a signature covers. Not meant to be overridden — an
@@ -869,25 +768,21 @@ pub trait SignedLine: Clone + serde::Serialize {
     }
 }
 
-/// One expansion rather than four hand-written impls, for the same reason the
-/// rule is a trait default at all: the per-type half must not drift either.
-macro_rules! impl_signed_line {
-    ($ty:ty) => {
-        impl SignedLine for $ty {
-            fn unsigned_with_key(&self, key_id: &KeyId) -> Self {
-                let mut line = self.clone();
-                line.signature = None;
-                line.key_id = Some(*key_id);
-                line
-            }
-        }
-    };
+/// One impl for every signed line, because the part that used to differ per
+/// type — which private fields get cleared and stamped — is now one shared
+/// [`SignatureBlock`]. The macro that expanded this four times is gone with the
+/// difference it existed to absorb.
+impl<P> SignedLine for Envelope<P>
+where
+    P: Signable + Clone + serde::Serialize,
+{
+    fn unsigned_with_key(&self, key_id: &KeyId) -> Self {
+        let mut line = self.clone();
+        line.sig.signature = None;
+        line.sig.key_id = Some(*key_id);
+        line
+    }
 }
-
-impl_signed_line!(AuditRecord);
-impl_signed_line!(AuditOpen);
-impl_signed_line!(AuditClose);
-impl_signed_line!(AuditDecision);
 
 /// What a human decided, and — when they approved — exactly what they approved.
 ///
@@ -1380,7 +1275,7 @@ mod tests {
         let tail = PrevHash::of_line(b"previous session tail");
         let open = AuditOpen::new(PublicKey::from_bytes([9u8; 32]), Some(tail));
         assert_eq!(*open.prev_hash(), PrevHash::GENESIS);
-        assert_eq!(open.prev_session_tail, Some(tail));
+        assert_eq!(open.payload.prev_session_tail, Some(tail));
         let fresh = AuditOpen::new(PublicKey::from_bytes([9u8; 32]), None);
         let json = serde_json::to_string(&fresh).unwrap();
         assert!(!json.contains("prev_session_tail"), "{json}");

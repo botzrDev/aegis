@@ -23,7 +23,7 @@ pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 64 * 1024 * 1024;
 /// record. Distinct from [`crate::policy::ApprovalId`] so the two cannot be
 /// cross-referenced to the wrong thing.
 ///
-/// [`CapabilityGrant::grant_id`] and [`crate::audit::AuditRecord::grant_id`] are
+/// [`CapabilityGrant::grant_id`] and [`crate::audit::RecordPayload::grant_id`] are
 /// both this type (AILAB-846), so the minted id and the recorded id are one fact
 /// with one spelling. `#[serde(transparent)]` is what makes that free: a grant
 /// serializes its id as a bare JSON string exactly as it did when the field was

@@ -160,14 +160,14 @@ fn audit_intent_digest_is_derived_from_the_input_bytes() {
         .expect("intent line present");
     let intent: AuditIntent = serde_json::from_str(intent_line).expect("intent parses");
 
-    assert_eq!(intent.tool_id, ToolId::new("echo"));
+    assert_eq!(intent.payload.tool_id, ToolId::new("echo"));
     assert_eq!(
-        intent.request_digest,
+        intent.payload.request_digest,
         RequestDigest::of_request_bytes(input),
         "audited digest must be the runtime-computed hash of the raw input"
     );
     // Sanity: the digest is a real hash, not a placeholder.
-    assert_eq!(intent.request_digest.to_hex().len(), 64);
+    assert_eq!(intent.payload.request_digest.to_hex().len(), 64);
 }
 
 #[test]

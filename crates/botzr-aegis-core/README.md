@@ -28,7 +28,8 @@ sandbox station. Isolation is the grant check plus the audit record. See the
 |---|---|
 | `CapabilityGrant`, `FsGrant`, `NetGrant`, `HttpGrant` | Minted authority a call executes under |
 | `ToolId` | Tool identity, carried by grants and audit lines |
-| `AuditIntent`, `AuditRecord`, `AuditOpen`, `AuditClose`, `AuditDecision` | Schema-v2 line types (`AUDIT_SCHEMA_VERSION = 2`) |
+| `AuditIntent`, `AuditRecord`, `AuditOpen`, `AuditClose`, `AuditDecision` | Schema-v2 line types (`AUDIT_SCHEMA_VERSION = 2`), each an `Envelope<P>` |
+| `Envelope`, `LineHeader`, `SignatureBlock`, `Signable` | The header every line carries, declared once; `Signable` is which lines are signed |
 | `DecisionAxes` | Inputs a policy verdict is a function of — never the raw argument tree |
 | `jcs` | Canonical JSON (RFC 8785) used as the hash input for every signed line |
 

@@ -30,7 +30,6 @@
 
 mod error;
 mod keyfile;
-mod line;
 mod session;
 mod signing;
 mod sink;
@@ -40,7 +39,6 @@ mod writer;
 
 pub use error::AuditError;
 pub use keyfile::{generate_signing_key, load_signing_key};
-pub use line::{ChainLine, SignedChainLine};
 pub use session::CallSession;
 pub use signing::{insecure_dev_key, verify_line, SigningKey, VerifyError};
 pub use sink::{ChainSink, FileChainSink, MemoryChainSink, Retention};

@@ -27,12 +27,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use botzr_aegis_core::{
-    to_canonical_json, AuditClose, AuditDecision, AuditIntent, AuditOpen, AuditRecord, KeyId,
-    PrevHash, PublicKey, AUDIT_SCHEMA_VERSION,
+    to_canonical_json, AuditClose, AuditDecision, AuditIntent, AuditOpen, AuditRecord, Envelope,
+    KeyId, PrevHash, PublicKey, Signable, SignedLine, AUDIT_SCHEMA_VERSION,
 };
 
 use crate::error::AuditError;
-use crate::line::{ChainLine, SignedChainLine};
 use crate::signing::{insecure_dev_key, SigningKey};
 use crate::sink::{ChainSink, FileChainSink, Retention};
 
@@ -202,9 +201,10 @@ impl AuditWriter {
     }
 
     /// Append the pre-execution intent line. Hashed into the chain and
-    /// deliberately not signable — [`AuditIntent`] does not implement
-    /// [`SignedChainLine`], because this line is fsynced ahead of execution and
-    /// signing must stay off the pre-execution critical path.
+    /// deliberately not signable — its payload does not implement
+    /// [`Signable`], so the signed append path (private to this type) does not
+    /// accept it, because this line is fsynced ahead of execution and signing
+    /// must stay off the pre-execution critical path.
     pub fn emit_intent(&self, intent: &mut AuditIntent) -> Result<(), AuditError> {
         self.append_unsigned(intent)
     }
@@ -256,7 +256,10 @@ impl AuditWriter {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn append_unsigned<L: ChainLine>(&self, line: &mut L) -> Result<(), AuditError> {
+    fn append_unsigned<P: serde::Serialize>(
+        &self,
+        line: &mut Envelope<P>,
+    ) -> Result<(), AuditError> {
         validate_schema(line.schema_version())?;
         let mut state = self.lock_chain();
         // Chain position is chosen *here*, holding the same lock that performs
@@ -266,7 +269,10 @@ impl AuditWriter {
         write_line(&mut state, line)
     }
 
-    fn append_signed<L: SignedChainLine>(&self, line: &mut L) -> Result<(), AuditError> {
+    fn append_signed<P: Signable + Clone + serde::Serialize>(
+        &self,
+        line: &mut Envelope<P>,
+    ) -> Result<(), AuditError> {
         validate_schema(line.schema_version())?;
         let key_id = self.signing_key.key_id();
         let mut state = self.lock_chain();
@@ -462,8 +468,8 @@ mod tests {
         let open: AuditOpen = serde_json::from_str(&rows[0]).unwrap();
         let record: AuditRecord = serde_json::from_str(&rows[1]).unwrap();
         assert_eq!(*open.line_type(), AuditLineType::Open);
-        assert_eq!(verify_line(&open, &open.public_key), Ok(()));
-        assert_eq!(verify_line(&record, &open.public_key), Ok(()));
+        assert_eq!(verify_line(&open, &open.payload.public_key), Ok(()));
+        assert_eq!(verify_line(&record, &open.payload.public_key), Ok(()));
         assert_eq!(record.key_id(), Some(&writer.key_id()));
     }
 
@@ -491,7 +497,7 @@ mod tests {
             assert_ne!(value[field], previous, "{field} must actually change");
             let tampered: AuditRecord = serde_json::from_value(value).unwrap();
             assert_eq!(
-                verify_line(&tampered, &open.public_key),
+                verify_line(&tampered, &open.payload.public_key),
                 Err(VerifyError::BadSignature),
                 "editing {field} must break the signature"
             );
