@@ -424,6 +424,14 @@ pub trait Signable {}
 /// `sig` above `payload` puts `signature` and `key_id` in the middle of the
 /// object and that vector stops reproducing — measured, not predicted.
 ///
+/// **The assertion is `envelope_key_order_is_header_then_payload_then_signature`,
+/// in this file's `tests` module.** Not an intra-doc link on purpose: that
+/// module is `#[cfg(test)]`, so rustdoc cannot resolve a path into it and a
+/// link here would ship a broken-link warning to keep a pointer readable. It reads the key sequence off a serialized line and fails
+/// naming the part that moved, so the property is enforced rather than
+/// described. This paragraph is the *why*; that test is the *what*. Do not
+/// delete one and keep the other.
+///
 /// **The payload decides whether the line can be signed.** The signing surface
 /// is bounded on [`Signable`], which [`IntentPayload`] does not implement, so
 /// "the intent line is never signed" is a fact the compiler checks rather than
@@ -1336,6 +1344,105 @@ mod tests {
             PolicyOutcome::PendingApproval {
                 approval_id: "a".into()
             }
+        );
+    }
+
+    /// Top-level keys of a JSON object, in the order they appear on the wire.
+    ///
+    /// `serde_json::to_string` emits no whitespace, so a string is a key
+    /// exactly when it sits at depth 1 and the byte after its closing quote is
+    /// the name separator. Nested keys live at depth 2 or deeper and are
+    /// skipped — which matters here, because `capability` and `decision_axes`
+    /// both carry inner objects with keys that collide with top-level names.
+    fn top_level_keys(json: &str) -> Vec<&str> {
+        let bytes = json.as_bytes();
+        let mut keys = Vec::new();
+        let mut depth = 0usize;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => {
+                    let start = i + 1;
+                    let mut j = start;
+                    while j < bytes.len() && bytes[j] != b'"' {
+                        j += if bytes[j] == b'\\' { 2 } else { 1 };
+                    }
+                    if depth == 1 && bytes.get(j + 1) == Some(&b':') {
+                        keys.push(&json[start..j]);
+                    }
+                    i = j + 1;
+                }
+                b'{' | b'[' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' | b']' => {
+                    depth -= 1;
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        keys
+    }
+
+    /// **The wire's key order is the field declaration order of [`Envelope`],
+    /// and this is what enforces it** (AILAB-887).
+    ///
+    /// `#[serde(flatten)]` emits each part where it is declared, so reordering
+    /// the three fields silently reorders every audit line. Before this test
+    /// the only thing that would have noticed was
+    /// `crates/botzr-aegis-runtime/tests/golden/resource_exceeded_orchestrator.json`,
+    /// which pins order by accident of having been authored through the
+    /// non-canonical serializer — nothing in that file's name or its test's
+    /// name says so, so tidying it into canonical form would have removed the
+    /// guard with every remaining test still green.
+    ///
+    /// **The line is built by deserializing, not by stamping.** `signature`
+    /// and `key_id` are `skip_serializing_if` fields: a freshly constructed
+    /// record omits them, and the tail of the object is exactly where the
+    /// hazard lives. Reaching for the writer's stamping methods to fill them
+    /// would tie this assertion to an API that AILAB-848 exists to seal — so
+    /// this test does not name them, in prose or in code. Round-tripping a line
+    /// that already carries a signature needs neither.
+    #[test]
+    fn envelope_key_order_is_header_then_payload_then_signature() {
+        // A real signed outcome line, in the canonical (key-sorted) form every
+        // vector is stored in. Sorted deliberately: the assertion below is only
+        // meaningful because the output is *not* the input order.
+        const CANONICAL: &str = r#"{"call_id":"call-1","capability":{"reason":"not evaluated","status":"denied"},"decision_axes":{},"execution":{"status":"success"},"key_id":"77a2c2f5952039243c043b69e7e812a2deb69e3271adb3013b8f24d3b8ea40f6","line_type":"outcome","policy":{"status":"allowed"},"policy_set_hash":"89a056813bdf93f95c1881a78793b1a86f5b6bab829c1ba9d20bb4add2aae921","prev_hash":"1f95193f1d9994b380c7fd3ff54b9f520db959c9b83888c1195c9080e51c7dcc","request_digest":"6efa0cc22bf543957fc0d08c16be0836a47920ec5a6234350b26460927848722","schema_version":2,"seq":6,"signature":"4a3a4700714e97fd1bcbae2a2539b182628197ef00ef48fca9470becaa7238bd9e77b07341ed997f37f752b905917e0a1795a7538926d502d8b01bb806c06b00","tool_id":"echo"}"#;
+
+        let stored: Vec<&str> = top_level_keys(CANONICAL);
+        let mut sorted = stored.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            stored, sorted,
+            "fixture is not canonical, so it cannot show that re-serializing reorders"
+        );
+
+        let line: AuditRecord =
+            serde_json::from_str(CANONICAL).expect("a stored line deserializes");
+        let emitted = serde_json::to_string(&line).expect("a line serializes");
+        let keys = top_level_keys(&emitted);
+
+        assert_eq!(
+            &keys[..4],
+            ["schema_version", "line_type", "seq", "prev_hash"],
+            "ENVELOPE KEY ORDER MOVED: header keys are out of declaration order. \
+             Got {keys:?}"
+        );
+        assert_eq!(
+            &keys[keys.len() - 2..],
+            ["signature", "key_id"],
+            "ENVELOPE KEY ORDER MOVED: the SignatureBlock must come last. Moving \
+             `sig` above `payload` puts signature/key_id in the middle of the \
+             object, and the orchestrator golden vector stops reproducing. Got {keys:?}"
+        );
+        assert_ne!(
+            keys, sorted,
+            "ENVELOPE KEY ORDER MOVED: the emitted order is now key-sorted, so \
+             declaration order and canonical order have stopped differing. That \
+             is the distinction this whole property rests on"
         );
     }
 }
