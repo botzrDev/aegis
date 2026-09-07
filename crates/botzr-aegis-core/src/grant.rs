@@ -23,9 +23,11 @@ pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 64 * 1024 * 1024;
 /// record. Distinct from [`crate::policy::ApprovalId`] so the two cannot be
 /// cross-referenced to the wrong thing.
 ///
-/// `CapabilityGrant::grant_id` is still a `String`: migrating it reaches into
-/// the capability crate, the runtime, and every fixture, which is outside the
-/// schema bump.
+/// [`CapabilityGrant::grant_id`] and [`crate::audit::AuditRecord::grant_id`] are
+/// both this type (AILAB-846), so the minted id and the recorded id are one fact
+/// with one spelling. `#[serde(transparent)]` is what makes that free: a grant
+/// serializes its id as a bare JSON string exactly as it did when the field was
+/// a `String`, so the migration is zero wire change.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct GrantId(pub String);
@@ -40,6 +42,18 @@ impl GrantId {
     }
 }
 
+impl From<String> for GrantId {
+    fn from(id: String) -> Self {
+        Self(id)
+    }
+}
+
+impl From<&str> for GrantId {
+    fn from(id: &str) -> Self {
+        Self(id.to_owned())
+    }
+}
+
 impl fmt::Display for GrantId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -49,7 +63,7 @@ impl fmt::Display for GrantId {
 /// Resolved grant passed to sandbox configuration and host-function enforcement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CapabilityGrant {
-    pub grant_id: String,
+    pub grant_id: GrantId,
     pub tool_id: ToolId,
     /// Omitted when the grant carries no filesystem authority — never null. A
     /// grant is nested inside `CapabilityOutcome::Granted` on the audit record,
@@ -88,7 +102,7 @@ pub struct HttpGrant {
 }
 
 impl CapabilityGrant {
-    pub fn deny_all(tool_id: ToolId, grant_id: impl Into<String>) -> Self {
+    pub fn deny_all(tool_id: ToolId, grant_id: impl Into<GrantId>) -> Self {
         Self {
             grant_id: grant_id.into(),
             tool_id,
@@ -108,7 +122,7 @@ mod tests {
     #[test]
     fn deny_all_grants_nothing() {
         let g = CapabilityGrant::deny_all(ToolId::new("t"), "grant-0");
-        assert_eq!(g.grant_id, "grant-0");
+        assert_eq!(g.grant_id.as_str(), "grant-0");
         assert_eq!(g.tool_id, ToolId::new("t"));
         assert!(g.fs.is_none());
         assert!(g.net.is_none());

@@ -51,7 +51,7 @@ pub fn fixtures_root() -> PathBuf {
 /// hand-building consumer must set it (default is 1 MiB).
 pub fn read_only_grant(read_root: &Path) -> CapabilityGrant {
     CapabilityGrant {
-        grant_id: "sandbox-consumer-demo".to_string(),
+        grant_id: "sandbox-consumer-demo".into(),
         tool_id: ToolId::new("path-detector"),
         fs: Some(FsGrant {
             read_paths: vec![read_root.to_string_lossy().into_owned()],

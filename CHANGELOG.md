@@ -210,6 +210,61 @@ support.
 
 ### Changed
 
+- **`CapabilityGrant::grant_id` is a `GrantId`, not a `String`** (AILAB-846).
+  **Breaking change to published API, and deliberately taken before the 0.4.0
+  cut rather than after it.** The type ships in `botzr-aegis-core` on crates.io
+  at `0.3.0`, and the audit record's own `grant_id` has been a `GrantId` since
+  the schema-v2 work — so one fact was carried in two spellings and the pipeline
+  converted between them on every call. It no longer does; the bridging clone in
+  the runtime's pipeline is gone.
+
+  **Zero wire change, and that is checked rather than asserted.** `GrantId`
+  carries `#[serde(transparent)]`, so a grant serializes its id as the same bare
+  JSON string it always did. All thirteen golden audit vectors are byte
+  identical across this change.
+
+  **What breaks and what does not.** Code that builds a `CapabilityGrant` with a
+  struct literal, or reads `grant.grant_id` expecting a `String`, needs
+  `GrantId::new(..)` / `.as_str()` respectively. Code that passes a string
+  literal to `CapabilityGrant::deny_all` or `narrow_grant` is unaffected — those
+  take `impl Into<GrantId>` and `GrantId` now converts from `String` and `&str`,
+  so `"g1"` and `some_string` still reach them unchanged.
+
+- **A registered tool's declared paths are canonicalized once, at registration,
+  not on every call** (AILAB-846). **Behaviour change worth reading before
+  upgrading:** a declared path that is deleted *after* the tool is registered no
+  longer makes the next resolution deny with an invalid-path error. Resolution
+  mints a grant naming the path, and the call fails when the sandbox opens it.
+
+  **Nothing that was protected has become unprotected.** Canonicalizing at call
+  time never closed that window either — a path could be replaced between the
+  canonicalize and the open — and what actually bounds a call is the cap-std
+  preopen built from the grant, which is taken at open time. What moved is where
+  the error surfaces, not whether the reach is bounded. Grant revalidation is
+  deliberately not built: it is a feature with its own failure modes and belongs
+  in its own ticket.
+
+  A manifest whose declared path never existed still denies at exactly the call
+  it always denied at, on the same `fs` axis: registration cannot fail, so the
+  failure is stored against the tool and returned by resolution. And
+  `CapabilityResolver::resolve_manifest` — the one-off mint route
+  `aegis wrap --confine` uses — still canonicalizes per call, because a manifest
+  built from CLI flags has no registration to have prepared.
+
+  **The speed-up is a side effect, not the reason.** Stations 1–2 fall about
+  tenfold, from 2.73 µs to 263 ns on the hardware cited in
+  [benches/results/hot_path.md](benches/results/hot_path.md). Stations 1–2 are
+  not a call: the 2.47 µs saved is 6.6–7.5% of an audited call against the
+  shipped Volatile sink and 0.014–0.086% of one against a Durable sink. A call
+  did not get ten times faster.
+
+- **Grant ids are unique per resolver, not per process** (AILAB-846). The
+  counter behind them was a process-global `static` and is now a field on
+  `CapabilityResolver`. Two resolvers in one process hand out the same ids; a
+  grant id identifies a mint relative to the resolver that minted it. It was
+  never documented as a process-wide or cross-run key and must not be used as
+  one — a record that has to be identified on its own carries `call_id`.
+
 - **`parse_http_host` refuses an authority that carries userinfo** (AILAB-863).
   **Behaviour change to published API:** the function ships in
   `botzr-aegis-core` on crates.io at `0.3.0`, and a caller outside this

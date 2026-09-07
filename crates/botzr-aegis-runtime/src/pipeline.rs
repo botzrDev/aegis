@@ -13,7 +13,7 @@
 use botzr_aegis_audit::CallSession;
 use botzr_aegis_core::{
     AegisError, CallMetrics, CapabilityGrant, CapabilityOutcome, DecisionAxes, ExecutionOutcome,
-    FsAxis, GrantId, NetAxis, PolicyAction, PolicyOutcome, RequestDigest, ResponseDigest, ToolId,
+    FsAxis, NetAxis, PolicyAction, PolicyOutcome, RequestDigest, ResponseDigest, ToolId,
 };
 use botzr_aegis_policy::PolicyRequest;
 
@@ -161,7 +161,7 @@ impl Runtime {
 
         let (execution, output) = match &capability_outcome {
             CapabilityOutcome::Granted { grant } => {
-                session.set_grant_id(GrantId::new(grant.grant_id.clone()));
+                session.set_grant_id(grant.grant_id.clone());
                 // Derived capability parameters (ADR-0006): the resources this
                 // call resolved to, recorded only when the grant names exactly
                 // one. Reading them off the minted grant is not a matcher and

@@ -32,7 +32,7 @@ const ECHO: &[u8] = include_bytes!("../../../tests/fixtures/echo-tool/echo.wasm"
 /// so there are no preopens; caps are generous so nothing trips mid-measurement.
 fn grant() -> CapabilityGrant {
     CapabilityGrant {
-        grant_id: "bench-grant".to_string(),
+        grant_id: "bench-grant".into(),
         tool_id: ToolId::new("echo"),
         fs: None,
         net: None,

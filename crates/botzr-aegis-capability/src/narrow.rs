@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use botzr_aegis_core::{CapabilityGrant, ResourceCeiling};
+use botzr_aegis_core::{CapabilityGrant, GrantId, ResourceCeiling};
 
 use crate::error::{CapabilityError, EscalationAxis};
 use crate::manifest::{FsNeeds, NetNeeds, ToolManifest};
@@ -16,7 +16,7 @@ pub fn narrow_grant(
     parent_grant: &CapabilityGrant,
     parent_manifest: &ToolManifest,
     sub_manifest: &ToolManifest,
-    grant_id: impl Into<String>,
+    grant_id: impl Into<GrantId>,
     ceiling: ResourceCeiling,
 ) -> Result<CapabilityGrant, CapabilityError> {
     validate_fs_narrowing(
@@ -328,7 +328,7 @@ mod tests {
         .unwrap();
 
         assert!(grant_is_subset(&parent_grant, &sub));
-        assert_eq!(sub.grant_id, "child-grant");
+        assert_eq!(sub.grant_id.as_str(), "child-grant");
     }
 
     #[test]

@@ -29,7 +29,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 /// in size rather than a minimal record that flatters the number.
 fn grant() -> CapabilityGrant {
     CapabilityGrant {
-        grant_id: "bench-grant".to_string(),
+        grant_id: "bench-grant".into(),
         tool_id: ToolId::new("echo"),
         fs: None,
         net: None,

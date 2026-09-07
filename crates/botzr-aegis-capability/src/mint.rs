@@ -2,7 +2,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use botzr_aegis_core::{CapabilityGrant, FsGrant, HttpGrant, NetGrant, ResourceCeiling};
+use botzr_aegis_core::{
+    CapabilityGrant, FsGrant, GrantId, HttpGrant, NetGrant, ResourceCeiling, ToolId,
+};
 
 use crate::error::CapabilityError;
 use crate::manifest::{HttpNeed, NetNeeds, PathNeed, ToolLimits, ToolManifest};
@@ -31,16 +33,54 @@ fn apply_ceiling(ceiling: ResourceCeiling, manifest: ToolLimits) -> ToolLimits {
     }
 }
 
-/// Mint a grant from declared needs. Paths are canonicalized at mint time.
-#[must_use = "grant minting result must be handled — denial is audit-worthy"]
-pub fn mint_grant(
-    manifest: &ToolManifest,
-    grant_id: impl Into<String>,
-    ceiling: ResourceCeiling,
-) -> Result<CapabilityGrant, CapabilityError> {
+/// Everything a manifest contributes to a grant that does **not** vary between
+/// two calls to the same tool: the canonicalized filesystem reach, the validated
+/// network reach, and the tool's own declared limits.
+///
+/// Splitting this out is what lets [`crate::CapabilityResolver`] do the
+/// filesystem work once, at registration, instead of once per call (AILAB-846).
+/// What is left per call is the [`ResourceCeiling`] fold and a fresh id, neither
+/// of which touches the filesystem.
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedGrant {
+    tool_id: ToolId,
+    fs: Option<FsGrant>,
+    net: Option<NetGrant>,
+    limits: ToolLimits,
+}
+
+impl PreparedGrant {
+    /// Stamp an id and a ceiling onto the prepared reach. Infallible: every way
+    /// a mint can fail was already decided in [`prepare_grant`], and lowering
+    /// limits is a `min`.
+    pub(crate) fn instantiate(
+        &self,
+        grant_id: impl Into<GrantId>,
+        ceiling: ResourceCeiling,
+    ) -> CapabilityGrant {
+        let limits = apply_ceiling(ceiling, self.limits);
+        CapabilityGrant {
+            grant_id: grant_id.into(),
+            tool_id: self.tool_id.clone(),
+            fs: self.fs.clone(),
+            net: self.net.clone(),
+            max_memory_bytes: limits.max_memory_bytes,
+            max_wall_ms: limits.max_wall_ms,
+            max_output_bytes: limits.max_output_bytes,
+        }
+    }
+}
+
+/// Validate declared needs and canonicalize declared paths — the fallible half
+/// of minting, and the only half that reaches the filesystem.
+///
+/// Error order is unchanged from when this was inline in [`mint_grant`]: net
+/// validation, then fs canonicalization. `apply_ceiling` used to run between the
+/// two but cannot fail, so moving it into [`PreparedGrant::instantiate`] changes
+/// no observable precedence.
+pub(crate) fn prepare_grant(manifest: &ToolManifest) -> Result<PreparedGrant, CapabilityError> {
     validate_http_needs(manifest.net.as_ref())?;
 
-    let limits = apply_ceiling(ceiling, manifest.limits);
     let fs = manifest
         .fs
         .as_ref()
@@ -48,15 +88,26 @@ pub fn mint_grant(
         .transpose()?;
     let net = manifest.net.as_ref().map(mint_net_grant).transpose()?;
 
-    Ok(CapabilityGrant {
-        grant_id: grant_id.into(),
+    Ok(PreparedGrant {
         tool_id: manifest.tool.id.clone(),
         fs,
         net,
-        max_memory_bytes: limits.max_memory_bytes,
-        max_wall_ms: limits.max_wall_ms,
-        max_output_bytes: limits.max_output_bytes,
+        limits: manifest.limits,
     })
+}
+
+/// Mint a grant from declared needs. Paths are canonicalized at mint time.
+///
+/// One shot of `prepare_grant` + `PreparedGrant::instantiate` (both crate
+/// private, so not linked here), so this and the registration-time path share
+/// one canonicalizer and one ceiling fold rather than two that could drift.
+#[must_use = "grant minting result must be handled — denial is audit-worthy"]
+pub fn mint_grant(
+    manifest: &ToolManifest,
+    grant_id: impl Into<GrantId>,
+    ceiling: ResourceCeiling,
+) -> Result<CapabilityGrant, CapabilityError> {
+    Ok(prepare_grant(manifest)?.instantiate(grant_id, ceiling))
 }
 
 fn mint_fs_grant(

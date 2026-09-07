@@ -73,6 +73,92 @@ fn registered_tool_mints_grant() {
     }
 }
 
+/// AILAB-846, AC 1 — the gate that proves the ticket rather than its symptoms.
+///
+/// Register a tool, delete a declared path, then resolve. Resolution grants,
+/// because the `std::fs::canonicalize` that would have failed already happened
+/// once, at registration.
+///
+/// The second half is the control that makes the first half mean something.
+/// `resolve_manifest` deliberately still canonicalizes per call (there is no
+/// registration to have prepared — `aegis wrap --confine` mints from CLI flags),
+/// so the *same* manifest against the *same* deleted path denies. One test, two
+/// code paths, one difference: where the filesystem is touched. Without the
+/// control arm a passing assertion could not distinguish "stopped touching the
+/// filesystem" from "the path happened to still resolve".
+#[test]
+fn resolve_after_declared_path_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixtures = dir.path().join("fixtures");
+    std::fs::create_dir_all(fixtures.join("nested")).unwrap();
+
+    let manifest = fixture_manifest("reader", dir.path());
+    let mut resolver = CapabilityResolver::new();
+    #[allow(deprecated)]
+    resolver.register(manifest.clone());
+
+    // Registration has canonicalized. Now the declared tree goes away.
+    std::fs::remove_dir_all(&fixtures).unwrap();
+    assert!(!fixtures.exists(), "fixture tree must actually be gone");
+
+    match resolver.resolve_with_ceiling(&ToolId::new("reader"), ResourceCeiling::default()) {
+        CapabilityOutcome::Granted { grant } => {
+            let fs = grant.fs.expect("fs grant");
+            // The grant still names the absolute canonical path resolved at
+            // registration — proof the canonicalization happened, just earlier.
+            assert_eq!(fs.read_paths.len(), 1);
+            assert!(std::path::Path::new(&fs.read_paths[0]).is_absolute());
+            assert!(fs.read_paths[0].ends_with("fixtures"));
+        }
+        CapabilityOutcome::Denied { reason, .. } => {
+            panic!("resolution still reaches the filesystem: {reason}")
+        }
+    }
+
+    // Control: the call-time path, same manifest, same missing directory.
+    match resolver.resolve_manifest(&manifest) {
+        CapabilityOutcome::Denied {
+            denied_capability, ..
+        } => assert_eq!(denied_capability.as_deref(), Some("fs")),
+        CapabilityOutcome::Granted { .. } => {
+            panic!("resolve_manifest must still canonicalize per call")
+        }
+    }
+}
+
+/// AILAB-846 §3.2 ruling (b) — registration cannot fail, so the failure is
+/// stored and replayed by resolution.
+///
+/// A manifest whose declared path never existed denies at exactly the call it
+/// always denied at, with the same `fs` axis, even though the canonicalization
+/// that decided it now runs at registration. This is the test that keeps the
+/// ruling honest: nothing else in the suite pins where a bad declared path
+/// surfaces.
+#[test]
+fn registration_failure_is_replayed_at_resolve() {
+    let dir = tempfile::tempdir().unwrap();
+    // Deliberately never created.
+    let manifest = fixture_manifest("never-existed", dir.path());
+
+    let mut resolver = CapabilityResolver::new();
+    #[allow(deprecated)]
+    resolver.register(manifest);
+
+    // Twice: the stored error is replayed, not consumed.
+    for _ in 0..2 {
+        match resolver.resolve(&ToolId::new("never-existed")) {
+            CapabilityOutcome::Denied {
+                reason,
+                denied_capability,
+            } => {
+                assert_eq!(denied_capability.as_deref(), Some("fs"));
+                assert!(reason.contains("fixtures"), "{reason}");
+            }
+            CapabilityOutcome::Granted { .. } => panic!("expected denial"),
+        }
+    }
+}
+
 #[test]
 fn default_deny_net_when_absent_from_manifest() {
     let dir = tempfile::tempdir().unwrap();

@@ -29,7 +29,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 /// tests use, so the serialized outcome record is representative in size.
 fn grant() -> CapabilityGrant {
     CapabilityGrant {
-        grant_id: "bench-grant".to_string(),
+        grant_id: "bench-grant".into(),
         tool_id: ToolId::new("echo"),
         fs: None,
         net: None,

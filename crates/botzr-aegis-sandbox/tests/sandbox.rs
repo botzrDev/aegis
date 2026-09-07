@@ -9,7 +9,7 @@ use botzr_aegis_sandbox::{SandboxEngine, SandboxError};
 
 fn grant(fs: Option<FsGrant>, max_memory_bytes: u64, max_wall_ms: u64) -> CapabilityGrant {
     CapabilityGrant {
-        grant_id: "test-grant".to_string(),
+        grant_id: "test-grant".into(),
         tool_id: ToolId::new("test-tool"),
         fs,
         net: None,
