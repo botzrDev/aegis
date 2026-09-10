@@ -144,6 +144,18 @@ impl<'a> CallSession<'a> {
     /// own line instead, so nothing mutates this record any more and the
     /// binding is a shared one again. Re-emitting after a failed write is still
     /// safe: the record the writer reads is unchanged by a failed attempt.
+    ///
+    /// `failed_complete_then_drop_emits_fail_closed_line_that_verifies`, in
+    /// this file's `tests` module, is where the *consequence* of that stops
+    /// being a claim: it refuses this write, then reads back the line `Drop`
+    /// emitted from the same record and asserts that it verifies and chains to
+    /// the last line that actually landed. It does not witness the record's own
+    /// immutability, and after AILAB-848 nothing could — `at_position` rebuilds
+    /// the header and the signature block on every emit, so residue on the
+    /// draft has no wire form left to catch. What it pins is the property that
+    /// residue used to break. Not an intra-doc link, because rustdoc cannot
+    /// resolve a path into a `#[cfg(test)]` module and a link here would ship a
+    /// broken-link warning.
     pub fn complete(self) -> Result<(), AuditError> {
         self.writer.emit_outcome(&self.record)?;
         self.completed.set(true);
@@ -180,8 +192,12 @@ impl Drop for CallSession<'_> {
 mod tests {
     use super::*;
 
+    use std::path::Path;
+
+    use botzr_aegis_core::PrevHash;
+
     use crate::signing::insecure_dev_key;
-    use crate::sink::MemoryChainSink;
+    use crate::sink::{ChainSink, MemoryChainSink, Retention};
 
     /// A Session over an in-memory Chain, plus the clone the test reads it back
     /// through — the shape the runtime's default Sink has since ADR-0012.
@@ -208,6 +224,54 @@ mod tests {
         text.lines()
             .filter(|line| line.contains("\"line_type\":\"outcome\""))
             .count()
+    }
+
+    /// A [`ChainSink`] that refuses exactly one append and otherwise behaves
+    /// like the in-memory sink underneath it. A test double for a full disk.
+    ///
+    /// Copied, deliberately, from `crates/botzr-aegis-audit/tests/indeterminate.rs`,
+    /// where the same double builds the published `missing_line` vector. That
+    /// file is a separate test binary, so this module cannot import the type;
+    /// the two alternatives are both worse. Promoting it to crate API would
+    /// ship a failure injector to embedders, and putting a fail-once mode on
+    /// [`MemoryChainSink`] would put one inside the shipped sink — thirty
+    /// test-only lines are the cheaper copy.
+    ///
+    /// It owns bytes and nothing else, as the trait requires: `seq`,
+    /// `prev_hash`, the signature and the line hash are all chosen by the
+    /// writer before `append` is called, which is why refusing the call is
+    /// enough to leave a gap the writer itself stamped.
+    struct FailOneAppend {
+        inner: MemoryChainSink,
+        appends: usize,
+        refuse: usize,
+    }
+
+    impl ChainSink for FailOneAppend {
+        fn retention(&self) -> Retention {
+            // The inner sink's own declaration, read back verbatim. Volatile,
+            // so the dev key is legal here (ADR-0012).
+            self.inner.retention()
+        }
+
+        fn existing_tail(&self) -> Result<Option<PrevHash>, AuditError> {
+            self.inner.existing_tail()
+        }
+
+        fn append(&mut self, line: &[u8]) -> Result<(), AuditError> {
+            let seen = self.appends;
+            self.appends += 1;
+            if seen == self.refuse {
+                return Err(AuditError::Io(std::io::Error::other(
+                    "simulated durability failure: no space left on device",
+                )));
+            }
+            self.inner.append(line)
+        }
+
+        fn path(&self) -> Option<&Path> {
+            None
+        }
     }
 
     #[test]
@@ -270,6 +334,135 @@ mod tests {
             "complete then drop must not duplicate"
         );
         assert!(text.contains("\"execution\":{\"status\":\"success\"}"));
+    }
+
+    /// A `complete()` whose write is refused still leaves exactly one outcome
+    /// on the Chain, and that outcome is the fail-closed one.
+    ///
+    /// `complete` takes `self`, so the session is already dropped by the time
+    /// the error reaches the caller: `Drop` has overwritten the `Success` and
+    /// emitted from the same record, at the position after the one the refused
+    /// write consumed. This pins all three of those — the landed line is
+    /// the abandon and never the `Success`, it verifies under the published
+    /// key, and it chains to the last line that actually landed.
+    #[test]
+    fn failed_complete_then_drop_emits_fail_closed_line_that_verifies() {
+        // Control: the same call, abandoned outright on its own writer. Its
+        // outcome is the payload oracle — the setters are mirrored, because a
+        // control that skipped them would differ on `policy` and prove nothing
+        // about the execution axis this test is actually about.
+        let (control_writer, control_store) = memory_session();
+        {
+            let mut session = begin(&control_writer, "probe-tool").unwrap();
+            session.set_policy(PolicyOutcome::Allowed);
+            session.set_execution(ExecutionOutcome::Success);
+            // No `complete()`: this one is simply dropped here.
+        }
+        drop(control_writer);
+
+        // Probe: identical up to `complete()`, which meets a sink that refuses
+        // append 2 — 0 is the `Open` line, 1 the intent, 2 the first outcome.
+        let store = MemoryChainSink::new();
+        let sink = FailOneAppend {
+            inner: store.clone(),
+            appends: 0,
+            refuse: 2,
+        };
+        let writer = AuditWriter::with_sink(Box::new(sink), insecure_dev_key())
+            .expect("a Volatile sink accepts the dev key");
+        let mut session = begin(&writer, "probe-tool").unwrap();
+        session.set_policy(PolicyOutcome::Allowed);
+        session.set_execution(ExecutionOutcome::Success);
+        let refused = session.complete().expect_err("append 2 must refuse");
+        assert!(
+            matches!(refused, AuditError::Io(_)),
+            "the refusal must reach the caller, not be swallowed: {refused:?}"
+        );
+        drop(writer);
+
+        // One failed emit plus one last-resort emit is still exactly one
+        // outcome — not zero, and not two.
+        let text = store.to_text();
+        assert_eq!(outcome_count(&text), 1, "one outcome on the Chain");
+        let outcome_line = text
+            .lines()
+            .find(|line| line.contains("\"line_type\":\"outcome\""))
+            .expect("the last-resort emit landed");
+        let outcome: AuditRecord = serde_json::from_str(outcome_line).unwrap();
+        // Fail-closed: what landed is the abandon, never the `Success` the
+        // caller asked `complete` to write. The record states what was
+        // enforced, not what was asked for (ADR-0007).
+        assert!(
+            matches!(
+                outcome.payload.execution,
+                ExecutionOutcome::HostDenied { ref reason } if reason == "session abandoned"
+            ),
+            "{:?}",
+            outcome.payload.execution
+        );
+
+        // It is a signed line, checked through the public verification API
+        // rather than through the crate-private JSON path.
+        assert_eq!(
+            crate::verify_line(&outcome, &insecure_dev_key().public_key()),
+            Ok(())
+        );
+
+        // And it chains to the last line that actually landed — the intent —
+        // not to the position the refused write consumed. Rows on the Chain are
+        // already canonical, so these are the bytes the writer hashed;
+        // `line_hash` re-serializes a value, and there is no value here.
+        let intent_line = text
+            .lines()
+            .find(|line| line.contains("\"line_type\":\"intent\""))
+            .expect("the intent landed before the refusal");
+        assert_eq!(
+            outcome.prev_hash(),
+            &PrevHash::of_line(intent_line.as_bytes())
+        );
+
+        // The payload is the one an outright abandon would have written. Chain
+        // position and signature are excluded on purpose: the probe's outcome
+        // sits one `seq` later than the control's, and that gap is the incident
+        // being recorded, not a difference in what was enforced.
+        let control_text = control_store.to_text();
+        let control_line = control_text
+            .lines()
+            .find(|line| line.contains("\"line_type\":\"outcome\""))
+            .expect("the control emitted on drop");
+        let mut control: serde_json::Value = serde_json::from_str(control_line).unwrap();
+        let mut probe: serde_json::Value = serde_json::from_str(outcome_line).unwrap();
+        for key in ["seq", "prev_hash", "signature", "key_id"] {
+            control.as_object_mut().unwrap().remove(key);
+            probe.as_object_mut().unwrap().remove(key);
+        }
+        assert_eq!(probe, control);
+
+        // The Chain as a whole is honest about the hole. A consumed position
+        // with no line in it is a durability incident, so the verdict is
+        // `Indeterminate`, never `Verified` and never `Tampered` — only the
+        // writer can produce this shape, and an attacker cannot (ADR-0002).
+        //
+        // The gap is pinned by position, not merely by class. `MissingLine {
+        // .. }` alone would stay green under a `take_seq` that advanced by two,
+        // because every other assertion here is blind to the size of the jump:
+        // `seq` is stripped before the payload comparison, and the tail only
+        // advances on a successful append, so `prev_hash` matches any forward
+        // jump. The published vector pins the same shape the same way, in
+        // `crates/botzr-aegis-audit/tests/indeterminate.rs`.
+        let verification = crate::verify_chain(&text);
+        assert_eq!(
+            verification.verdict,
+            crate::Verdict::Indeterminate {
+                reason: crate::IndeterminateReason::MissingLine {
+                    session_index: 0,
+                    // `complete` consumed seq 2 and its write was refused; the
+                    // last-resort emit from `Drop` landed at 3.
+                    expected: 2,
+                    found: 3,
+                }
+            }
+        );
     }
 
     #[test]

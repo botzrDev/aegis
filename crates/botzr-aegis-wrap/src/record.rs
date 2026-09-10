@@ -259,9 +259,9 @@ pub(crate) fn complete_relayed(
         started,
     } = pending;
 
-    let grant_id = format!("wrap-passthrough-{}", session.call_id());
+    let grant_id = GrantId::new(format!("wrap-passthrough-{}", session.call_id()));
     session.set_policy(PolicyOutcome::Allowed);
-    session.set_grant_id(GrantId::new(grant_id.clone()));
+    session.set_grant_id(grant_id.clone());
     // `deny_all` is the honest grant for a pass-through: wrap confined nothing,
     // so it must not record fs or net authority it never minted. Nothing
     // replaces it with a resolved grant: argument matchers were canceled in

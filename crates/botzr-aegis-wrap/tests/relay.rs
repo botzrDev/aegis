@@ -325,6 +325,20 @@ fn two_calls_share_one_verified_chain() {
     // Distinct calls, distinct grants — no id reuse across the Session.
     assert_ne!(outcomes[0]["call_id"], outcomes[1]["call_id"]);
     assert_ne!(outcomes[0]["grant_id"], outcomes[1]["grant_id"]);
+    // Distinctness alone would hold for any two ids. Pin the spelling: a
+    // pass-through grant id is the literal prefix plus that call's own id, so
+    // a reader can tell a wrap pass-through from a minted grant by eye.
+    for outcome in &outcomes {
+        assert_eq!(
+            outcome["grant_id"].as_str().expect("a grant id"),
+            format!(
+                "wrap-passthrough-{}",
+                outcome["call_id"].as_str().expect("a call id")
+            ),
+            "{}",
+            driven.audit
+        );
+    }
 
     // `Verified` requires a signed `close` as the last line, which only lands
     // when the `AuditWriter` drops — so this also asserts wrap shut down
