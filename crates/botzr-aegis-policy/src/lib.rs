@@ -20,10 +20,15 @@ mod set;
 // `Matcher`, `RateSpec`, `RuleKind`, `DefaultAction`), the rate-limiter, and
 // the YAML parser are deliberately crate-internal: they are an implementation
 // of G5 conflict resolution, not an API consumers pin against.
-pub use botzr_aegis_core::{PolicySetHash, ResourceCeiling};
+//
+// `CallAxes` lives in `botzr-aegis-core` (AILAB-849) so the one asserted-axes
+// type is shared with the recorded `DecisionAxes` it converts into, rather
+// than duplicated per crate. Re-exported here because `PolicyRequest` embeds
+// it, so a caller building a request needs the name from the same crate.
+pub use botzr_aegis_core::{CallAxes, PolicySetHash, ResourceCeiling};
 pub use engine::{PolicyEngine, ReloadOutcome, ReloadSource};
 pub use error::PolicyError;
-pub use eval::{CallAxes, PolicyDecision, PolicyRequest};
+pub use eval::{PolicyDecision, PolicyRequest};
 pub use parse::SUPPORTED_POLICY_VERSION;
 // Forensic re-evaluation (`aegis recheck`). `PolicyEngine::preview` is the
 // side-effect-free twin of `evaluate` and stays a method on the engine, so the

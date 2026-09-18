@@ -33,11 +33,11 @@ fn wasm_via_host_entry() -> ExecutionStep {
 pub struct HostCallRequest<'a> {
     pub tool_id: ToolId,
     pub input: &'a [u8],
-    pub axes: CallAxes<'a>,
+    pub axes: CallAxes<&'a str>,
 }
 
 impl<'a> HostCallRequest<'a> {
-    pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<'a>) -> Self {
+    pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<&'a str>) -> Self {
         Self {
             tool_id,
             input,

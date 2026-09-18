@@ -67,8 +67,11 @@ through, and one bad byte cannot swallow what follows it.
 Every `tools/call` — sent as its own frame, or carried inside a batch array.
 `initialize`, `tools/list`, `ping`, notifications, and every method this build
 has never heard of are relayed with **zero** interception — no session, no audit
-line, and never a locally synthesized `-32601`. Wrap is an interposer, not a
-second server.
+line, never a locally synthesized `-32601`, and (until AILAB-793) never any
+other locally synthesized JSON-RPC either. Wrap is an interposer, not a second
+server. The permission for an opted-in enforcement mode to answer a *refused*
+`tools/call` — and only that frame — is
+[ADR-0015](../../docs/adr/0015-wrap-may-synthesize-a-refusal.md).
 
 ### Batched calls
 

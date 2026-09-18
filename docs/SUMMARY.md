@@ -47,5 +47,6 @@
   - [0012 — The audit sink declares retention](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md)
   - [0013 — A classifier, not a shared walk](adr/0013-verify-and-recheck-share-a-classifier-not-a-walk.md)
   - [0014 — The record extension is .aarl](adr/0014-the-record-file-extension-is-aarl.md)
+  - [0015 — Wrap may synthesize a refusal](adr/0015-wrap-may-synthesize-a-refusal.md)
 - [Audit schema v1 (superseded)](audit-schema.md)
 - [Security](security.md)

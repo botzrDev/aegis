@@ -118,11 +118,11 @@ pub struct Runtime {
 pub struct ToolCallRequest<'a> {
     pub tool_id: ToolId,
     pub input: &'a [u8],
-    pub axes: CallAxes<'a>,
+    pub axes: CallAxes<&'a str>,
 }
 
 impl<'a> ToolCallRequest<'a> {
-    pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<'a>) -> Self {
+    pub fn new(tool_id: ToolId, input: &'a [u8], axes: CallAxes<&'a str>) -> Self {
         Self {
             tool_id,
             input,
@@ -139,13 +139,15 @@ impl<'a> ToolCallRequest<'a> {
 /// way Model A and Model B did before AILAB-708. Deliberately not public API:
 /// an embedder that could call it could rebuild the two-tool-ids state this
 /// exists to remove.
-pub(crate) fn policy_request<'a>(tool_id: &'a ToolId, axes: CallAxes<'a>) -> PolicyRequest<'a> {
-    PolicyRequest {
-        tool_id,
-        capability: axes.capability,
-        role: axes.role,
-        session: axes.session,
-    }
+///
+/// The axes travel whole. They used to be transcribed field by field here, which
+/// meant a fourth asserted axis had to be copied in by hand and nothing failed
+/// if it was not (AILAB-849).
+pub(crate) fn policy_request<'a>(
+    tool_id: &'a ToolId,
+    axes: CallAxes<&'a str>,
+) -> PolicyRequest<'a> {
+    PolicyRequest { tool_id, axes }
 }
 
 impl Runtime {

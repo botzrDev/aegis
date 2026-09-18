@@ -190,7 +190,7 @@ impl PolicyEngine {
             "{}::{}::{}",
             rule.id,
             req.tool_id,
-            req.session.unwrap_or_else(|| req.tool_id.as_str())
+            req.axes.session.unwrap_or_else(|| req.tool_id.as_str())
         )
     }
 

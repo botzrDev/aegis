@@ -103,21 +103,16 @@ impl Runtime {
         // short-circuit: a role-gated deny that persists only `tool_id` can
         // neither replay nor explain itself, and the denied call is exactly the
         // record someone comes back to read (ADR-0001).
-        // Built with the fluent `with_*` chain, not a struct literal:
-        // `DecisionAxes` is `#[non_exhaustive]`, so no crate but core may spell
-        // it as a struct expression — functional-update syntax included. Each
-        // axis is set only when the request actually carried one: an unset axis
-        // is omitted, and `""` would be a recorded empty value, not an absence.
-        let mut axes = DecisionAxes::default();
-        if let Some(capability) = policy_request.capability {
-            axes = axes.with_capability(capability);
-        }
-        if let Some(role) = policy_request.role {
-            axes = axes.with_role(role);
-        }
-        if let Some(session) = policy_request.session {
-            axes = axes.with_session(session);
-        }
+        // One conversion, not three hand-written `if let Some` copies. It
+        // destructures `CallAxes` exhaustively, so a fourth asserted axis stops
+        // it compiling rather than being silently dropped on the way to the
+        // record (AILAB-849) — and it still sets each axis only when the request
+        // carried one, because an unset axis is omitted and `""` would be a
+        // recorded empty value rather than an absence.
+        //
+        // `matched_rule` is layered on here instead: it is the verdict's own
+        // output, not something the caller asserted, so it is not on `CallAxes`.
+        let mut axes = DecisionAxes::from_call_axes(policy_request.axes);
         if let Some(matched_rule) = decision.matched_rule.clone() {
             axes = axes.with_matched_rule(matched_rule);
         }

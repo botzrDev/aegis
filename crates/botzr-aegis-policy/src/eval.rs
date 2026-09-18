@@ -9,20 +9,26 @@
 //! This module is pure and allocation-light; rate-limit counter state and
 //! approval-id minting live in [`crate::engine`] so the set stays immutable.
 
-use botzr_aegis_core::{PolicyAction, ResourceCeiling, ToolId};
+use botzr_aegis_core::{CallAxes, PolicyAction, ResourceCeiling, ToolId};
 
 use crate::set::{DefaultAction, PolicySet, Rule};
 
-/// What a caller is trying to do, evaluated against the active policy set. Axes
-/// beyond `tool_id` are optional; a rule that constrains an axis the request
-/// leaves unset simply does not match (role gates fire only when a role is
-/// asserted).
+/// What a caller is trying to do, evaluated against the active policy set.
+///
+/// Two parts, and the split is the point: the caller-asserted [`CallAxes`], and
+/// the `tool_id` the **runtime** derives from the call request's own tool. The
+/// asserted axes are optional; a rule that constrains an axis the request leaves
+/// unset simply does not match (role gates fire only when a role is asserted).
+///
+/// The axes are embedded whole rather than transcribed into three scalars here.
+/// Three hand-written copies of `capability`/`role`/`session` used to stand
+/// between a call request and this type, and a fourth asserted axis would have
+/// had to be added to each of them, by hand, with nothing failing if one was
+/// missed (AILAB-849).
 #[derive(Debug, Clone, Copy)]
 pub struct PolicyRequest<'a> {
     pub tool_id: &'a ToolId,
-    pub capability: Option<&'a str>,
-    pub role: Option<&'a str>,
-    pub session: Option<&'a str>,
+    pub axes: CallAxes<&'a str>,
 }
 
 impl<'a> PolicyRequest<'a> {
@@ -30,64 +36,22 @@ impl<'a> PolicyRequest<'a> {
     pub fn for_tool(tool_id: &'a ToolId) -> Self {
         Self {
             tool_id,
-            capability: None,
-            role: None,
-            session: None,
+            axes: CallAxes::default(),
         }
     }
 
     pub fn with_role(mut self, role: &'a str) -> Self {
-        self.role = Some(role);
+        self.axes = self.axes.with_role(role);
         self
     }
 
     pub fn with_capability(mut self, capability: &'a str) -> Self {
-        self.capability = Some(capability);
+        self.axes = self.axes.with_capability(capability);
         self
     }
 
     pub fn with_session(mut self, session: &'a str) -> Self {
-        self.session = Some(session);
-        self
-    }
-}
-
-/// The Decision Axes a caller asserts for a Call, minus `tool_id`.
-///
-/// `tool_id` is deliberately absent: the runtime derives it from the call
-/// request's own tool, so a request cannot name one tool and be judged as
-/// another (AILAB-710). Before this type existed, a call request carried both
-/// its own `tool_id` and a whole [`PolicyRequest`] with a second one, and
-/// nothing reconciled the two — the registry executed one tool while policy
-/// judged another, and the audit record carried a verdict about a tool that
-/// never ran.
-///
-/// The fix is structural rather than a check. A `debug_assert!` comparing the
-/// two ids was considered and rejected: it is compiled out of release builds,
-/// so it would leave the mismatch reachable in exactly the builds that matter.
-/// Returning an error on mismatch was also rejected — it still lets a caller
-/// build the contradictory request, and only reports it afterwards. Removing
-/// the second id makes the bad state unrepresentable instead of detectable.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CallAxes<'a> {
-    pub capability: Option<&'a str>,
-    pub role: Option<&'a str>,
-    pub session: Option<&'a str>,
-}
-
-impl<'a> CallAxes<'a> {
-    pub fn with_role(mut self, role: &'a str) -> Self {
-        self.role = Some(role);
-        self
-    }
-
-    pub fn with_capability(mut self, capability: &'a str) -> Self {
-        self.capability = Some(capability);
-        self
-    }
-
-    pub fn with_session(mut self, session: &'a str) -> Self {
-        self.session = Some(session);
+        self.axes = self.axes.with_session(session);
         self
     }
 }

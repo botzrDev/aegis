@@ -38,6 +38,14 @@ pub struct RateSpec {
 /// Match predicate for a rule. A `None` axis (or the literal `"*"`) matches any
 /// value; a `Some(v)` axis matches only when the request supplies that exact
 /// value. Specificity counts the concrete (non-wildcard) axes.
+///
+/// The **pattern** form of three axes, which is why it is not
+/// `botzr_aegis_core::CallAxes` — that type is the *asserted* form, carries no
+/// `tool` (the runtime derives it, AILAB-710), and carries a `session` this type
+/// deliberately does not: `session` is an evidence axis and a rate-limit key,
+/// never a match axis. `CONTEXT.md` under *Decision Axes* records why the two
+/// shapes differ, and this type is crate-internal so the difference is not a
+/// consumer's problem.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Matcher {
     pub tool: Option<String>,
@@ -64,8 +72,8 @@ impl Matcher {
     /// role) does not match — role gates only fire when a role is asserted.
     pub fn matches(&self, req: &super::PolicyRequest<'_>) -> bool {
         axis_matches(&self.tool, Some(req.tool_id.as_str()))
-            && axis_matches(&self.capability, req.capability)
-            && axis_matches(&self.role, req.role)
+            && axis_matches(&self.capability, req.axes.capability)
+            && axis_matches(&self.role, req.axes.role)
     }
 }
 

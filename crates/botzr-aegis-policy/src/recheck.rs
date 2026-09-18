@@ -36,7 +36,8 @@
 use std::fmt;
 
 use botzr_aegis_core::{
-    AuditRecord, PolicyOutcome, PolicySetHash, RequestDigest, ToolId, AUDIT_SCHEMA_VERSION,
+    AuditRecord, CallAxes, PolicyOutcome, PolicySetHash, RequestDigest, ToolId,
+    AUDIT_SCHEMA_VERSION,
 };
 
 use crate::engine::PolicyEngine;
@@ -248,10 +249,14 @@ fn is_blocked(was: &PolicyOutcome) -> bool {
 ///
 /// The request is rebuilt from **three axes only** — `capability`, `role`,
 /// `session` — because those, plus `tool_id`, are exactly what a
-/// [`PolicyRequest`] is. `decision_axes` also carries `fs` and `net`, and this
-/// function reads neither: they are derived *resources*, not match axes (no
-/// matcher consults them today), and reaching for a recorded path is one short
-/// step from resolving it. Nothing in this call graph touches the filesystem.
+/// [`PolicyRequest`] is. One call below does that whole read, and it is the only
+/// one: [`CallAxes`] carries exactly those three, so there is no longer a
+/// hand-written per-axis copy here to fall out of step with the recorded object
+/// (AILAB-849). `decision_axes` also carries `fs` and `net`, and neither this
+/// function nor the conversion reads them — they are derived *resources*, not
+/// match axes (no matcher consults them today), and reaching for a recorded path
+/// is one short step from resolving it. Nothing in this call graph touches the
+/// filesystem.
 ///
 /// A record from another schema version is [`RecheckVerdict::Indeterminate`],
 /// not a best-effort read. Field names are only meaningful relative to the
@@ -266,12 +271,9 @@ pub fn recheck_record(engine: &PolicyEngine, record: &AuditRecord) -> RecheckVer
         };
     }
 
-    let axes = &record.payload.decision_axes;
     let request = PolicyRequest {
         tool_id: &record.payload.tool_id,
-        capability: axes.capability.as_deref(),
-        role: axes.role.as_deref(),
-        session: axes.session.as_deref(),
+        axes: CallAxes::from_recorded(&record.payload.decision_axes),
     };
 
     classify(&record.payload.policy, engine.preview(&request))

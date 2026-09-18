@@ -2,9 +2,13 @@
 //!
 //! **`tools/call` only.** `initialize`, `tools/list`, `ping`, notifications and
 //! every method this build has never heard of are relayed with zero
-//! interception: no session, no audit line, no locally synthesized response.
-//! Wrap is an interposer, not a second server, and a `-32601` invented at this
-//! layer would be wrap answering for a child that was never asked.
+//! interception: no session, no audit line, and never a response wrap wrote
+//! itself. Wrap is an interposer, not a second server, and a `-32601` invented
+//! at this layer would be wrap answering for a child that was never asked —
+//! forbidden here and under any enforcement mode. Whether an opted-in
+//! enforcement mode may synthesize a JSON-RPC error for a `tools/call` it
+//! *refused* is ADR-0015 (lands in AILAB-793); this build still synthesizes
+//! nothing.
 //!
 //! A recorded call is two lines, in this order: an **intent** fsynced before the
 //! request reaches the child, and an **outcome** written after the child's

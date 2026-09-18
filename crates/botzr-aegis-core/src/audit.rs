@@ -214,6 +214,80 @@ impl<'de> serde::Deserialize<'de> for AuditLineType {
     }
 }
 
+/// The Decision Axes a caller **asserts** for a Call, generic over how each one
+/// is spelled: `CallAxes<&str>` borrows from the caller's own buffers on the
+/// request path, `CallAxes<String>` would own them.
+///
+/// `tool_id` is deliberately absent: the runtime derives it from the call
+/// request's own tool, so a request cannot name one tool and be judged as
+/// another (AILAB-710). Before this type existed, a call request carried both
+/// its own `tool_id` and a whole `PolicyRequest` with a second one, and nothing
+/// reconciled the two — the registry executed one tool while policy judged
+/// another, and the audit record carried a verdict about a tool that never ran.
+///
+/// The fix is structural rather than a check. A `debug_assert!` comparing the
+/// two ids was considered and rejected: it is compiled out of release builds,
+/// so it would leave the mismatch reachable in exactly the builds that matter.
+/// Returning an error on mismatch was also rejected — it still lets a caller
+/// build the contradictory request, and only reports it afterwards. Removing
+/// the second id makes the bad state unrepresentable instead of detectable.
+///
+/// This is the **asserted** triple, and it is one type rather than one per
+/// crate: `botzr-aegis-policy` re-exports it, `PolicyRequest` embeds it beside
+/// the derived `tool_id`, and [`DecisionAxes::from_call_axes`] is the single
+/// conversion onto the recorded object. It is not the recorded type and not the
+/// pattern type — see `CONTEXT.md` under *Decision Axes* for the full split.
+///
+/// **Adding an asserted axis** is a field here plus the two conversions
+/// ([`DecisionAxes::from_call_axes`] and [`CallAxes::from_recorded`]): both
+/// destructure this struct exhaustively, so neither compiles until it names the
+/// new field. **Adding a matchable axis** is all of that plus the policy
+/// crate's pattern type, its YAML rule, and its hash projection — a strictly
+/// larger change, and out of scope for AILAB-849.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CallAxes<T> {
+    /// The capability axis the call requests (e.g. `fs.read`, `net.http`).
+    pub capability: Option<T>,
+    /// The role the caller asserts. A role-gated rule fires only when one is.
+    pub role: Option<T>,
+    /// The policy session scope. An evidence axis and a rate-limit key, not a
+    /// match axis — see `CONTEXT.md`.
+    pub session: Option<T>,
+}
+
+impl<'a> CallAxes<&'a str> {
+    pub fn with_role(mut self, role: &'a str) -> Self {
+        self.role = Some(role);
+        self
+    }
+
+    pub fn with_capability(mut self, capability: &'a str) -> Self {
+        self.capability = Some(capability);
+        self
+    }
+
+    pub fn with_session(mut self, session: &'a str) -> Self {
+        self.session = Some(session);
+        self
+    }
+
+    /// Inverse of [`DecisionAxes::from_call_axes`]: the asserted triple as it
+    /// was recorded, borrowed straight out of the record.
+    ///
+    /// Reads `capability` / `role` / `session` and nothing else. `fs` and `net`
+    /// are derived *resources* rather than asserted axes — no matcher consults
+    /// them, and reaching for a recorded path is one short step from resolving
+    /// it. `matched_rule` and `approval_ref` are outputs of the verdict, so
+    /// feeding them back in as inputs would beg the question a recheck asks.
+    pub fn from_recorded(axes: &'a DecisionAxes) -> Self {
+        Self {
+            capability: axes.capability.as_deref(),
+            role: axes.role.as_deref(),
+            session: axes.session.as_deref(),
+        }
+    }
+}
+
 /// The inputs a policy verdict actually turned on.
 ///
 /// Nested under `decision_axes` rather than flattened, because `AuditRecord`
@@ -284,6 +358,42 @@ impl DecisionAxes {
     pub fn with_capability(mut self, capability: impl Into<String>) -> Self {
         self.capability = Some(capability.into());
         self
+    }
+
+    /// The one conversion from the caller-asserted [`CallAxes`] onto the
+    /// recorded object. `matched_rule` is layered on afterwards by the pipeline,
+    /// because it is the verdict's output rather than the call's assertion; `fs`
+    /// and `net` are layered on later still, from the minted grant.
+    ///
+    /// The parameter is **destructured, not read field by field, and without
+    /// `..`**: that is the whole point of routing every emitter through here. A
+    /// fourth asserted axis on `CallAxes` stops this function compiling until it
+    /// is named, so an axis can never be added on the request path and silently
+    /// dropped on the way to the record — which is the shape of the bug
+    /// AILAB-708 fixed by hand at two entry points and this replaces
+    /// structurally.
+    ///
+    /// Each axis is set only when the caller actually asserted one: an unset
+    /// axis is omitted, and `""` would be a recorded empty value, not an
+    /// absence. [`CallAxes::from_recorded`] is the inverse.
+    pub fn from_call_axes(
+        CallAxes {
+            capability,
+            role,
+            session,
+        }: CallAxes<&str>,
+    ) -> Self {
+        let mut axes = Self::default();
+        if let Some(capability) = capability {
+            axes = axes.with_capability(capability);
+        }
+        if let Some(role) = role {
+            axes = axes.with_role(role);
+        }
+        if let Some(session) = session {
+            axes = axes.with_session(session);
+        }
+        axes
     }
 
     pub fn with_role(mut self, role: impl Into<String>) -> Self {
@@ -1168,6 +1278,37 @@ mod tests {
         }
         // decision_axes is the exception: always emitted, possibly empty.
         assert!(json.contains("\"decision_axes\":{}"), "{json}");
+    }
+
+    /// The two conversions are inverses over the three asserted axes.
+    ///
+    /// This pins the conversion without touching the wire: the record's field
+    /// names and key order are asserted elsewhere, and this asks only that what
+    /// a caller asserted is what comes back out. It is deliberately not a
+    /// `DecisionAxes` struct literal — the eighth-axis tripwires in this module
+    /// are, and this test is about the *asserted* triple, which is all
+    /// `CallAxes` has.
+    #[test]
+    fn from_call_axes_round_trips_through_from_recorded() {
+        let asserted = CallAxes::default()
+            .with_capability("fs.read")
+            .with_role("ops")
+            .with_session("s-1");
+
+        let recorded = DecisionAxes::from_call_axes(asserted);
+        let back = CallAxes::from_recorded(&recorded);
+
+        assert_eq!(back.capability, Some("fs.read"));
+        assert_eq!(back.role, Some("ops"));
+        assert_eq!(back.session, Some("s-1"));
+        assert_eq!(back, asserted, "the two conversions must be inverses");
+
+        // An axis the caller did not assert stays unset rather than becoming an
+        // empty string: omit-never-null holds through both directions.
+        let sparse = DecisionAxes::from_call_axes(CallAxes::default().with_role("ops"));
+        assert_eq!(sparse.capability, None);
+        assert_eq!(sparse.session, None);
+        assert_eq!(CallAxes::from_recorded(&sparse).role, Some("ops"));
     }
 
     #[test]

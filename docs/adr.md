@@ -27,6 +27,7 @@ narrower surface still ([CLI](cli.md)).
 | [0012](adr/0012-the-audit-sink-is-a-seam-that-declares-retention.md) | The audit sink is a public seam that declares its own retention | yes |
 | [0013](adr/0013-verify-and-recheck-share-a-classifier-not-a-walk.md) | Verify and Recheck share a line classifier, not a walk | yes |
 | [0014](adr/0014-the-record-file-extension-is-aarl.md) | The record file extension is `.aarl` | yes — every example writes it; no code parses an extension, by design |
+| [0015](adr/0015-wrap-may-synthesize-a-refusal.md) | Wrap may synthesize a JSON-RPC error for an opted-in enforcement refusal | **no** |
 
 The bold **no** rows carry an above-the-fold *Not implemented*
 banner on the ADR itself. They are kept here, unedited, because an ADR is
