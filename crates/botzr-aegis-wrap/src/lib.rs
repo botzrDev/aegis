@@ -13,11 +13,15 @@
 //! whitespace is dropped rather than forwarded.
 //!
 //! **A `tools/call` inside a JSON-RPC batch array is recorded like one sent in
-//! a frame of its own**, and the array is still relayed whole and unsplit. The
-//! N calls in one batch therefore share one `request_digest` and one
-//! `response_digest`: a batched element never was a frame, so the digests cover
-//! the arrays that actually crossed the wire. The README's "Batched calls"
-//! carries the whole of it.
+//! a frame of its own**, and the array is still relayed whole and unsplit — by
+//! default, and under [`WrapMode::Enforce`] when the gate allows every
+//! `tools/call` in the frame. One refused element drops the **whole** frame
+//! instead, never a filtered array: re-serializing a parsed value onto the
+//! child's stdin is the thing wrap does not do (ADR-0015). The N calls in one
+//! batch therefore share one `request_digest` and one `response_digest`: a
+//! batched element never was a frame, so the digests cover the arrays that
+//! actually crossed the wire. The README's "Batched calls" carries the whole of
+//! it.
 //!
 //! **What a session does is [`WrapMode`], and the default is
 //! [`WrapMode::Record`]:** relay everything, record every `tools/call`, block

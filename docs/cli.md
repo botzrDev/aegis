@@ -8,7 +8,7 @@ aegis <version> — research runtime for secure agent tool execution
 Usage:
   aegis [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]
   aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]
-  aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]
+  aegis wrap --audit <PATH> --signing-key <PATH> [--policy <YAML>] [--confine] -- <CMD> [ARGS…]
   aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>
   aegis recheck --policy <YAML> <PATH>
   aegis keygen --out <PATH> [--force]
@@ -72,8 +72,23 @@ of them defaulting.
 ## `aegis wrap`
 
 Interpose on a child stdio MCP server and **record** every `tools/call`.
-Confines only when `--confine` is given, on Linux. Does not evaluate
-policy or inspect arguments. See [Wrapping an MCP server](wrap.md).
+
+Two independent opt-ins, neither on by default:
+
+- **`--policy <YAML>`** evaluates every well-formed `tools/call` before the
+  frame may reach the child. A denied one never reaches it and the client is
+  answered with JSON-RPC `-32042` rather than left blocked on an id
+  ([ADR-0015](adr/0015-wrap-may-synthesize-a-refusal.md)). **Without
+  `--policy` wrap evaluates no rules and blocks nothing** — every
+  `tools/call` is relayed, and the client stream is byte-for-byte the child's.
+  A rule here matches **tool identity**; wrap never inspects
+  `params.arguments`, and mints no capability under either mode, so even an
+  allowed call records the `deny_all` pass-through grant.
+- **`--confine`** applies Landlock and seccomp to the child *process*, on
+  Linux, and records what the kernel actually enforced. It is not a per-call
+  decision and answers a different question from `--policy`.
+
+See [Wrapping an MCP server](wrap.md) for the full non-guarantee list.
 
 ## `aegis verify`
 

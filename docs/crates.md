@@ -14,7 +14,7 @@ on the registry with the next cut.
 | `botzr-aegis-runtime` | Orchestrator — `Runtime::execute_tool_call` | published |
 | `botzr-aegis-mcp` | MCP stdio gateway for Aegis's own catalog | published |
 | `botzr-aegis-cli` | Binary `aegis` | published |
-| `botzr-aegis-wrap` | Stdio MCP interposer — records; confines only with `--confine` | in-tree only |
+| `botzr-aegis-wrap` | Stdio MCP interposer — always records; confines only with `--confine` (Linux), evaluates policy only with `--policy`. Default wrap relays every call and blocks nothing | in-tree only |
 | `botzr-aegis-confine` | Linux Landlock + seccomp from a grant (AILAB-628) | in-tree only |
 
 `governance/` is a separate Python (Layer 2) service — not a workspace

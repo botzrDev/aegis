@@ -1,6 +1,6 @@
 # Aegis release checklist
 
-> **Status:** v0.3.0 (AILAB-608) · **Last updated:** 2026-08-12 (AILAB-636 coverage gate)
+> **Status:** v0.3.0 (AILAB-608) · **Last updated:** 2026-09-18 (AILAB-632 — next cut publishes ten crates; confine added to the publish order)
 > **Related:** [CHANGELOG](../CHANGELOG.md) · [Findings](findings.md) · [Threat model](threat-model.md) · [Coverage ratchet](coverage-ratchet.md) · [SECURITY.md](../SECURITY.md)
 
 Cutting a release means putting immutable artifacts on crates.io under the Aegis
@@ -17,10 +17,22 @@ per-crate version overrides. If you find one, reconcile it before releasing
 rather than publishing a split set — the 0.1.0/0.1.1/0.2.0 skew that AILAB-608
 unwound is what this rule exists to prevent.
 
-**Crate count.** `0.3.0` published **eight** crates. `botzr-aegis-wrap` is a
-ninth in-tree crate and first appears on the registry with the **next** cut —
-do not try to add it to `0.3.0`. The publish order below includes wrap for that
-next cut.
+**Crate count.** `0.3.0` published **eight** crates. Two more are in-tree and
+have never been published — `botzr-aegis-wrap` and `botzr-aegis-confine` — so
+the **next** cut publishes **ten**. Do not try to add either to `0.3.0`: that
+version is spent. The publish order in step 5 includes both.
+
+**What the next cut ships that `0.3.0` did not.** The `aegis` binary grows
+`keygen`, `verify`, `recheck` and `wrap` — wrap with its two opt-ins,
+`--policy` (a denied `tools/call` is refused with `-32042`) and `--confine`
+(Linux). Records move from `schema_version: 1` to the signed, hash-chained
+schema v2 in [`spec/SPEC.md`](../spec/SPEC.md), which is **versioned
+independently of the crates**: link the spec from the release notes, do not
+retag or renumber it to match a crate version. Confirm before tagging that the
+CHANGELOG `Unreleased` section announces `botzr-aegis-wrap` and
+`botzr-aegis-confine` as first publications (AILAB-866) **and** that the wrap
+paragraph names `--policy` rather than claiming wrap enforces nothing
+(AILAB-793 / AILAB-632).
 
 ---
 
@@ -122,13 +134,18 @@ publishing ahead of the index fails.
 # Tier 1 — no in-workspace dependencies
 cargo publish -p botzr-aegis-core
 
-# Tier 2 — each depends on core only
+# Tier 2 — each depends on core only.
+# confine belongs here, not beside wrap: its only workspace dependency is core
+# (crates/botzr-aegis-confine/Cargo.toml), and wrap depends on confine, so
+# publishing wrap first would fail to resolve.
 cargo publish -p botzr-aegis-policy
 cargo publish -p botzr-aegis-capability
 cargo publish -p botzr-aegis-sandbox
 cargo publish -p botzr-aegis-audit
+cargo publish -p botzr-aegis-confine
 
-# Tier 3 — depends on audit + core (wrap); or audit, capability, core, policy, sandbox (runtime)
+# Tier 3 — depends on audit + core + confine (wrap); or audit, capability, core,
+# policy, sandbox (runtime)
 cargo publish -p botzr-aegis-wrap
 cargo publish -p botzr-aegis-runtime
 
@@ -136,6 +153,10 @@ cargo publish -p botzr-aegis-runtime
 cargo publish -p botzr-aegis-mcp
 cargo publish -p botzr-aegis-cli
 ```
+
+Ten crates, in four tiers. `botzr-aegis-wrap` and `botzr-aegis-confine` are
+first publications, so there is no prior version of either to compare against —
+their dry runs in step 3 are the only pre-flight they get.
 
 ## 6. Post-release
 

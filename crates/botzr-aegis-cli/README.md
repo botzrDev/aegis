@@ -276,20 +276,31 @@ finds a half-answer there.
 ### `aegis wrap` — interpose and record
 
 ```
-aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]
+aegis wrap --audit <PATH> --signing-key <PATH> [--policy <YAML>] [--confine] -- <CMD> [ARGS…]
 ```
 
 Sits in the middle of an existing MCP session — client ↔ `aegis wrap` ↔ child
 server — relays JSON-RPC byte-faithfully, and writes a schema-v2 chained, signed
 record for every `tools/call`. **Wrap confines only when `--confine` is
-given, on Linux, and records what was enforced.**
+given, on Linux, and records what was enforced. It evaluates policy only when
+`--policy` is given.**
 
-Read this list before describing wrap as a sandbox, a firewall, or a guard:
+Read this list before describing wrap as a sandbox, a firewall, or a guard — it
+matches [`docs/wrap.md`](../../docs/wrap.md), which carries the whole of it:
 
-- **No policy evaluation.** Every `tools/call` is relayed. Nothing is blocked.
-- **No argument matching.** Wrap does not look at `params.arguments`.
-- **No filesystem or network restriction on the child.** The child is an ordinary
-  OS process under the operator's own account.
+- **No policy evaluation unless `--policy`.** Default wrap runs no rules and
+  blocks nothing: every `tools/call` is relayed. `--policy <YAML>` is the opt-in,
+  and a denied `tools/call` is then refused with a JSON-RPC `-32042` error
+  ([ADR-0015](../../docs/adr/0015-wrap-may-synthesize-a-refusal.md)) instead of
+  reaching the child. No `PolicyEngine` lives in `botzr-aegis-wrap` either way:
+  it asks a `CallGate`, and this crate implements one over `botzr-aegis-policy`.
+- **No argument matching.** Wrap does not look at `params.arguments` — a rule
+  here matches on tool identity, nothing else.
+- **No capability minting, ever.** Not even under `--policy`: a gate decides
+  *whether* a call may go and resolves no grant, so every record still carries
+  the `deny_all` pass-through grant.
+- **No filesystem or network restriction unless `--confine`.** Without it the
+  child is an ordinary OS process under the operator's own account.
 - **Not Model A isolation.** Nothing runs inside wasmtime. See
   [`docs/threat-model.md`](../../docs/threat-model.md) §3.
 
@@ -303,13 +314,29 @@ including the child's `--help`.
 
 ```bash
 aegis keygen --out /tmp/aegis-signing.key
+
+# Record only. Every `tools/call` is relayed; nothing is blocked.
 aegis wrap \
-  --audit /tmp/wrap-audit.jsonl \
+  --audit /tmp/wrap-audit.aarl \
   --signing-key /tmp/aegis-signing.key \
-  -- npx -y some-mcp-server
+  -- <child stdio MCP server>
+
+# Opt in to enforcement. A denied `tools/call` never reaches the child; the
+# client gets `-32042` with `data.aegis.layer = "wrap"`.
+aegis wrap \
+  --audit /tmp/wrap-audit.aarl \
+  --signing-key /tmp/aegis-signing.key \
+  --policy ./policy.yaml \
+  -- <child stdio MCP server>
+
 # then pin the record:
-aegis verify --key <public_key printed by keygen> /tmp/wrap-audit.jsonl
+aegis verify --key <public_key printed by keygen> /tmp/wrap-audit.aarl
 ```
+
+Record files carry the `.aarl` extension
+([ADR-0014](../../docs/adr/0014-the-record-file-extension-is-aarl.md)). A
+copy-pasteable end-to-end walk, with the Aegis MCP gateway as the child, is in
+the [book quickstart](../../docs/quickstart.md#wrap-a-child-and-refuse-one-call).
 
 `aegis verify` distinguishes **pinned** from **unpinned**. A bare `Verified`
 without saying which is an overclaim — see [ADR-0004](../../docs/adr/0004-embedded-key-with-labelled-trust.md).
@@ -319,9 +346,11 @@ The library crate is [`botzr-aegis-wrap`](../botzr-aegis-wrap/README.md).
 
 `aegis run` lands the AEG-30 research quickstart path. `aegis verify` lands the
 AILAB-621 evidence-reading path, `aegis recheck` the AILAB-622 what-if path, and
-`aegis wrap` the AILAB-625 interposer path — **record only**, not confinement.
+`aegis wrap` the AILAB-625 interposer path — **record by default**, with
+`--confine` (AILAB-628) and `--policy` (AILAB-793) as separate opt-ins.
 Full admin surface / config files remain out of scope, as do follow modes for a
-live record file and the D3 policy/confine tickets.
+live record file, approval parking (AILAB-629) and macOS confinement
+(AILAB-630).
 
 ## Dependencies
 

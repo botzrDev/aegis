@@ -33,17 +33,28 @@ support.
   after the child's response is already on its way back. A wrap process that
   dies mid-call therefore still says a call was in flight.
 
-  **It enforces nothing per call, and that is the first thing to know about
-  it.** Wrap runs no policy engine, resolves no capability, makes no per-call
-  decision and blocks nothing. Its only station in the pipeline is AUDIT: the
-  crate depends on `botzr-aegis-audit`, `botzr-aegis-core` and
-  `botzr-aegis-confine`, and on none of policy, capability, sandbox or runtime.
-  The records say so rather than implying otherwise — because no Policy Set is
-  evaluated, `policy_set_hash` carries a documented pass-through constant
-  instead of naming a set that was never consulted. `--confine` adds OS
-  confinement to the child **process** (see the next entry), which is still not
-  a per-call decision; without it the child is an ordinary OS process with
-  whatever authority the operator's own account has.
+  **Enforcement is opt-in, and that is the first thing to know about it.**
+  Default wrap makes no per-call decision and blocks nothing: it runs no rules
+  and relays every `tools/call`, so the client stream is byte-for-byte the
+  child's. `--policy <YAML>` is the opt-in — with it, every well-formed
+  `tools/call` is evaluated before the frame may reach the child, and a refused
+  one never reaches it: the client is answered with a JSON-RPC `-32042` error
+  carrying `data.aegis.layer = "wrap"`, which is the only frame wrap ever
+  authors ([ADR-0015](docs/adr/0015-wrap-may-synthesize-a-refusal.md)). That is
+  a decision about *whether a call may go*, not the enforcement pipeline moving
+  into this crate: wrap asks a `CallGate` trait, the CLI implements it over
+  `botzr-aegis-policy`, and the crate graph is unchanged —
+  `botzr-aegis-audit`, `botzr-aegis-core` and `botzr-aegis-confine`, and none of
+  policy, capability, sandbox or runtime. **No capability is minted under either
+  mode**, so even an enforced *allow* still records the `deny_all` pass-through
+  grant, and a rule here matches on **tool identity**; `params.arguments` is
+  never inspected. The records say which happened rather than implying
+  otherwise: a relayed call's `policy_set_hash` carries a documented
+  pass-through constant instead of naming a set that was never consulted, while
+  an enforced one carries the real Policy Set hash. `--confine` is a separate
+  opt-in that adds OS confinement to the child **process** (see the next entry)
+  and is still not a per-call decision; without either flag the child is an
+  ordinary OS process with whatever authority the operator's own account has.
 
   Two behaviours to know before reading a record. Within a frame the bytes are
   relayed verbatim — a trailing `\r` and invalid UTF-8 both survive — and the
@@ -51,6 +62,12 @@ support.
   And a `tools/call` inside a JSON-RPC batch array is recorded like one sent in
   a frame of its own while the array is relayed whole and unsplit, so the N
   calls in one batch share one `request_digest` and one `response_digest`.
+  Under `--policy` a batch is refused only ever **whole** — filtering it would
+  mean re-serializing a parsed value onto the child's stdin, which wrap never
+  does — so one refused `tools/call` drops the entire frame, and an allowed
+  sibling is recorded as `host_denied` with reason `not executed: sibling call
+  in this batch was refused` while its own policy verdict still reads
+  `allowed`.
   Anything that is not a `tools/call` — `initialize`, `tools/list`, `ping`,
   notifications, methods this build has never heard of — is relayed with no
   interception and produces no record at all.

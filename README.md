@@ -66,9 +66,42 @@ Prefer Model A wherever tool logic can live in WASM. Reserve Model B for effects
 genuinely must touch the host, and keep that host-function set small and hand-audited.
 Details and evidence: [threat model §3](docs/threat-model.md#3-trust-boundaries-model-a-vs-model-b).
 
+## What ships, per platform
+
+Every layer below is on `main` today; the [quickstart](#quickstart) exercises the
+first four and `aegis wrap --policy`. **Native OS confinement is Linux-only** — that
+qualifier belongs beside any sentence calling Aegis containment, not in a
+footnote further down
+([ADR-0010](docs/adr/0010-macos-confinement-fast-follows-m4.md)).
+
+| Layer | Linux | macOS |
+|---|---|---|
+| Policy evaluation — tool id, role and capability axes, sync over a parsed-once `Arc<PolicySet>` | yes | yes |
+| Capability grants — default-deny resolution, minted per call | yes | yes |
+| Model A cell — a per-call wasmtime `Store` configured from the grant | yes | yes |
+| Signed, hash-chained record (`schema_version: 2`), emitted on every exit path | yes | yes |
+| `aegis verify` — walks a chain, labelled **pinned** or **unpinned** ([ADR-0004](docs/adr/0004-embedded-key-with-labelled-trust.md)) | yes | yes |
+| `aegis recheck` — re-evaluates a record against other rules; executes nothing ([ADR-0008](docs/adr/0008-d2-re-evaluation-is-recheck-not-replay.md)) | yes | yes |
+| `aegis wrap --policy` — refuses a `tools/call` with JSON-RPC `-32042` ([ADR-0015](docs/adr/0015-wrap-may-synthesize-a-refusal.md)) | yes | yes |
+| `aegis wrap --confine` — Landlock filesystem scoping + a seccomp **network deny-list** | yes | **no** |
+
+Read that last row against [`docs/wrap.md`](docs/wrap.md) before relying on it:
+the filesystem half is enforced at the LSM layer, the network half is an
+enumerated deny-list whose default action is *allow*, and macOS Seatbelt is
+AILAB-630 and is not built.
+
+**Not shipped on any platform**, and deliberately absent from the table:
+matching on a call's `arguments` (AILAB-626, canceled — a policy rule matches
+tool identity, nothing else), parking a call for human approval (AILAB-629),
+pinning a tool schema by hash (AILAB-627), and Landlock `AccessNet` for the
+network half (AILAB-810). If you read those in
+[ADR-0010](docs/adr/0010-macos-confinement-fast-follows-m4.md), note its
+**Not implemented** banner: it records a plan from 2026-08-10, not behaviour.
+
 ## Crate map
 
-Runtime crates (Cargo workspace, `unsafe_code = forbid` workspace-wide):
+Ten crates in the workspace (`unsafe_code = forbid` workspace-wide); **eight** are on
+crates.io at `0.3.0`:
 
 | Crate | Responsibility |
 |---|---|
@@ -79,7 +112,8 @@ Runtime crates (Cargo workspace, `unsafe_code = forbid` workspace-wide):
 | `botzr-aegis-audit` | Schema-versioned audit records, always emitted |
 | `botzr-aegis-runtime` | Orchestrator — walks the pipeline (`Runtime::execute_tool_call`) |
 | `botzr-aegis-mcp` | Phase 2 [MCP stdio gateway](crates/botzr-aegis-mcp/README.md) — Aegis's own catalog, not an interposer |
-| `botzr-aegis-wrap` | Transparent stdio MCP interposer — **records; does not confine.** No policy, no sandbox, no OS restriction on the child. In-tree; not on crates.io at `0.3.0`. See [`aegis wrap`](crates/botzr-aegis-cli/README.md#aegis-wrap--interpose-and-record) |
+| `botzr-aegis-wrap` | Transparent stdio MCP interposer — always **records**; confines the child only with `--confine` (Linux) and evaluates policy only with `--policy`. Default wrap relays every call and blocks nothing. In-tree; not on crates.io at `0.3.0`. See [`aegis wrap`](crates/botzr-aegis-cli/README.md#aegis-wrap--interpose-and-record) |
+| `botzr-aegis-confine` | Linux Landlock + seccomp derived from a grant; `UnsupportedConfiner` everywhere else. Depends on `core` only. In-tree; not on crates.io at `0.3.0` |
 | `botzr-aegis-cli` | Binary `aegis` — `run`, plus `keygen` / `verify` / `recheck` / `wrap` on `main` |
 
 `governance/` is a **separate Python (Layer 2) service** — audit ingest, narrow-only
@@ -141,6 +175,72 @@ cargo run -p botzr-aegis-cli -- \
 # then pin them: cargo run -p botzr-aegis-cli -- verify --key <public_key> /tmp/aegis-audit.jsonl
 ```
 
+Interpose on a stdio MCP server and **refuse** one `tools/call`. This beat needs a
+clone: crates.io `0.3.0` has neither `wrap` nor `keygen` (see [Status](#status)).
+
+```bash
+# From a clone of `main`. crates.io 0.3.0 cannot do this.
+cargo build -p botzr-aegis-cli -p botzr-aegis-mcp --release
+
+# A policy that denies the tool `echo` and allows everything else.
+cat > /tmp/deny-echo.yaml <<'EOF'
+version: 1
+default: allow
+rules:
+  - id: deny-echo
+    action: deny
+    tool: echo
+    reason: "632 quickstart"
+EOF
+
+./target/release/aegis keygen --out /tmp/aegis-signing.key
+# stdout: public_key <hex> / key_id <hex>
+
+# One `tools/call` named `echo`, piped into wrap. The child here is Aegis's own
+# MCP gateway standing in for any stdio MCP server — substitute yours after `--`.
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hi"}}}' \
+  | ./target/release/aegis wrap \
+      --audit /tmp/wrap-audit.aarl \
+      --signing-key /tmp/aegis-signing.key \
+      --policy /tmp/deny-echo.yaml \
+      -- ./target/release/botzr-aegis-mcp \
+           --audit /tmp/gateway-audit.aarl \
+           --signing-key /tmp/aegis-signing.key
+# client stdout is the refusal, not the echo body:
+# {"error":{"code":-32042,"data":{"aegis":{"code":"POLICY_DENIED","layer":"wrap"}},
+#  "message":"aegis wrap refused this tools/call"},"id":1,"jsonrpc":"2.0"}
+
+./target/release/aegis verify --key <public_key printed by keygen> /tmp/wrap-audit.aarl
+# Verified (pinned to <key_id>)
+```
+
+Drop `--policy` and the same command relays the call and prints the `echo` result:
+**default wrap records and blocks nothing**, and `--policy` is the whole opt-in.
+
+**Two record files, on purpose.** Wrap keeps the record of the call it *carried*;
+the gateway keeps the record of the call it *executed*. Pointing both at one path
+would interleave two Chains and neither would verify — the invariant
+[`crates/botzr-aegis-mcp/tests/wrap_interop.rs`](crates/botzr-aegis-mcp/tests/wrap_interop.rs)
+holds. Here `/tmp/gateway-audit.aarl` records no call at all, because the refused
+frame never reached the child. Records use the `.aarl` extension
+([ADR-0014](docs/adr/0014-the-record-file-extension-is-aarl.md)).
+
+**`aegis verify` without `--key` prints `Verified (unpinned)`** — internal
+consistency only, not provenance. An attacker who rewrites a whole Session signs
+it with their own key and an unpinned walk comes out clean. A bare "Verified" that
+does not say which is the overclaim
+[ADR-0004](docs/adr/0004-embedded-key-with-labelled-trust.md) exists to prevent.
+
+**What this beat is not.** Wrap runs nothing inside wasmtime, so it is **not**
+Model A isolation — it is closer to Model B and weaker than either, because the
+effect executes in a child process wrap does not control. `--policy` matches on
+**tool identity**, never on `params.arguments`, and mints no capability, so even an
+allowed call records the `deny_all` pass-through grant. `--confine` is a separate
+flag, Linux-only, answering a different question. A chain that abuses a
+*legitimate* tool on this same server is not refused here and is not in scope
+(D5). [`docs/wrap.md`](docs/wrap.md) carries the full list before you describe
+wrap as a sandbox, a firewall, or a guard.
+
 Reproduce the adversarial containment demo (a deliberately malicious `wasip2` guest
 driven through the full pipeline):
 
@@ -155,9 +255,26 @@ Reproduce the hot-path benchmarks (policy eval and capability resolution only):
 cargo bench -p botzr-aegis-policy -p botzr-aegis-capability -p botzr-aegis-runtime
 ```
 
-Published results on cited hardware: policy evaluation in tens of nanoseconds and the
-combined policy + capability hot path at ~2.7 µs (well under the <1 ms target). See
+Published results, on an AMD Ryzen AI 5 340 under WSL2 with Criterion 0.5.1:
+`policy_eval/multi_rule` at **31.8 ns** (rustc 1.96.0, 2026-07-09) and
+`hot_path/multi_rule` at **263.4 ns** (rustc 1.86.0, 2026-09-07, after path
+canonicalization moved to registration). Both figures, their toolchains and the
+before/after tables are in
 [`benches/results/hot_path.md`](benches/results/hot_path.md).
+
+Quote the second one carefully: `hot_path` is **stations 1–2 only — not what a
+call costs**. An audited call end to end is
+[`benches/results/cell_and_audit.md`](benches/results/cell_and_audit.md) —
+**32.9–37.4 µs** against the shipped Volatile sink, and **2.86–17.5 ms** against a
+Durable one, published as a range because the durable arm spread 6.1× across two
+sessions and has no reproducible median. Interposing has its own file,
+[`benches/results/wrap_overhead.md`](benches/results/wrap_overhead.md): **4.371 ms**
+per recorded `tools/call` against an informational 0.5–2 ms budget — **a ~2.19×
+miss**, and the honest outcome rather than a regression, because two `sync_all`
+calls cost ~4.2 ms on that filesystem on their own. A merely relayed message is
+**136.05 µs**. This box swings
+±20% on identical binaries, so every digit here is provisional; the quiet-machine
+re-baseline is AILAB-796.
 
 ## Evidence
 
@@ -193,21 +310,34 @@ Four more verbs exist on `main` and reach the registry with the next cut:
 `aegis keygen` (mint a signing key), `aegis verify` (walk a record chain,
 labelled pinned or unpinned), `aegis recheck` (re-evaluate recorded outcomes
 against a different policy — it executes nothing), and `aegis wrap` (interpose
-on a stdio MCP server and **record** every `tools/call`). Wrap does not
-confine, evaluate policy, or restrict the child.
+on a stdio MCP server and **record** every `tools/call`). Default wrap relays
+everything and blocks nothing; `--policy <YAML>` is an opt-in under which a
+denied `tools/call` is refused with JSON-RPC `-32042`
+([ADR-0015](docs/adr/0015-wrap-may-synthesize-a-refusal.md)), and `--confine`
+is a separate Linux-only opt-in that restricts the child process. None of them
+mints a capability.
 
 Eight crates are published on [crates.io](https://crates.io/search?q=botzr-aegis) at
 `0.3.0` — `core`, `policy`, `capability`, `sandbox`, `runtime`, `audit`, `mcp`, `cli` —
-and the dependency graph resolves, so the CLI installs directly:
+and the dependency graph resolves, so the **`run`-only `0.3.0` binary** installs
+directly:
 
 ```sh
-cargo install botzr-aegis-cli
+cargo install botzr-aegis-cli   # the 0.3.0 binary: `aegis run`, and nothing else
 ```
 
-`botzr-aegis-wrap` is a ninth in-tree crate and is **not** on crates.io at `0.3.0`;
-it first appears on the next cut. Until then, build wrap from
-[`main`](https://github.com/botzrDev/aegis). Building from `main` or the tag is
-also what you want for the in-repo demos and benchmark harnesses.
+That binary cannot `wrap`, cannot `keygen`, and writes `schema_version: 1` records
+— unsigned, with no `seq` / `prev_hash` chain — so today's `aegis verify` has
+nothing to check in one. The hash-chained, signed schema v2 this repository
+describes arrives with the next cut, which is not dated here.
+
+`botzr-aegis-wrap` and `botzr-aegis-confine` are in-tree and are **not** on
+crates.io at `0.3.0`; both first appear on the next cut, which publishes **ten**
+crates ([`docs/release-checklist.md`](docs/release-checklist.md)). Until then,
+build them from [`main`](https://github.com/botzrDev/aegis) — that is what the
+[wrap beat above](#quickstart) does, and `cargo install botzr-aegis-cli` is not a
+substitute for it. Building from `main` or the tag is also what you want for the
+in-repo demos and benchmark harnesses.
 
 Earlier releases were a split set — `core` at 0.2.0, `sandbox` at 0.1.1, the other six at
 0.1.0. From 0.3.0 the whole workspace moves as one version; see the versioning note in
