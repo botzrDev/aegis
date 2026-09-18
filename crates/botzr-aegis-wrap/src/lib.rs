@@ -19,25 +19,36 @@
 //! the arrays that actually crossed the wire. The README's "Batched calls"
 //! carries the whole of it.
 //!
-//! **Wrap confines only when `WrapConfig::confinement` is `Some`**, which the
-//! CLI sets from `--confine` (AILAB-628). Without it there is no policy
-//! evaluation, no argument matching, and no filesystem or network restriction
-//! on the child — the child is an ordinary OS process with whatever authority
-//! the operator's own account has. Read `README.md` before describing this
-//! crate as a sandbox by default, because it is not one.
+//! **What a session does is [`WrapMode`], and the default is
+//! [`WrapMode::Record`]:** relay everything, record every `tools/call`, block
+//! nothing. The CLI selects it when the operator passes neither `--confine` nor
+//! `--policy`, and a default session is byte-for-byte the child's on the client
+//! stream. Read `README.md` before describing this crate as a sandbox by
+//! default, because it is not one.
 //!
-//! Nothing here drives the enforcement pipeline. Wrap's only station is AUDIT:
-//! do not reach for `PolicyEngine`, `RuntimeBuilder`, or `execute_tool_call`
-//! from this crate. Capability resolution is not coming here either: argument
-//! matchers were canceled in AILAB-626, and `--confine` (AILAB-628) shipped but
-//! confines at the OS level without minting a grant.
+//! [`WrapMode::Confine`] adds OS confinement of the child from `--confine`
+//! (AILAB-628) and changes nothing about which calls are relayed.
+//! [`WrapMode::Enforce`] is opt-in per-call enforcement from `--policy <YAML>`:
+//! every well-formed `tools/call` is put to a [`CallGate`] first, and one the
+//! gate refuses never reaches the child — the client gets the ADR-0015 `-32042`
+//! error instead, and the record carries the real Policy Set hash rather than
+//! the pass-through stand-in. Without `--policy` there is no policy evaluation
+//! and no synthesized frame at all.
+//!
+//! **The enforcement pipeline still does not run in this crate.** A
+//! [`CallGate`] is a seam, not a `PolicyEngine`: do not reach for
+//! `PolicyEngine`, `RuntimeBuilder` or `execute_tool_call` from here — the CLI
+//! owns `botzr_aegis_policy` and implements the gate over it. Capability
+//! resolution is not coming here either: argument matchers were canceled in
+//! AILAB-626, and `--confine` confines at the OS level without minting a grant,
+//! so even an enforced call records the `deny_all` pass-through grant.
 
 mod config;
 mod error;
 mod record;
 mod relay;
 
-pub use config::{WrapConfig, WrapStreams};
+pub use config::{CallGate, GateVerdict, WrapConfig, WrapMode, WrapStreams};
 pub use error::WrapError;
 pub use record::WRAP_PASSTHROUGH_POLICY_SET_ID;
 pub use relay::{run_wrap, run_wrap_with_streams};

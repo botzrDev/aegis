@@ -1,15 +1,25 @@
 # Wrap may synthesize a JSON-RPC error for an opted-in enforcement refusal
 
-**Status:** accepted (2026-09-17) · lands in AILAB-793
+**Status:** accepted (2026-09-17) · implemented in AILAB-793 (2026-09-18)
 
-> **Not implemented.** This is an accepted design decision, not a description of
-> shipped behaviour. Wrap on current `main` still relays every frame and
-> synthesizes nothing — there is no enforcement mode to opt into, no code path
-> that writes a frame the child did not produce, and
-> `an_unknown_method_is_relayed_and_never_locally_refused` proves the client
-> stream is the child's. The present-tense body below records the decision as
-> written on 2026-09-17; it is not a product claim. Lands in AILAB-793 as
-> ticketed.
+> **Implemented, with two corrections to the body below.** `aegis wrap --policy
+> <YAML>` refuses a `tools/call` with exactly this frame, and the record for a
+> refused or allowed call now carries the governing Policy Set's content hash
+> instead of the pass-through stand-in. The body is the decision **as written on
+> 2026-09-17** and is not revised; two of its forward-looking sentences did not
+> survive contact:
+>
+> - *Telling a wrap refusal from a genuine child error*, third bullet, promises
+>   "the real policy-set hash **and the real grant**". Only the hash shipped. A
+>   gate decides whether a call may go and resolves no capability, so every wrap
+>   record — enforced or not — still carries the `deny_all` pass-through grant.
+> - *What enforcement still relays*, last sentence, says `docs/wrap.md` "stays
+>   until 793 makes it false". 793 made it false: that page now documents
+>   `--policy` and no longer claims nothing is ever blocked.
+>
+> Not shipped, and not this ADR's to schedule: the approval **park** (AILAB-629).
+> A `PendingApproval` verdict is refused with `data.aegis.code`
+> `PENDING_APPROVAL`, not parked.
 
 Under an opted-in enforcement mode, `botzr-aegis-wrap` may write to the client a JSON-RPC `error` frame that no child produced. That is the **only** frame wrap is ever permitted to author, and it may answer only a `tools/call` that wrap refused before the request reached the child.
 

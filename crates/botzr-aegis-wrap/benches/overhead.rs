@@ -44,7 +44,7 @@ use std::hint::black_box;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 
-use botzr_aegis_wrap::{run_wrap_with_streams, WrapConfig, WrapStreams};
+use botzr_aegis_wrap::{run_wrap_with_streams, WrapConfig, WrapMode, WrapStreams};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use tempfile::TempDir;
 
@@ -94,7 +94,9 @@ fn wrap_session(
         child_argv: vec![child.to_owned()],
         audit_path: audit_path.clone(),
         signing_key_path: key_path.to_path_buf(),
-        confinement: None,
+        // The pass-through relay is what this bench measures. An enforcing
+        // session would be measuring a `CallGate` the bench supplied.
+        mode: WrapMode::Record,
     };
     let streams = WrapStreams {
         // Owned because `Box<dyn Read + Send>` is `'static`; a few KB of memcpy

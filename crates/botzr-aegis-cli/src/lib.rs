@@ -101,7 +101,7 @@ pub struct RunArgs {
     pub version: String,
 }
 
-/// `aegis wrap --audit <PATH> --signing-key <PATH> -- <CMD> [ARGS…]`.
+/// `aegis wrap --audit <PATH> --signing-key <PATH> [--policy <YAML>] -- <CMD> [ARGS…]`.
 ///
 /// Both paths are required, unlike `run`'s optional pair, because wrap has no
 /// temp-sink mode: the only thing an interposer produces is its record, so a
@@ -124,6 +124,17 @@ pub struct WrapArgs {
     pub allow_net: Vec<(String, u16)>,
     /// Operator opt-in to partial enforcement. Meaningless without `--confine`.
     pub best_effort: bool,
+    /// Policy YAML to enforce against, per call (AILAB-793).
+    ///
+    /// **The presence of this flag is the whole opt-in.** There is no second
+    /// `--enforce`: a mode an operator can reach by accident is a mode wrap
+    /// must not have, and two flags that must agree is the pairing mistake
+    /// `check_audit_key_pair` exists to catch, one verb over. `None` is the
+    /// transparent relay every `aegis wrap` has always been.
+    ///
+    /// Orthogonal to `--confine`: policy decides *whether* a `tools/call` may
+    /// go, confinement decides what the child may touch once it runs.
+    pub policy: Option<PathBuf>,
     /// Grant read on the loader/libc paths a dynamically linked child needs to
     /// exec at all (`botzr_aegis_confine::EXEC_SUPPORT_PATHS`).
     ///
@@ -631,6 +642,7 @@ fn parse_recheck(args: &[String]) -> Result<Command, ParseStop> {
 fn parse_wrap(args: &[String]) -> Result<WrapArgs, ParseStop> {
     let mut audit = None;
     let mut signing_key = None;
+    let mut policy = None;
     let mut allow_exec_support = false;
     let mut confine = false;
     let mut allow_read = Vec::new();
@@ -643,6 +655,7 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, ParseStop> {
         &mut [
             FlagSpec::path(&["--audit"], &mut audit),
             FlagSpec::path(&["--signing-key"], &mut signing_key),
+            FlagSpec::path(&["--policy"], &mut policy),
             FlagSpec::set(&["--confine"], &mut confine),
             FlagSpec::set(&["--best-effort"], &mut best_effort),
             FlagSpec::set(&["--allow-exec-support"], &mut allow_exec_support),
@@ -678,6 +691,13 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, ParseStop> {
 
     // `--allow-*` / `--best-effort` without `--confine` is a usage error, not
     // a silent no-op — same pairing shape as `check_audit_key_pair`.
+    //
+    // `--policy` is deliberately *not* in this clause. It pairs with nothing:
+    // it is legal alone, legal beside `--confine`, and the two answer different
+    // questions. Requiring one for the other would make an operator who wants
+    // policy enforcement also opt into Landlock, which is a different decision
+    // on a different axis. The file itself is checked when it is loaded, in
+    // `wrap::run` — a `FlagSpec` cannot stat a path.
     if !confine
         && (!allow_read.is_empty()
             || !allow_write.is_empty()
@@ -694,6 +714,7 @@ fn parse_wrap(args: &[String]) -> Result<WrapArgs, ParseStop> {
     Ok(WrapArgs {
         audit,
         signing_key,
+        policy,
         child_argv,
         confine,
         allow_read,
@@ -743,7 +764,7 @@ pub fn usage_text() -> String {
          Usage:\n\
            aegis [--policy <PATH>] [--audit <PATH> --signing-key <PATH>]\n\
            aegis run --component <WASM> --id <TOOL_ID> [OPTIONS]\n\
-           aegis wrap --audit <PATH> --signing-key <PATH> [--confine] -- <CMD> [ARGS…]\n\
+           aegis wrap --audit <PATH> --signing-key <PATH> [--policy <YAML>] [--confine] -- <CMD> [ARGS…]\n\
            aegis verify [--key <HEX>]... [--trust-store <PATH>] <PATH>\n\
            aegis recheck --policy <YAML> <PATH>\n\
            aegis keygen --out <PATH> [--force]\n\
@@ -766,6 +787,10 @@ pub fn usage_text() -> String {
          Wrap options:\n\
            --audit <PATH>              Record file for the wrapped session (required)\n\
            --signing-key <PATH>        ed25519 seed file signing the Session (required)\n\
+           --policy <PATH>             Policy YAML to enforce per call; a denied\n\
+                                       tools/call never reaches the child and the\n\
+                                       client gets a JSON-RPC -32042 error\n\
+                                       (ADR-0015). Without it nothing is blocked.\n\
            --confine                   Apply Landlock + seccomp from --allow-* (Linux)\n\
            --allow-read <PATH>         Grant read (repeatable; requires --confine)\n\
            --allow-write <PATH>        Grant write (repeatable; requires --confine)\n\
@@ -780,7 +805,9 @@ pub fn usage_text() -> String {
          \n\
          Wrap confines only when --confine is given, on Linux, and records what\n\
          was enforced. Without --confine the child is an ordinary OS process\n\
-         with the authority of the account that started it.\n\
+         with the authority of the account that started it. Wrap evaluates\n\
+         policy only when --policy is given; without it every tools/call is\n\
+         relayed and nothing is blocked at this layer.\n\
          \n\
          Keygen options:\n\
            --out <PATH>                Write a new signing key here (mode 0600)\n\
@@ -1734,6 +1761,74 @@ mod tests {
         let err = parse_args(&sv(&[
             "aegis",
             "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--allow-read",
+            "/tmp",
+            "--",
+            "cat",
+        ]))
+        .unwrap_err();
+        assert!(err.contains("--confine"), "{err}");
+    }
+
+    /// `--policy` is the whole enforcement opt-in, and it pairs with nothing.
+    #[test]
+    fn parse_wrap_policy_is_legal_without_confine() {
+        match parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--policy",
+            "p.yaml",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--",
+            "child",
+        ]))
+        .unwrap()
+        {
+            Command::Wrap(w) => {
+                assert_eq!(w.policy, Some(PathBuf::from("p.yaml")));
+                assert!(!w.confine, "--policy must not imply --confine");
+                assert_eq!(w.child_argv, sv(&["child"]));
+            }
+            other => panic!("expected Wrap, got {other:?}"),
+        }
+
+        // And its absence is the transparent relay, not a default policy file.
+        match parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--audit",
+            "a.jsonl",
+            "--signing-key",
+            "k.key",
+            "--",
+            "child",
+        ]))
+        .unwrap()
+        {
+            Command::Wrap(w) => assert_eq!(w.policy, None),
+            other => panic!("expected Wrap, got {other:?}"),
+        }
+    }
+
+    /// The `--confine` pairing rule did not grow a `--policy` escape hatch.
+    ///
+    /// `--allow-read` asks for a confinement grant, so it still needs the flag
+    /// that applies one. Enforcing policy is a different question on a
+    /// different axis and does not answer this one.
+    #[test]
+    fn parse_wrap_allow_still_requires_confine_even_with_policy() {
+        let err = parse_args(&sv(&[
+            "aegis",
+            "wrap",
+            "--policy",
+            "p.yaml",
             "--audit",
             "a.jsonl",
             "--signing-key",

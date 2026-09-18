@@ -61,7 +61,7 @@ use std::time::{Duration, Instant};
 
 use botzr_aegis_audit::{load_signing_key, AuditWriter};
 
-use crate::config::{WrapConfig, WrapStreams};
+use crate::config::{CallGate, WrapConfig, WrapStreams};
 use crate::error::WrapError;
 use crate::record::{self, Observed, PendingCall, Unanswered};
 
@@ -143,7 +143,13 @@ pub fn run_wrap_with_streams(config: &WrapConfig, streams: WrapStreams) -> Resul
 
     // No sink here: the pump writes no diagnostics of its own. The one
     // lifecycle line wrap authors is emitted below, after the child is reaped.
-    let pumped = pump(&writer, &rx, child_stdin, &mut client_out);
+    let pumped = pump(
+        &writer,
+        &rx,
+        child_stdin,
+        &mut client_out,
+        config.mode.gate(),
+    );
     // Reap unconditionally. A pump that failed must not leave a zombie behind,
     // and the child holds the audit-relevant exit status either way.
     let reaped = reap(&mut child);
@@ -171,11 +177,17 @@ pub fn run_wrap_with_streams(config: &WrapConfig, streams: WrapStreams) -> Resul
 
 /// The main event loop. Returns whether the child died while the client was
 /// still open.
+///
+/// `gate` is `None` for every pass-through session, and then every client frame
+/// reaches the child exactly as it arrived. It is `Some` only under
+/// `WrapMode::Enforce`, and then one client frame in the session's whole life
+/// may stop here instead — see [`record::Observed::Refused`].
 fn pump(
     writer: &AuditWriter,
     rx: &Receiver<Event>,
     child_stdin: ChildStdin,
     client_out: &mut Box<dyn Write + Send>,
+    gate: Option<&(dyn CallGate + Send + Sync)>,
 ) -> Result<bool, WrapError> {
     // `Option` because client EOF closes the pipe by dropping the handle.
     let mut child_stdin = Some(child_stdin);
@@ -233,7 +245,7 @@ fn pump(
                 // A repeated id replaces the older call, whose `Drop` emits
                 // the fail-closed outcome — one id, one answerable call. That
                 // holds within a batch as much as across frames.
-                match record::observe_client_line(writer, &frame)? {
+                match record::observe_client_line(writer, &frame, gate)? {
                     Observed::Pending(id_key, call) => {
                         pending.insert(id_key, *call);
                     }
@@ -246,6 +258,18 @@ fn pump(
                         }
                     }
                     Observed::Ignored => {}
+                    // The one path on which a client frame does **not** reach
+                    // the child (ADR-0015). Every call it carried is already
+                    // recorded and completed, so nothing goes into `pending`;
+                    // the client is answered here rather than left blocked on
+                    // an id that would never come back. `continue` is what
+                    // skips the relay below — the frame stops at this layer.
+                    Observed::Refused(authored) => {
+                        for refusal in &authored {
+                            write_frame(client_out, refusal)?;
+                        }
+                        continue;
+                    }
                 }
                 if let Some(stdin) = child_stdin.as_mut() {
                     if write_frame(stdin, &frame).is_err() {
@@ -325,7 +349,7 @@ fn is_blank(frame: &[u8]) -> bool {
 /// on `AEGIS_CONFINE_REPORT`, a file next to the audit path — not stdin/stdout
 /// (MCP) and not stderr (the tee).
 fn spawn_child(program: &str, args: &[String], config: &WrapConfig) -> Result<Child, WrapError> {
-    let mut cmd = if let Some(profile) = &config.confinement {
+    let mut cmd = if let Some(profile) = config.mode.confinement() {
         let exe = std::env::current_exe().map_err(|source| WrapError::Spawn {
             program: program.to_string(),
             source,

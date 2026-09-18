@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use botzr_aegis_audit::{generate_signing_key, verify_chain_file, Verdict};
-use botzr_aegis_wrap::{run_wrap_with_streams, WrapConfig, WrapStreams};
+use botzr_aegis_wrap::{run_wrap_with_streams, WrapConfig, WrapMode, WrapStreams};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -91,7 +91,9 @@ fn wrap_relays_a_real_catalog_gateway_and_records_only_the_tools_call() {
         ],
         audit_path: wrap_audit.clone(),
         signing_key_path: wrap_key,
-        confinement: None,
+        // Interop is about the default relay: the gateway is just another
+        // unmodified stdio server from wrap's point of view.
+        mode: WrapMode::Record,
     };
 
     let script = [

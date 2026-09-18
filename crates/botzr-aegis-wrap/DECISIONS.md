@@ -266,10 +266,19 @@ not tell a fixture that quit from a relay that truncated.
   `--confine` (AILAB-628)
 - Changing `botzr-aegis-mcp`'s catalog behaviour — from wrap's point of view it
   is just another unmodified stdio MCP server
-- Driving the enforcement pipeline: no `RuntimeBuilder`, no `PolicyEngine`, no
-  `execute_tool_call`, no capability resolution
+- Driving the enforcement pipeline **in this crate**: no `RuntimeBuilder`, no
+  `PolicyEngine`, no `execute_tool_call`, no capability resolution. AILAB-793
+  added a per-call decision without adding any of them — wrap asks a `CallGate`
+  trait, the CLI implements it over `botzr-aegis-policy`, and the crate graph is
+  still `audit` + `core` + `confine`. A gate is not an engine.
 - Resource metering of the child process
+- Capability resolution or grant minting, under any mode. A gate decides
+  *whether* a call may go; every record still carries the `deny_all`
+  pass-through grant
 - HTTP/SSE transport, or Content-Length framing
-- **Refusing** a batch, or splitting one into per-element frames on either wire
-  — batched calls are recorded and the array is relayed whole; see the batch
-  section above
+- **Refusing** a batch by default, and splitting one into per-element frames on
+  either wire, under any mode — batched calls are recorded and the array is
+  relayed whole; see the batch section above. Under `--policy` a batch may be
+  refused, and only ever **whole**: filtering it would mean re-serializing a
+  parsed value onto the child's stdin, so one refused `tools/call` drops the
+  entire frame and each call in it is answered and recorded

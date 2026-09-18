@@ -165,10 +165,14 @@ fn wrap_requires_both_the_record_file_and_its_key() {
 fn the_usage_text_names_wrap_and_its_flags() {
     let usage = botzr_aegis_cli::usage_text();
     for token in [
-        "aegis wrap --audit <PATH> --signing-key <PATH> [--confine] -- <CMD>",
+        "aegis wrap --audit <PATH> --signing-key <PATH> [--policy <YAML>] [--confine] -- <CMD>",
         "Wrap options:",
         "--audit",
         "--signing-key",
+        // The enforcement opt-in is discoverable, and named as opt-in: an
+        // operator who never passes it must be able to read that nothing is
+        // blocked.
+        "--policy",
     ] {
         assert!(usage.contains(token), "usage missing {token}");
     }
@@ -312,5 +316,158 @@ fn a_child_that_cannot_be_spawned_is_an_error_not_an_empty_session() {
     assert!(
         err.contains(absent.to_str().unwrap()) || err.to_lowercase().contains("spawn"),
         "the message names what could not be started: {err:?}"
+    );
+}
+
+/// The deny-echo fixture Policy Set, same shape as the engine's own tests.
+const DENY_ECHO_POLICY: &str = r#"version: 1
+default: allow
+rules:
+  - id: deny-echo
+    action: deny
+    tool: echo
+    reason: "793 fixture"
+"#;
+
+/// One real **enforced** session end to end: the installed binary loads a
+/// policy file, refuses the `tools/call`, and the child never sees it.
+///
+/// [`RESPONDING_CHILD`] is the proof, not the assertion text. Its `case` arm
+/// exits 8 on the wrong bytes and its `read` exits 7 on no bytes at all — so a
+/// wrap that forwarded the frame would answer `ok` and exit 0, and a wrap that
+/// refused it leaves the child reading EOF and exiting 7. The exit code is
+/// therefore a second, independent witness that the request stopped at wrap.
+#[cfg(unix)]
+#[test]
+fn a_policy_denied_call_is_refused_by_the_installed_binary() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let audit = dir.path().join("audit.aarl");
+    let policy = dir.path().join("deny-echo.yaml");
+    std::fs::write(&policy, DENY_ECHO_POLICY).expect("write policy");
+    let key = keygen(&dir);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aegis"))
+        .args([
+            "wrap",
+            "--audit",
+            audit.to_str().unwrap(),
+            "--signing-key",
+            key.to_str().unwrap(),
+            "--policy",
+            policy.to_str().unwrap(),
+            "--",
+            "sh",
+            "-c",
+            RESPONDING_CHILD,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aegis wrap");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    writeln!(stdin, "{TOOLS_CALL}").expect("write request");
+    drop(stdin);
+
+    let output = wait_with_guard(child);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+
+    // The client got ADR-0015's frame, not the child's answer.
+    let refusal: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| panic!("{e}: {stdout}"));
+    assert_eq!(refusal["error"]["code"], -32042, "{refusal}");
+    assert_eq!(refusal["error"]["data"]["aegis"]["layer"], "wrap", "{refusal}");
+    assert_eq!(
+        refusal["error"]["data"]["aegis"]["code"], "POLICY_DENIED",
+        "{refusal}"
+    );
+    assert_eq!(refusal["id"], 1, "the id is echoed as JSON: {refusal}");
+    assert!(
+        !stdout.contains("hi-wrap") && !stdout.contains(r#""ok":true"#),
+        "the child's answer must not be on this stream: {stdout}"
+    );
+
+    // The child read EOF rather than a request — it never ran its `case` arm.
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "7 is the child's 'no request arrived'; 0 or 8 would mean wrap forwarded \
+         the frame: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // And the record says the refusal, against the set that decided it.
+    let jsonl = std::fs::read_to_string(&audit).expect("audit readable");
+    let outcome = jsonl
+        .lines()
+        .find(|line| line.contains("\"line_type\":\"outcome\""))
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("outcome is JSON"))
+        .unwrap_or_else(|| panic!("no outcome row: {jsonl}"));
+    assert_eq!(outcome["tool_id"], "echo", "{outcome}");
+    assert_eq!(outcome["policy"]["status"], "denied", "{outcome}");
+    assert_eq!(
+        outcome["capability"]["reason"], "policy blocked before capability",
+        "{outcome}"
+    );
+    assert_eq!(outcome["execution"]["status"], "host_denied", "{outcome}");
+    assert_eq!(outcome["decision_axes"]["matched_rule"], "deny-echo", "{outcome}");
+    // Not the pass-through stand-in: a real engine governed this call.
+    let passthrough = botzr_aegis_core::PolicySetHash::of_canonical_bytes(
+        botzr_aegis_wrap::WRAP_PASSTHROUGH_POLICY_SET_ID,
+    )
+    .to_hex();
+    assert_ne!(
+        outcome["policy_set_hash"].as_str().expect("a hash"),
+        passthrough,
+        "an engine-governed call must not carry the pass-through hash: {outcome}"
+    );
+}
+
+/// A policy file that cannot be loaded is a **start** error: exit 1, and no
+/// child process.
+///
+/// `FlagSpec` cannot stat a path, so this is checked where the engine is built.
+/// It has to happen before the spawn: a wrap that started a third-party server
+/// and only then found it could not evaluate policy has already handed that
+/// server the operator's authority.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_policy_file_fails_before_the_child_starts() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let audit = dir.path().join("audit.aarl");
+    let key = keygen(&dir);
+    let missing = dir.path().join("does-not-exist.yaml");
+    // A file the child would create if it ever ran.
+    let witness = dir.path().join("child-ran");
+    let touch = format!("touch {}", witness.display());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aegis"))
+        .args([
+            "wrap",
+            "--audit",
+            audit.to_str().unwrap(),
+            "--signing-key",
+            key.to_str().unwrap(),
+            "--policy",
+            missing.to_str().unwrap(),
+            "--",
+            "sh",
+            "-c",
+            touch.as_str(),
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn aegis wrap");
+
+    assert_eq!(output.status.code(), Some(1), "{:?}", output.status);
+    assert!(
+        stderr(&output).contains("policy"),
+        "the operator must be told which file: {}",
+        stderr(&output)
+    );
+    assert!(
+        !witness.exists(),
+        "the child must not have been spawned at all"
     );
 }

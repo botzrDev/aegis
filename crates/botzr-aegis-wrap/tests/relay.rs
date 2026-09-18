@@ -18,8 +18,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use botzr_aegis_audit::{verify_chain_file, Verdict};
-use botzr_aegis_core::{RequestDigest, ResponseDigest};
-use botzr_aegis_wrap::{run_wrap_with_streams, WrapConfig, WrapError, WrapStreams};
+use botzr_aegis_core::{PolicyAction, PolicySetHash, RequestDigest, ResponseDigest, ToolId};
+use botzr_aegis_wrap::{
+    run_wrap_with_streams, CallGate, GateVerdict, WrapConfig, WrapError, WrapMode, WrapStreams,
+    WRAP_PASSTHROUGH_POLICY_SET_ID,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -140,13 +143,21 @@ impl Driven {
 
 /// Run one wrap session: the mirror child, a scripted client, and a fresh
 /// signed audit sink.
+///
+/// Default mode — [`WrapMode::Record`] — so every case written before
+/// AILAB-793 drives the pass-through relay it was written against, unchanged.
 fn drive(script: &[&str]) -> Driven {
+    drive_bytes(framed(script))
+}
+
+/// The client's bytes for a scripted session: one frame per line.
+fn framed(script: &[&str]) -> Vec<u8> {
     let mut input = Vec::new();
     for line in script {
         input.extend_from_slice(line.as_bytes());
         input.push(b'\n');
     }
-    drive_bytes(input)
+    input
 }
 
 /// [`drive`], with the client's bytes supplied exactly — including framing.
@@ -156,6 +167,27 @@ fn drive_bytes(input: Vec<u8>) -> Driven {
 
 /// [`drive`], with the client stream supplied whole.
 fn drive_client(client_in: Box<dyn Read + Send>) -> Driven {
+    drive_mode(WrapMode::Record, client_in)
+}
+
+/// [`drive`], under an opted-in enforcement gate.
+///
+/// The extension rather than a second copy of the fifty lines below: the point
+/// of these cases is that enforcement runs through the *same* relay, against
+/// the same real child process, so a divergence would be a divergence in the
+/// product and not in two test harnesses.
+fn drive_enforced(gate: Arc<dyn CallGate + Send + Sync>, script: &[&str]) -> Driven {
+    drive_mode(
+        WrapMode::Enforce {
+            gate,
+            confinement: None,
+        },
+        Box::new(Cursor::new(framed(script))),
+    )
+}
+
+/// [`drive`], with both the mode and the client stream supplied.
+fn drive_mode(mode: WrapMode, client_in: Box<dyn Read + Send>) -> Driven {
     let dir = tempfile::tempdir().expect("temp dir");
     let audit_path = dir.path().join("audit.jsonl");
     let key_path = dir.path().join("signing.key");
@@ -166,7 +198,7 @@ fn drive_client(client_in: Box<dyn Read + Send>) -> Driven {
         child_argv: vec![env!("CARGO_BIN_EXE_aegis-wrap-mirror-child").to_owned()],
         audit_path: audit_path.clone(),
         signing_key_path: key_path,
-        confinement: None,
+        mode,
     };
 
     let client_out = Sink::default();
@@ -827,4 +859,416 @@ fn a_child_that_dies_under_a_live_client_says_so_and_exits_non_zero() {
     // Held open until here on purpose: dropping the sender earlier would let the
     // client stream report EOF and the branch under test would not be reached.
     drop(release_tx);
+}
+
+// ---------------------------------------------------------------------------
+// AILAB-793 — opt-in enforcement. Everything above this line drives
+// `WrapMode::Record` and is unchanged by it.
+// ---------------------------------------------------------------------------
+
+/// The Policy Set a stub gate names, and the whole of the hash assertion.
+///
+/// Deliberately **not** `WRAP_PASSTHROUGH_POLICY_SET_ID`: telling those two
+/// hexes apart in a record is how a reader knows whether a real engine governed
+/// the call, and it is the acceptance criterion ADR-0015 left to this ticket.
+const TEST_POLICY_SET_ID: &[u8] = b"wrap-test-policy-v0";
+
+fn fixture_hash() -> String {
+    PolicySetHash::of_canonical_bytes(TEST_POLICY_SET_ID).to_hex()
+}
+
+fn passthrough_hash() -> String {
+    PolicySetHash::of_canonical_bytes(WRAP_PASSTHROUGH_POLICY_SET_ID).to_hex()
+}
+
+/// A [`CallGate`] over a fixed table.
+///
+/// **Not a `PolicyEngine`.** `botzr-aegis-wrap` does not depend on
+/// `botzr-aegis-policy`, and a test that reached for one would be testing the
+/// engine rather than the seam — and would quietly make the dependency this
+/// ticket exists to avoid look necessary. What wrap owes the record is the
+/// hash, the action and the rule id a gate hands it; a table supplies all
+/// three.
+struct StubGate {
+    /// Tool ids this gate allows. Everything else gets `otherwise`.
+    allowed: &'static [&'static str],
+    /// The verdict every other tool gets.
+    otherwise: PolicyAction,
+}
+
+impl StubGate {
+    /// Allow these tools, deny the rest.
+    fn allowing(allowed: &'static [&'static str]) -> Arc<dyn CallGate + Send + Sync> {
+        Arc::new(Self {
+            allowed,
+            otherwise: PolicyAction::Deny {
+                reason: "stub gate denies this tool".to_owned(),
+            },
+        })
+    }
+
+    /// Allow nothing, and refuse with this action — for the verdicts that are
+    /// refusals without being denials.
+    fn refusing_with(otherwise: PolicyAction) -> Arc<dyn CallGate + Send + Sync> {
+        Arc::new(Self {
+            allowed: &[],
+            otherwise,
+        })
+    }
+}
+
+impl CallGate for StubGate {
+    fn decide(&self, tool_id: &ToolId) -> GateVerdict {
+        let allowed = self.allowed.contains(&tool_id.as_str());
+        GateVerdict {
+            policy_set_hash: PolicySetHash::of_canonical_bytes(TEST_POLICY_SET_ID),
+            action: if allowed {
+                PolicyAction::Allow
+            } else {
+                self.otherwise.clone()
+            },
+            matched_rule: Some(if allowed { "stub-allow" } else { "stub-refuse" }.to_owned()),
+        }
+    }
+}
+
+/// 18. A denied `tools/call` never reaches the child, and the client is told so
+///     rather than left blocked on an id (ADR-0015).
+#[test]
+fn a_denied_tools_call_is_refused_and_never_reaches_the_child() {
+    let driven = drive_enforced(
+        StubGate::allowing(&[]),
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hi"}}}"#,
+        ],
+    );
+
+    assert_eq!(driven.result.as_ref().ok(), Some(&0), "{:?}", driven.result);
+
+    // The child never saw it. Both markers are unforgeable by wrap: `mirrored`
+    // is the fixture's unknown-method answer, and the echo body is what a
+    // relayed `tools/call` comes back as.
+    let out = driven.client_out.text();
+    assert!(!out.contains("mirrored"), "{out}");
+    assert!(
+        !out.contains(r#""text":"echo""#),
+        "a refused call must not have been answered by the child: {out}"
+    );
+
+    // ADR-0015's frame, and only it.
+    let lines = driven.client_out.lines();
+    assert_eq!(lines.len(), 1, "one refusal, one frame: {lines:?}");
+    let refusal = driven.response(0);
+    assert_eq!(refusal["error"]["code"], -32042, "{refusal}");
+    assert!(
+        out.contains(r#""layer":"wrap""#),
+        "the frame names the layer that authored it: {out}"
+    );
+    assert_eq!(
+        refusal["error"]["data"]["aegis"]["code"], "POLICY_DENIED",
+        "{refusal}"
+    );
+    // The id is echoed as JSON: the client sent the number 1, not the string.
+    assert_eq!(refusal["id"], 1, "{refusal}");
+    assert!(
+        refusal["id"].is_number(),
+        "echoing the pending-map key would answer with \"1\": {refusal}"
+    );
+    // Wrap speaks as the interposer, never as the child.
+    assert!(refusal.get("result").is_none(), "{refusal}");
+
+    // Recorded as a deny on every axis below policy — the wording the runtime
+    // pipeline uses for the same refusal.
+    assert_eq!(
+        driven.line_types(),
+        vec!["open", "intent", "outcome", "close"],
+        "{}",
+        driven.audit
+    );
+    let outcome = &driven.outcomes()[0];
+    assert_eq!(outcome["tool_id"], "echo", "{outcome}");
+    assert_eq!(outcome["policy"]["status"], "denied", "{outcome}");
+    assert_eq!(outcome["capability"]["status"], "denied", "{outcome}");
+    assert_eq!(
+        outcome["capability"]["reason"], "policy blocked before capability",
+        "{outcome}"
+    );
+    assert_eq!(outcome["execution"]["status"], "host_denied", "{outcome}");
+    assert_eq!(outcome["execution"]["reason"], "not executed", "{outcome}");
+
+    // Against the set that actually decided it. The pass-through stand-in on a
+    // call a real gate governed is the lie this ticket exists to remove.
+    assert_eq!(
+        outcome["policy_set_hash"].as_str().expect("a hash"),
+        fixture_hash(),
+        "{outcome}"
+    );
+    assert_ne!(
+        outcome["policy_set_hash"].as_str().expect("a hash"),
+        passthrough_hash(),
+        "an engine-governed call must not carry the pass-through stand-in"
+    );
+    // An engine-governed record with empty `decision_axes` is that same lie one
+    // field over: the rule that decided it is named.
+    assert_eq!(
+        outcome["decision_axes"]["matched_rule"], "stub-refuse",
+        "{outcome}"
+    );
+
+    let verification = verify_chain_file(&driven.audit_path).expect("audit readable");
+    assert_eq!(
+        verification.verdict,
+        Verdict::Verified,
+        "{:?}",
+        verification.verdict
+    );
+}
+
+/// 19. An **allowed** `tools/call` is still relayed verbatim — and still
+///     records `deny_all`, because a gate mints no capability.
+#[test]
+fn an_allowed_tools_call_is_relayed_verbatim_under_a_gate() {
+    let driven = drive_enforced(
+        StubGate::allowing(&["echo"]),
+        &[r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}"#],
+    );
+
+    assert_eq!(driven.result.as_ref().ok(), Some(&0), "{:?}", driven.result);
+
+    let out = driven.client_out.text();
+    assert!(
+        out.contains(r#""text":"echo""#),
+        "the child, not wrap, must have answered: {out}"
+    );
+    assert!(
+        !out.contains("-32042"),
+        "an allowed call is not refused: {out}"
+    );
+
+    let outcome = &driven.outcomes()[0];
+    assert_eq!(outcome["policy"]["status"], "allowed", "{outcome}");
+    assert_eq!(outcome["capability"]["status"], "granted", "{outcome}");
+    assert_eq!(outcome["execution"]["status"], "success", "{outcome}");
+    // A gate decides *whether* a call may go. It resolves no capability, so the
+    // grant is still the pass-through `deny_all` — wrap must not record fs or
+    // net authority it never minted.
+    let grant = &outcome["capability"]["grant"];
+    assert!(grant.get("fs").is_none(), "{outcome}");
+    assert!(grant.get("net").is_none(), "{outcome}");
+    // The hash and the rule are the engine's on an allow too: an allowed call
+    // carrying the pass-through stand-in is the same defect as a denied one.
+    assert_eq!(
+        outcome["policy_set_hash"].as_str().expect("a hash"),
+        fixture_hash(),
+        "{outcome}"
+    );
+    assert_ne!(
+        outcome["policy_set_hash"].as_str().expect("a hash"),
+        passthrough_hash(),
+        "{outcome}"
+    );
+    assert_eq!(
+        outcome["decision_axes"]["matched_rule"], "stub-allow",
+        "{outcome}"
+    );
+}
+
+/// 20. Enforcement spends transparency on exactly one frame. An unknown method
+///     still reaches the child, and `-32601` stays forbidden (ADR-0015 *What
+///     enforcement still relays*).
+///
+/// A duplicate of `an_unknown_method_is_relayed_and_never_locally_refused` and
+/// deliberately not an edit of it: the original owns the default-mode claim,
+/// and a mode that quietly started refusing unknown methods has to redden a
+/// test of its own.
+#[test]
+fn an_unknown_method_is_relayed_under_enforcement_too() {
+    let driven = drive_enforced(
+        StubGate::allowing(&[]),
+        &[r#"{"jsonrpc":"2.0","id":1,"method":"aegis/definitely-not-a-method"}"#],
+    );
+
+    let out = driven.client_out.text();
+    assert!(
+        out.contains(r#""mirrored":"aegis/definitely-not-a-method""#),
+        "the child, not wrap, must have answered: {out}"
+    );
+    assert!(
+        !out.contains("-32601"),
+        "wrap must never synthesize method-not-found, gate or no gate: {out}"
+    );
+    assert!(
+        !out.contains("-32042"),
+        "a refusal answers a refused tools/call, not an unknown method: {out}"
+    );
+    // Not a `tools/call`, so the gate was never asked and nothing was recorded.
+    assert_eq!(
+        driven.line_types(),
+        vec!["open", "close"],
+        "{}",
+        driven.audit
+    );
+}
+
+/// 21. A batch carrying a denied `tools/call` is not forwarded at all.
+///
+/// A batch cannot be filtered: the array is the frame, and forwarding a subset
+/// would mean re-serializing a parsed value onto the child's stdin. So one
+/// refused element refuses the frame.
+#[test]
+fn a_batch_carrying_a_denied_call_is_not_forwarded() {
+    const BATCH: &str =
+        r#"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}]"#;
+
+    let driven = drive_enforced(StubGate::allowing(&[]), &[BATCH]);
+
+    let out = driven.client_out.text();
+    assert!(!out.contains("mirrored"), "{out}");
+    assert!(
+        !out.contains(r#""text":"echo""#),
+        "the child must not have answered a frame it never received: {out}"
+    );
+
+    // One client frame in, one client frame out — and in the shape the client
+    // sent, the way the child itself answers a batch.
+    let lines = driven.client_out.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let answer = driven.response(0);
+    let elements = answer.as_array().expect("a batch answers as an array");
+    assert_eq!(elements.len(), 1, "{answer}");
+    assert_eq!(elements[0]["id"], 1, "{answer}");
+    assert_eq!(elements[0]["error"]["code"], -32042, "{answer}");
+    assert_eq!(
+        elements[0]["error"]["data"]["aegis"]["code"], "POLICY_DENIED",
+        "{answer}"
+    );
+
+    // The call is still accounted for, as a deny.
+    assert_eq!(
+        driven.line_types(),
+        vec!["open", "intent", "outcome", "close"],
+        "{}",
+        driven.audit
+    );
+    let outcome = &driven.outcomes()[0];
+    assert_eq!(outcome["tool_id"], "echo", "{outcome}");
+    assert_eq!(outcome["policy"]["status"], "denied", "{outcome}");
+    assert_eq!(outcome["execution"]["status"], "host_denied", "{outcome}");
+    assert_eq!(
+        outcome["policy_set_hash"].as_str().expect("a hash"),
+        fixture_hash(),
+        "{outcome}"
+    );
+}
+
+/// 22. One deny in a batch takes its allowed siblings with it — and says so,
+///     to the client and in the record.
+///
+/// The alternative is re-encoding the array minus the refused element onto the
+/// child's stdin, which this crate does not do with any frame. The cost is
+/// named rather than hidden: an allowed sibling is refused, told `HOST_DENIED`,
+/// and recorded `allowed` at the policy station it actually passed.
+#[test]
+fn a_denied_sibling_refuses_the_whole_batch() {
+    const BATCH: &str = r#"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"blocked"}},{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"permitted"}}]"#;
+
+    let driven = drive_enforced(StubGate::allowing(&["permitted"]), &[BATCH]);
+
+    let out = driven.client_out.text();
+    assert!(!out.contains("mirrored"), "{out}");
+    assert!(
+        !out.contains(r#""text":"blocked""#) && !out.contains(r#""text":"permitted""#),
+        "neither element may have reached the child: {out}"
+    );
+
+    // Both ids are answered, in the order they appeared, in one array frame.
+    let lines = driven.client_out.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let answer = driven.response(0);
+    let elements = answer.as_array().expect("a batch answers as an array");
+    assert_eq!(elements.len(), 2, "both ids are answered: {answer}");
+    assert_eq!(elements[0]["id"], 1, "{answer}");
+    assert_eq!(elements[0]["error"]["code"], -32042, "{answer}");
+    assert_eq!(
+        elements[0]["error"]["data"]["aegis"]["code"], "POLICY_DENIED",
+        "the denied call names policy: {answer}"
+    );
+    assert_eq!(elements[1]["id"], 2, "{answer}");
+    assert_eq!(elements[1]["error"]["code"], -32042, "{answer}");
+    assert_eq!(
+        elements[1]["error"]["data"]["aegis"]["code"], "HOST_DENIED",
+        "the allowed sibling was refused by the host, not by policy: {answer}"
+    );
+
+    // Both have outcomes, and each says what was true of *it*.
+    assert_eq!(
+        driven.line_types(),
+        vec!["open", "intent", "outcome", "intent", "outcome", "close"],
+        "{}",
+        driven.audit
+    );
+    let outcomes = driven.outcomes();
+    assert_eq!(outcomes.len(), 2, "{}", driven.audit);
+    assert_eq!(outcomes[0]["tool_id"], "blocked", "{}", driven.audit);
+    assert_eq!(outcomes[0]["policy"]["status"], "denied");
+    assert_eq!(outcomes[0]["execution"]["reason"], "not executed");
+
+    assert_eq!(outcomes[1]["tool_id"], "permitted", "{}", driven.audit);
+    assert_eq!(
+        outcomes[1]["policy"]["status"], "allowed",
+        "the gate really did allow it, and the record must not say otherwise"
+    );
+    assert_eq!(outcomes[1]["execution"]["status"], "host_denied");
+    assert_eq!(
+        outcomes[1]["execution"]["reason"],
+        "not executed: sibling call in this batch was refused",
+        "{}",
+        driven.audit
+    );
+    // It never ran, so no grant was minted for it: the `not evaluated` seed
+    // stands rather than the `granted` a relayed call would have got.
+    assert_eq!(outcomes[1]["capability"]["status"], "denied");
+
+    let verification = verify_chain_file(&driven.audit_path).expect("audit readable");
+    assert_eq!(
+        verification.verdict,
+        Verdict::Verified,
+        "{:?}",
+        verification.verdict
+    );
+}
+
+/// 23. `PendingApproval` is a **refusal**, not a park.
+///
+/// Parking the request is AILAB-629 and is unspecced. Wrap has no line type for
+/// a call that is neither answered nor closed, so a verdict it cannot act on is
+/// a verdict it refuses — named `PENDING_APPROVAL` so the client can tell it
+/// from a flat denial.
+#[test]
+fn a_pending_approval_verdict_refuses_rather_than_parks() {
+    let driven = drive_enforced(
+        StubGate::refusing_with(PolicyAction::PendingApproval {
+            approval_id: "appr-1".to_owned(),
+        }),
+        &[r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}"#],
+    );
+
+    let refusal = driven.response(0);
+    assert_eq!(refusal["error"]["code"], -32042, "{refusal}");
+    assert_eq!(
+        refusal["error"]["data"]["aegis"]["code"], "PENDING_APPROVAL",
+        "{refusal}"
+    );
+
+    // Closed, not left in flight: an intent with no outcome is exactly what a
+    // park would look like on disk, and this is not one.
+    assert_eq!(
+        driven.line_types(),
+        vec!["open", "intent", "outcome", "close"],
+        "{}",
+        driven.audit
+    );
+    let outcome = &driven.outcomes()[0];
+    assert_eq!(outcome["policy"]["status"], "pending_approval", "{outcome}");
+    assert_eq!(outcome["execution"]["status"], "host_denied", "{outcome}");
 }

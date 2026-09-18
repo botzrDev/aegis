@@ -18,21 +18,32 @@ client ◀─stdout── aegis wrap ◀─stdout── child MCP server
 
 ## What this is not
 
-**Wrap confines only when `--confine` is given, on Linux.** Without it the
-child is an ordinary OS process with the authority of the account that
-started it. Read this list before describing wrap as a sandbox by default:
+**Wrap confines only when `--confine` is given, on Linux, and evaluates policy
+only when `--policy` is given.** Without them the child is an ordinary OS
+process with the authority of the account that started it. Read this list
+before describing wrap as a sandbox by default:
 
-- **No policy evaluation.** No `PolicyEngine`, no rules, no allow/deny decision.
-  Every `tools/call` is relayed. Nothing is ever blocked at this layer.
+- **No policy evaluation unless `--policy`.** Default wrap runs no rules and
+  makes no allow/deny decision: every `tools/call` is relayed and nothing is
+  ever blocked at this layer. `--policy <YAML>` (AILAB-793) turns that on —
+  see [Enforcing a policy](#enforcing-a-policy). Even then no `PolicyEngine`
+  lives in this crate; wrap asks a `CallGate` and the CLI supplies one.
 - **No argument matching.** Wrap does not look at `params.arguments` at all, and
-  will not: argument matching was canceled in AILAB-626.
+  will not: argument matching was canceled in AILAB-626. A policy rule here
+  matches on tool identity, nothing else.
 - **No filesystem or network restriction unless `--confine`.** Default wrap is
   the operator's own account. `--confine` (AILAB-628) applies Landlock and
   seccomp from `--allow-read` / `--allow-write` / `--allow-net`.
-- **No approval parking, no schema pinning** (AILAB-629 / AILAB-627).
-- **No refusal of a batch.** A JSON-RPC **batch** — a top-level array — is
-  recorded call by call (see [Batched calls](#batched-calls)), but it is still
-  relayed, like everything else. Wrap blocks nothing here either.
+- **No capability minting, ever.** Not even under `--policy`: a gate decides
+  *whether* a call may go, it resolves no grant, so every record still carries
+  the `deny_all` pass-through grant.
+- **No approval parking, no schema pinning** (AILAB-629 / AILAB-627). A
+  `PendingApproval` verdict under `--policy` is a **refusal**, not a park.
+- **No refusal of a batch by default.** A JSON-RPC **batch** — a top-level
+  array — is recorded call by call (see [Batched calls](#batched-calls)) and
+  still relayed, like everything else. Under `--policy` a batch cannot be
+  filtered, so one refused `tools/call` in it refuses the whole frame; the
+  array is never re-encoded or split.
 - **Not Model A isolation.** Nothing runs inside wasmtime here. This is closer
   to Model B than to Model A, and weaker than either: wrap does not even enforce
   a grant before an effect, because the effect happens inside a process it does
@@ -67,11 +78,13 @@ through, and one bad byte cannot swallow what follows it.
 Every `tools/call` — sent as its own frame, or carried inside a batch array.
 `initialize`, `tools/list`, `ping`, notifications, and every method this build
 has never heard of are relayed with **zero** interception — no session, no audit
-line, never a locally synthesized `-32601`, and (until AILAB-793) never any
-other locally synthesized JSON-RPC either. Wrap is an interposer, not a second
-server. The permission for an opted-in enforcement mode to answer a *refused*
-`tools/call` — and only that frame — is
-[ADR-0015](../../docs/adr/0015-wrap-may-synthesize-a-refusal.md).
+line, and never a locally synthesized `-32601`. That last one holds under
+`--policy` exactly as without it: "this call is refused" is a claim wrap is in a
+position to make, and "no such method" is not. Wrap is an interposer, not a
+second server. The one frame an enforcing session may author — the answer to a
+`tools/call` it *refused*, and only that — is
+[ADR-0015](../../docs/adr/0015-wrap-may-synthesize-a-refusal.md); see
+[Enforcing a policy](#enforcing-a-policy).
 
 ### Batched calls
 
@@ -158,6 +171,55 @@ A `tools/call` whose `params.name` is missing or not a string is recorded as
 `host_denied` execution — and **is still relayed**. Wrap does not block; the
 child answers with its own `-32602`.
 
+## Enforcing a policy
+
+**Off unless `--policy <YAML>` is passed.** Presence of that flag is the whole
+opt-in; there is no second `--enforce`, and a default `aegis wrap` process is
+byte-for-byte identical on the client stream to one built without this feature.
+
+```bash
+aegis wrap --audit /tmp/wrap-audit.aarl --signing-key ~/.aegis/signing.key \
+           --policy ./policy.yaml -- npx -y some-mcp-server
+```
+
+With it, every well-formed `tools/call` is evaluated before the frame may reach
+the child:
+
+- **Allowed** — the frame is relayed verbatim and the response comes back
+  verbatim, exactly as without the flag. The record carries the real Policy Set
+  hash and the rule that decided it, and still the `deny_all` grant: wrap minted
+  no capability.
+- **Refused** (denied, rate-limited, or pending approval) — the frame **never
+  reaches the child**, and the client gets a JSON-RPC error rather than silence:
+
+  ```json
+  {"jsonrpc":"2.0","id":1,"error":{"code":-32042,
+   "message":"aegis wrap refused this tools/call",
+   "data":{"aegis":{"layer":"wrap","code":"POLICY_DENIED"}}}}
+  ```
+
+  The record says `policy: denied`, `capability: denied` with reason
+  `policy blocked before capability`, and `execution: host_denied` with reason
+  `not executed`. `-32042`, `data.aegis.layer` and the `error`-rather-than
+  -`result` envelope never vary; only `data.aegis.code` does
+  (`POLICY_DENIED` / `RATE_LIMITED` / `PENDING_APPROVAL` / `HOST_DENIED`).
+
+**A batch is refused whole.** Wrap never re-serializes a parsed value onto the
+child's stdin, so an array carrying one refused `tools/call` cannot be filtered
+down to its allowed elements — the frame is dropped instead. Every `tools/call`
+in it is answered and recorded: the refused ones name their own cause, and an
+allowed sibling gets `HOST_DENIED` with reason `not executed: sibling call in
+this batch was refused` and a record that still says its policy verdict was
+`allowed`. A batch whose calls are all allowed relays whole and unsplit, as
+always.
+
+**What enforcement does not change.** `initialize`, `tools/list`, `ping`,
+notifications and unknown methods all still reach the child; `-32601` is still
+never synthesized; `--confine` is still a separate, orthogonal flag; and no
+`PolicyEngine` enters this crate's dependency graph. Wrap asks a `CallGate`
+trait and the CLI implements it over `botzr-aegis-policy`. A `PendingApproval`
+verdict is a refusal here, not a park — parking is AILAB-629 and is not built.
+
 ## Lifecycle
 
 - Client stdin EOF closes the child's stdin, which is the child's shutdown
@@ -200,15 +262,20 @@ aegis verify /tmp/wrap-audit.jsonl --key <public_key printed by keygen>
 ## Library use
 
 ```rust,ignore
-use botzr_aegis_wrap::{run_wrap, WrapConfig};
+use botzr_aegis_wrap::{run_wrap, WrapConfig, WrapMode};
 
 let config = WrapConfig {
     child_argv: vec!["npx".into(), "-y".into(), "some-mcp-server".into()],
-    audit_path: "/tmp/wrap-audit.jsonl".into(),
+    audit_path: "/tmp/wrap-audit.aarl".into(),
     signing_key_path: "/tmp/aegis-signing.key".into(),
+    mode: WrapMode::Record,
 };
 let code = run_wrap(&config)?;
 ```
+
+`WrapMode::Record` is the transparent relay. `WrapMode::Confine(profile)` adds
+OS confinement of the child, and `WrapMode::Enforce { gate, confinement }` puts
+every `tools/call` to a `CallGate` first — see [Enforcing a policy](#enforcing-a-policy).
 
 Both paths are required: a persistent record file has no dev-key fallback
 (AILAB-620). Mint the key with `aegis keygen --out <PATH>`.
