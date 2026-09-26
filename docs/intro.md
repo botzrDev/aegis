@@ -27,13 +27,16 @@ not, and where the honesty boundaries are.
 
 - How to [install](install.md) and [run](quickstart.md) one Model A call
 - The load-bearing [pipeline](pipeline.md) and the two [trust models](trust-models.md)
-- The CLI, including [`aegis wrap`](wrap.md) — which **records and does not confine**
+- The CLI, including [`aegis wrap`](wrap.md) — records every `tools/call`; evaluates policy only with `--policy`; confines the child only with `--confine` (Linux)
 - [Policy YAML](policy.md) as it ships today (`tool` / `capability` / `role` matchers only)
 - Evidence: [threat model](threat-model.md), [findings](findings.md), [record format](spec.md)
 
-It does **not** document a 15-minute path from wrapping a third-party MCP
-server to a policy-blocked call. That is the D4 launch README, and it waits
-until wrap actually evaluates policy. Today wrap is evidence, not a firewall.
+The [quickstart](quickstart.md) shows one policy refusal, from a clone of
+`main`, against Aegis's own gateway standing in for any stdio server. The
+published `0.3.0` binary cannot wrap. Default wrap is still evidence, not
+a firewall: without `--policy` it blocks nothing, and a refusal under
+`--policy` is tool identity, not a sandbox. `--confine` (Linux) is a
+separate opt-in.
 
 ## Current release
 

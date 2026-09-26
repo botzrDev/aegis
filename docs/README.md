@@ -30,7 +30,7 @@ Start at [Introduction](intro.md).
 | Page | What it is |
 |---|---|
 | [CLI](cli.md) | Every subcommand, flag, and exit code |
-| [Wrapping an MCP server](wrap.md) | `aegis wrap` — records; **does not confine** |
+| [Wrapping an MCP server](wrap.md) | `aegis wrap` — records every call and blocks nothing unless `--policy`; confines only with `--confine` (Linux) |
 | [Policy YAML](policy.md) | The language as it ships: `tool` / `capability` / `role` matchers only |
 | [Library mode](library.md) | `RuntimeBuilder` for embedding the pipeline |
 | [MCP gateway](mcp.md) | Aegis's own tool catalog over stdio — not an interposer |
@@ -49,8 +49,8 @@ Start at [Introduction](intro.md).
 
 | Page | What it is |
 |---|---|
-| [Crate map](crates.md) | The nine crates and what is published |
-| [Architecture decisions](adr.md) | Index of the eleven ADRs in [`adr/`](adr/) |
+| [Crate map](crates.md) | The ten crates and what is published |
+| [Architecture decisions](adr.md) | Index of the fifteen ADRs in [`adr/`](adr/) |
 | [Audit schema v1](audit-schema.md) | Superseded by schema v2 — kept as the record |
 | [Security](security.md) | Disclosure policy (includes the root `SECURITY.md`) |
 

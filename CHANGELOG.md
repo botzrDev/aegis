@@ -207,7 +207,7 @@ support.
   stays open and is deliberately not answered here.
 - **Docs book** — mdBook hub under `docs/` (`book.toml`, `SUMMARY.md`, and
   flat chapter files). Stranger-facing chapters for the pipeline, trust
-  models, CLI, wrap (records, does not confine), and policy YAML as it
+  models, CLI, wrap (records by default; `--policy` and Linux `--confine` are opt-in), and policy YAML as it
   ships. Evidence pages (threat model, findings, SPEC, ADRs) are listed in
   the book rather than copied, so their canonical paths do not move.
   Chapter files are flat and grouped only by `SUMMARY.md`;

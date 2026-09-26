@@ -21,7 +21,7 @@ edit-url-template = "https://github.com/botzrDev/aegis/edit/main/docs/{path}"
 # generated 404 page loads its assets from the wrong prefix.
 site-url = "/aegis/"
 
-# The eleven ADRs would otherwise be a third of the sidebar.
+# The fifteen ADRs would otherwise be a third of the sidebar.
 [output.html.fold]
 enable = true
 level = 1
